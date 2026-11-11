@@ -1,13 +1,14 @@
 # 02 – Architektur
 
-Beschreibt den Stand des Quellcodes in `firmware/`. Verhalten auf echter Hardware ist
-noch nicht verifiziert (siehe [03_umsetzungsplan.md](03_umsetzungsplan.md)).
+Beschreibt den Stand des Quellcodes in `firmware/`. Auf echter Hardware verifiziert sind
+bisher USB-Laufwerk, Auswurf/Bereitstellen und Download-Modus unter Windows; Web und
+Upload noch nicht (siehe [03_umsetzungsplan.md](03_umsetzungsplan.md)).
 
 ## 1. Module
 
 | Modul | Ort | Aufgabe |
 |---|---|---|
-| `board` | `components/board` | Pins (`board.h`), APA102-LED (Bit-Banging), BOOT-Taste, Flash-Größe, Neustart in den ROM-Download-Modus (`RTC_CNTL_FORCE_DOWNLOAD_BOOT`) |
+| `board` | `components/board` | Pins (`board.h`), APA102-LED (Bit-Banging), BOOT-Taste, Flash-Größe, Neustart in den ROM-Download-Modus (USB-PHY zurück an USB-Serial/JTAG, dann `RTC_CNTL_FORCE_DOWNLOAD_BOOT`) |
 | `st7735` | `components/st7735` | `esp_lcd`-Paneltreiber (LILYGO, MIT) |
 | `display` | `components/display` | RAM-Framebuffer 160×80 RGB565, 5×7-Font (ASCII + Umlaute), `display_flush()` per DMA |
 | `pd_wifi` | `components/pd_wifi` | STA, Setup-AP, Reconnect mit Backoff (2–30 s), mDNS |
@@ -40,7 +41,10 @@ Neupartitionierung (= Verlust der Dateien) erfordert.
 Dateisystem-Stapel: Partition → **Wear Levelling** (512-B-Sektoren, SAFE-Modus,
 `sdkconfig.defaults`) → FAT. Die Firmware formatiert selbst mit **MBR + FAT16**,
 Clustergröße 2048 B, Label `PRINTDRIVE` (esp_tinyusbs eigener Formatierer würde hier
-FAT12 erzeugen). Der USB-Host sieht dieselben 512-B-Sektoren.
+FAT12 erzeugen). Der USB-Host sieht dieselben 512-B-Sektoren. `f_mkfs` mit
+`MKFS_PARM.align = 8` Sektoren: Die MBR-Partition beginnt zwar bei Sektor 63, der
+Datenbereich liegt aber auf 4-KiB-Grenzen der Flash-Löschsektoren (ohne das: 12 statt
+47 KB/s beim Schreiben, siehe [06_risiken.md](06_risiken.md)).
 
 Formatieren (`probe_and_format()` in `drive_init`, immer **vor** dem Start von USB):
 
@@ -227,7 +231,9 @@ BOOT-Taste (alle 50 ms abgefragt):
 | Geschwindigkeit | Full Speed (12 Mbit/s brutto) |
 | MSC-Puffer | 8192 B (`CONFIG_TINYUSB_MSC_BUFSIZE`) |
 
-CDC-Log-Port: Log-Ausgaben gehen nur raus, solange DTR gesetzt ist. Wird der Port mit
+CDC-Log-Port: Log-Ausgaben gehen nur raus, solange DTR gesetzt ist. Beim Setzen von DTR
+(Terminal öffnet den Port) wird zuerst der `applog`-Ringpuffer (8 KB, inkl. Start)
+nachgeliefert, danach läuft das Log live weiter. Wird der Port mit
 **1200 Baud** geöffnet und DTR fallen gelassen, startet der Dongle in den Download-Modus
 („1200-Baud-Touch“, genutzt von `tools/flash.ps1`). Eingaben werden ignoriert.
 

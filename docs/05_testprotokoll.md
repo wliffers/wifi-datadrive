@@ -4,12 +4,17 @@ Prozeduren für die manuelle Prüfung auf der Hardware. Erwartete Log-Zeilen sin
 tatsächlichen `ESP_LOG`-Texte aus dem Quellcode; im Log stehen sie mit Präfix, z. B.
 `I (5123) drive: owner: USB host (read/write)`. Platzhalter in `<…>`.
 
-**Log-Quellen der Hauptfirmware:** `.\tools\monitor.ps1` (CDC-Port; gibt nur aus, solange
-der Port offen ist – Startmeldungen gehen dort verloren), `http://<ip>/api/log` bzw.
-Weboberfläche → Einstellungen → „Log anzeigen“ (letzte 8 KB, enthält auch den Start),
-UART0. Smoke-Test: `.\tools\idf.ps1 smoke_test -p COM4 monitor`.
+**Log-Quellen der Hauptfirmware:** `.\tools\monitor.ps1` (CDC-Port; beim Öffnen wird zuerst
+der Log-Ringpuffer mit den letzten 8 KB inkl. Start nachgeliefert, danach live – verifiziert),
+`http://<ip>/api/log` bzw. Weboberfläche → Einstellungen → „Log anzeigen“ (letzte 8 KB),
+UART0. Smoke-Test: `.\tools\idf.ps1 smoke_test -p COM4 monitor` (USB-Serial/JTAG verliert an
+diesem PC bei Bursts Blöcke, siehe [04](04_build_und_flash.md) Abschnitt 9).
 
-Ergebnis eintragen als **OK**, **FEHLER** (mit Bemerkung) oder **n/a**.
+Ergebnis eintragen als **bestanden**, **Befund** (Abweichung oder Erkenntnis, mit Bemerkung),
+**FEHLER** (mit Bemerkung), **offen** oder **n/a**.
+
+Übersicht Stand 2026-11-11: Phase 0 bestanden außer WLAN STA; Phase 1 bestanden außer T1.4;
+Phase 2 offen (braucht WLAN-Einrichtung), Teilergebnisse in T2.4, T2.9, T2.10; Phase 4 offen.
 
 ## Phase 0 – Smoke-Test
 
@@ -22,7 +27,7 @@ Erwartet: `flash_id` zeigt Manufacturer `ef`, Device `4018`; Fortschritt bis `0x
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **Befund** | 2026-11-11 | `flash_id` ok (`ef`/`4018`, 16 MB). Vollständiges Backup über USB-Serial/JTAG an diesem PC nicht zuverlässig: datenabhängiger Byteverlust in `read_flash`, ca. 11 KB/s auch mit kleinen Paketen, Blöcke scheitern wiederholt. Ersatz: offizielles LILYGO-Werksabbild `backup\T-Dongle-S3_factory_screen_251218.bin` (SHA256 in `SHA256SUMS.txt`), siehe [04](04_build_und_flash.md) Abschnitt 5 |
 
 ### T0.2 Chip, Flash, Partitionen
 
@@ -37,7 +42,7 @@ Erwartet im Log:
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | Flash-ID per esptool: Winbond `0xEF`/`0x4018`, 16 MB. Smoke-Test läuft ohne Absturz, ca. 220 KB freier Heap. Partitionszeilen des Logs nicht einzeln protokolliert; Lage von `storage` @0x510000 durch die Hauptfirmware bestätigt (T1.1) |
 
 ### T0.3 LCD und LED
 
@@ -50,7 +55,7 @@ Danach Statusbild mit Kopf `SMOKE TEST` und `Flash 16 MB`.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | Farbbalken, Textorientierung und Farben korrekt; RGB-LED reagiert |
 
 ### T0.4 BOOT-Taste
 
@@ -61,7 +66,7 @@ Grünanteil; im 5-s-Log `button=1`.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | BOOT-Taste wird erkannt |
 
 ### T0.5 WLAN STA und Setup-AP
 
@@ -76,7 +81,8 @@ LCD zeigt SSID, `PW <pw>`, `192.168.4.1`; Handy/PC kann sich mit dem Passwort ve
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| (1) **offen** | – | STA-Verbindung noch nicht getestet; WLAN wird per Handy über den Setup-AP eingerichtet |
+| (2) **bestanden** | 2026-11-11 | Setup-AP `PrintDrive-54D5` gestartet, SSID und Passwort auf dem LCD. Verbindung eines Clients noch nicht protokolliert |
 
 ## Phase 1 – USB-Laufwerk unter Windows
 
@@ -96,7 +102,7 @@ Zweiter Start: kein `first boot`, `FAT ok (type 2 …)`.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | Erststart formatiert automatisch (`first boot: creating file system`, ca. 1,4 s), `FAT ok (type 2 …)` = FAT16. Dateien überleben spätere Firmware-Updates (kein erneutes Formatieren). LCD-Statusbild siehe T1.2 |
 
 ### T1.2 Laufwerk im Explorer
 
@@ -108,7 +114,8 @@ Zusätzlicher COM-Port (USB-Serial, 303A:4003). LCD-Host-Zeile `Host: verbunden`
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | Windows 11: Composite-Gerät 303A:4003 (MSC + CDC „Serielles USB-Gerät“ COM5), Seriennummer `E072A1C154D4`. Datenträger „PrintDrv WiFi PrintDrive“, MBR, 512-B-Sektoren; Volume `E:` `PRINTDRIVE`, FAT (FAT16), 11.288.576 Byte. LCD per Foto: grüner Kopf `USB`, AP-SSID + Passwort, `Frei 9.8MB / 10.8MB` mit Balken, `Host: verbunden`, `1 Datei(en)`, LED grün |
+| **Befund** | 2026-11-11 | Dropbox-Desktop-Client schreibt `.dropbox.device` auf jedes Wechsellaufwerk, auch auf den Dongle (harmlos, der Drucker sieht die Datei aber) |
 
 ### T1.3 Kopieren, Lesen, Auswerfen, neu Einstecken
 
@@ -123,7 +130,21 @@ LCD `BEREIT` (bzw. `WLAN`), `Host: ausgeworfen`; Datei in der Weboberfläche sic
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | Variante: 1-MiB-Zufallsdatei, Vergleich per SHA256 statt `fc /b`. (1) identisch. (2) `host ejected the drive` → `owner: APP …` automatisch. (3) statt Abziehen BOOT kurz: `owner: USB host (read/write)`, `soft re-plug`, Laufwerk wieder da, Datei ungecacht mit 753 KB/s gelesen, SHA256 identisch. LCD `Host schreibt...` nicht protokolliert |
+| **Befund** | 2026-11-11 | Schreiben 1 MiB: 12 KB/s vor, 47 KB/s nach dem FAT-Ausrichtungs-Fix (`MKFS_PARM.align`), siehe [06](06_risiken.md) Abschnitt 4 |
+
+### T1.5 Download-Modus per Software, Firmware-Update
+
+1. `printdrive` läuft, Dateien auf dem Laufwerk. `.\tools\flash.ps1 -Project printdrive`.
+2. Danach Dateien prüfen; `.\tools\monitor.ps1` öffnen.
+
+Erwartet: `TinyUSB-CDC-Port gefunden: COMx (303A:4003)`, 1200-Baud-Touch, innerhalb 15 s
+erscheint 303A:1001, `Flashen erfolgreich.`; App startet von selbst, Dateien unverändert.
+Monitor zeigt zuerst das nachgelieferte Start-Log.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-11 | Touch auf COM5 → ROM-Port COM4 nach 3,4 s → Flashen → App startet von selbst; Dateien überleben das Update. Start-Log kommt beim Öffnen des CDC-Ports aus dem Ringpuffer. Erst nach Fix in `board_restart_to_download_mode()` (USB-PHY-Rückgabe); vorher erschien gar kein USB-Gerät |
 
 ### T1.4 Nur-Lese-Modus des Hosts
 
@@ -135,7 +156,7 @@ Schreibschutz, Lesen funktioniert. Danach Einstellung wieder aktivieren.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **offen** | – | braucht Weboberfläche (WLAN) |
 
 ## Phase 2 – Web und Umschalten
 
@@ -190,7 +211,7 @@ Danach „Am USB bereitstellen“: `usb_dev: soft re-plug`, Laufwerk erscheint w
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| teilweise **bestanden** | 2026-11-11 | Auswurf → APP automatisch und Bereitstellen per BOOT kurz mit Re-Plug verifiziert (T1.3); LCD `BEREIT`/`WLAN` und Bereitstellen per Web offen |
 
 ### T2.5 Upload-Abbruch
 
@@ -245,25 +266,27 @@ Verzeichniseintrag schon geschrieben war); Datei nicht in der Liste; Dateisystem
 
 Erwartet: (1) `pd_wifi: new credentials stored for '<ssid>'`, dann `connected to …`; AP geht
 nach ca. 120 s aus (`setup access point off`). (2) `board: restarting into ROM download mode`; Laufwerk und
-CDC-Port verschwinden, 303A:1001 erscheint (Software-Weg bisher unverifiziert); nach
+CDC-Port verschwinden, 303A:1001 erscheint (dieselbe Funktion wie beim 1200-Baud-Touch, T1.5); nach
 Aus-/Einstecken normaler Start. (3) `drive: format requested - restarting`, nach Neustart
 `drive: formatting storage (FAT, 2048 byte clusters)`, Laufwerk leer.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **offen** | – | (2) Software-Neustart in den Download-Modus per 1200-Baud-Touch verifiziert (T1.5), Auslösung per Web noch nicht |
 
 ### T2.10 Geschwindigkeit
 
 1. Web-Upload einer ca. 8-MB-Datei; Wert aus `web: upload … (<x> KB/s)` notieren.
 2. Kopieren derselben Datei per Explorer auf das Laufwerk; Dauer stoppen.
 
-Erwartet: Messwerte, keine Sollwerte (offen). USB ist Full Speed: theoretisch max.
-12 Mbit/s brutto, praktisch deutlich weniger; WL-SAFE-Modus bremst Schreiben zusätzlich.
+Erwartet: Messwerte, keine Sollwerte. Schreiben ist durch das Löschen der 4-KiB-Flash-Sektoren
+begrenzt (Obergrenze grob 90 KB/s, siehe [06](06_risiken.md) Abschnitt 4); Web-Uploads stoßen an
+dieselbe Grenze. USB Full Speed ist beim Schreiben nicht der Engpass.
 
 | Web KB/s | USB schreiben KB/s | USB lesen KB/s | Datum |
 |---|---|---|---|
-| | | | |
+| offen | 12 (vor FAT-Ausrichtungs-Fix) | – | 2026-11-11 |
+| offen | 47 (1-MiB-Zufallsdatei, nach Fix) | 753 (ungecacht) | 2026-11-11 |
 
 ## Phase 4 – Bambu Lab X2D (nicht verifiziert)
 

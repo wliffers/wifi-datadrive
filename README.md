@@ -14,16 +14,17 @@ genau **einen** Besitzer – entweder den USB-Host (Drucker/PC) oder die Firmwar
 | Bereich | Stand |
 |---|---|
 | Hardware-Bestandsaufnahme (Chip, Flash, USB-ID) | **verifiziert** per esptool am echten Gerät |
-| Smoke-Test-Firmware (LCD, LED, Taste, Flash, WLAN) | implementiert, **gebaut**, auf Hardware noch nicht geprüft |
-| Hauptfirmware `printdrive` (USB-MSC, Web, Umschaltung, LCD) | implementiert, Build steht aus |
-| USB-Laufwerk unter Windows | offen (nicht getestet) |
-| Web-Upload, Moduswechsel, Fehlerfälle | offen (nicht getestet) |
+| Smoke-Test (LCD, LED, Taste, Flash, Setup-AP) | **verifiziert**; WLAN STA noch offen |
+| USB-Laufwerk unter Windows 11 (FAT16, 10,8 MB, Kopieren, Auswerfen, Re-Plug) | **verifiziert** |
+| Flashen per 1200-Baud-Touch, Dateien überleben Updates | **verifiziert** |
+| LCD-Statusbild | teilweise verifiziert (Zustand `USB`) |
+| Web-Upload, Moduswechsel per Web, Fehlerfälle | implementiert, **nicht getestet** (WLAN-Einrichtung steht aus) |
 | Test am Bambu Lab X2D | offen, **Kompatibilität nicht verifiziert** |
 | microSD | nicht implementiert (optionale Phase 5) |
 
-Ehrlich gesagt: Außer Chip-Infos und Flash-ID ist noch nichts auf der Hardware
-bestätigt. Alle Aussagen zum Verhalten beruhen auf dem Quellcode. Die
-Testprozeduren stehen in [docs/05_testprotokoll.md](docs/05_testprotokoll.md),
+Gemessen über USB: schreiben 47 KB/s, lesen 753 KB/s. Schreiben ist durch das interne
+Flash begrenzt (grob 90 KB/s theoretisch); eine 5-MB-`.3mf` braucht ca. 1,5–2 min, auch
+per Web. Ergebnisse in [docs/05_testprotokoll.md](docs/05_testprotokoll.md), Befunde und
 offene Risiken in [docs/06_risiken.md](docs/06_risiken.md).
 
 ## Schnellstart
@@ -32,11 +33,10 @@ Voraussetzung: ESP-IDF v5.5.6 unter `%USERPROFILE%\esp\esp-idf-v5.5.6`
 (Installation siehe [docs/04_build_und_flash.md](docs/04_build_und_flash.md)).
 Alle Befehle in PowerShell im Projektordner.
 
-**0. Backup der Werks-Firmware (einmalig, vor dem ersten Flashen)**
-
-```powershell
-.\tools\backup_flash.ps1 -Port COM4
-```
+**0. Werks-Firmware** – Ein Vollbackup per `tools\backup_flash.ps1` war über
+USB-Serial/JTAG unzuverlässig. Zum Wiederherstellen liegt das offizielle LILYGO-Abbild
+`backup\T-Dongle-S3_factory_screen_251218.bin` bereit (SHA256 in `backup\SHA256SUMS.txt`,
+Befehl in [docs/04_build_und_flash.md](docs/04_build_und_flash.md) Abschnitt 5).
 
 **1. Smoke-Test bauen und flashen** (Werks-Firmware oder Smoke-Test läuft, Port COM4)
 
@@ -65,7 +65,8 @@ Ohne diese Datei startet der Dongle einen Setup-Access-Point `PrintDrive-XXXX`
 
 `flash.ps1` findet den Port selbst und schaltet einen laufenden `printdrive` per
 1200-Baud-Touch in den Download-Modus. Klappt das nicht: BOOT-Taste gedrückt halten,
-Dongle einstecken, loslassen, Befehl wiederholen.
+Dongle einstecken, loslassen, Befehl wiederholen – danach einmal aus- und einstecken,
+sonst bleibt der Dongle im Download-Modus.
 
 **4. Benutzen**
 
@@ -94,8 +95,8 @@ tools/
   idf.ps1                    idf.py mit geladener ESP-IDF-Umgebung
   flash.ps1                  Flashen mit automatischer Port-/Download-Modus-Erkennung
   monitor.ps1 / monitor.py   Log-Leser (TinyUSB-CDC oder USB-Serial/JTAG)
-  backup_flash.ps1 / .py     vollständiges Flash-Backup nach backup/
-backup/                      Flash-Abbilder (*.bin git-ignoriert) + SHA256SUMS.txt
+  backup_flash.ps1 / .py     vollständiges Flash-Backup nach backup/ (über USB-Serial/JTAG unzuverlässig)
+backup/                      LILYGO-Werksabbild, Flash-Abbilder (*.bin git-ignoriert) + SHA256SUMS.txt
 ```
 
 ## Dokumentation

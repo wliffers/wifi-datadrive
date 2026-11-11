@@ -28,12 +28,13 @@ Beim ersten Build lädt der Component Manager `esp_tinyusb`, `tinyusb` und `mdns
 | `tools\idf.ps1 <smoke_test\|printdrive> <idf.py-Argumente>` | beliebiger `idf.py`-Aufruf im Projektordner (`build`, `flash`, `monitor`, `menuconfig`, `fullclean`, …) |
 | `tools\flash.ps1 -Project <…> [-Port COMx] [-Build] [-Monitor]` | Flashen mit automatischer Port-Suche und Download-Modus per 1200-Baud-Touch |
 | `tools\monitor.ps1 [COMx] [--seconds N] [--out datei]` | Log-Leser (`monitor.py`), verbindet nach Neustart automatisch neu, setzt den Chip nie zurück |
-| `tools\backup_flash.ps1 -Port COM4` | komplettes 16-MB-Flash nach `backup\` lesen |
+| `tools\backup_flash.ps1 -Port COM4` | komplettes 16-MB-Flash nach `backup\` lesen – über USB-Serial/JTAG **unzuverlässig** (Abschnitt 6) |
 
 ## 3. Smoke-Test bauen und flashen
 
 Der Smoke-Test nutzt die eingebaute USB-Serial/JTAG-Schnittstelle (VID 303A, PID 1001,
 bisher **COM4**). Darüber funktioniert der automatische Reset in den Download-Modus.
+Erwartetes Bild und Log: [05_testprotokoll.md](05_testprotokoll.md) Phase 0 (bestanden 2026-11-11).
 
 ```powershell
 .\tools\idf.ps1 smoke_test build
@@ -49,11 +50,12 @@ bisher **COM4**). Darüber funktioniert der automatische Reset in den Download-M
 
 **Wichtig:** Sobald `printdrive` läuft, belegt TinyUSB den USB-Anschluss. Die
 USB-Serial/JTAG-Schnittstelle (COM4) ist dann weg; stattdessen erscheint ein
-CDC-Port „PrintDrive Log“ (303A:4003) und das Laufwerk. Wege in den Download-Modus:
+CDC-Port „PrintDrive Log“ (303A:4003, unter Windows „Serielles USB-Gerät“, bisher **COM5**)
+und das Laufwerk. Wege in den Download-Modus:
 
 | Weg | Ablauf |
 |---|---|
-| `tools\flash.ps1` (automatisch) | findet den CDC-Port, öffnet ihn mit 1200 Baud und lässt DTR fallen → Neustart in den Download-Modus → wartet bis 15 s auf 303A:1001 → `esptool write_flash @flash_args` |
+| `tools\flash.ps1` (automatisch) | findet den CDC-Port, öffnet ihn mit 1200 Baud und lässt DTR fallen → Neustart in den Download-Modus → wartet bis 15 s auf 303A:1001 → `esptool write_flash @flash_args` mit `--after hard_reset`. **Verifiziert** 2026-11-11: COM5 → COM4 nach 3,4 s, App startet nach dem Flashen von selbst |
 | Weboberfläche | Einstellungen → „Flash-Modus“ (`POST /api/reboot?mode=download`) |
 | BOOT-Taste | im Betrieb **5 s halten** (LCD zeigt `FLASH`) |
 | manuell (immer möglich) | BOOT gedrückt halten, Dongle einstecken, loslassen |
@@ -62,32 +64,61 @@ Danach erscheint 303A:1001 als COM-Port (Nummer kann von COM4 abweichen). `flash
 wartet im manuellen Fall bis zu 60 s darauf. Alternativ von Hand:
 `.\tools\idf.ps1 printdrive -p COMx flash`.
 
+Die drei Software-Wege rufen `board_restart_to_download_mode()` auf. Die Funktion gibt den
+internen USB-PHY zuerst an USB-Serial/JTAG zurück (`RTC_CNTL_USB_CONF_REG`,
+`USB_SERIAL_JTAG_CONF0_REG`, wie `usb_switch_to_cdc_jtag()` im Arduino-Core), setzt dann
+`RTC_CNTL_FORCE_DOWNLOAD_BOOT` und startet neu. Hintergrund: TinyUSB schaltet den PHY über
+`RTC_CNTL_USB_CONF` auf den OTG-Controller; dieses RTC-Register übersteht einen
+Software-Reset. Ohne die Rückgabe erschien nach dem Neustart **gar kein** USB-Gerät
+(verifiziert). Falls das je wieder passiert: aus- und einstecken startet normal.
+
+**Nach dem Flashen per BOOT-Taste einmal aus- und einstecken.** Wurde der Download-Modus
+durch BOOT + Einstecken erzwungen, bleibt der Chip bei jedem weiteren Reset über
+USB-Serial/JTAG (esptool `hard_reset`, RTS) im Download-Modus – ROM meldet
+`boot:0x0 (DOWNLOAD(USB/UART0))`, `GPIO_STRAP_REG` = 0 –, obwohl die Taste losgelassen ist
+(`GPIO_IN` Bit 0 = 1). Erst ein echtes Aus-/Einstecken übernimmt die Strapping-Pins neu.
+Beim 1200-Baud-Touch tritt das nicht auf.
+
 Mit deaktiviertem CDC (`CONFIG_TINYUSB_CDC_ENABLED=n`, z. B. für den Drucker-Test) gibt
 es keinen 1200-Baud-Touch mehr – dann Web, BOOT 5 s oder manuell.
 
 Flashen schreibt Bootloader, Partitionstabelle, `otadata` und App. **NVS und Dateispeicher
-bleiben erhalten.** `idf.py erase-flash` löscht dagegen alles inklusive Dateien.
+bleiben erhalten** (verifiziert 2026-11-11). `idf.py erase-flash` löscht dagegen alles inklusive Dateien.
 
-Logs der Hauptfirmware: `.\tools\monitor.ps1` (CDC-Port), `http://<ip>/api/log` oder
+Logs der Hauptfirmware: `.\tools\monitor.ps1` (CDC-Port; beim Öffnen wird zuerst das Start-Log
+aus dem 8-KB-Ringpuffer nachgeliefert, verifiziert), `http://<ip>/api/log` oder
 UART0 an GPIO43/44 (115200 Baud).
 
 ## 5. Recovery
 
 - **Aus- und Einstecken** startet immer normal (der erzwungene Download-Modus gilt nur
-  für einen Neustart). Ein „hängender“ Download-Modus wird so verlassen.
+  für einen Neustart). Ein „hängender“ Download-Modus wird so verlassen – auch der nach
+  BOOT + Einstecken (Abschnitt 4) und ein Download-Modus ohne USB-Gerät.
 - Firmware startet nicht/Boot-Schleife: manuell in den Download-Modus (BOOT halten +
   einstecken) und neu flashen.
-- Werkszustand wiederherstellen (überschreibt das **gesamte** Flash inkl. Dateien):
+- Werkszustand wiederherstellen (überschreibt das **gesamte** Flash inkl. Dateien). Ein
+  eigenes Vollbackup gibt es nicht (Abschnitt 6); Rückfall ist das offizielle
+  LILYGO-Werksabbild `backup\T-Dongle-S3_factory_screen_251218.bin` aus dem Ordner
+  `firmware/` des Hersteller-Repos, SHA256
+  `65a9b51487ca721f618a0f22bb4d800f0dedfcb40c29286f55ad85eba81c68cd` (auch in
+  `backup\SHA256SUMS.txt`):
 
 ```powershell
 & "$env:USERPROFILE\esp\esp-idf-v5.5.6\export.ps1"
-python -m esptool --chip esp32s3 -p COM4 write_flash 0x0 backup\flash_backup_<datum>.bin
+python -m esptool --chip esp32s3 -p COM4 write_flash 0x0 backup\T-Dongle-S3_factory_screen_251218.bin
 ```
 
-Statt des eigenen Backups kann auch eine Werks-Firmware aus dem LILYGO-Repository an
-Adresse 0x0 geschrieben werden (genaue Datei: offen, im Repo prüfen).
+- Dateispeicher während der Entwicklung komplett zurücksetzen (im Download-Modus):
 
-## 6. Flash-Backup
+```powershell
+python -m esptool --chip esp32s3 -p COM4 erase_region 0x9000 0x5000       # NVS: WLAN-Daten, Flag "formatiert"
+python -m esptool --chip esp32s3 -p COM4 erase_region 0x510000 0xAF0000   # storage, ca. 44 s
+```
+
+  Der nächste Start formatiert automatisch (Erststart). Das Löschen des NVS entfernt auch
+  die WLAN-Zugangsdaten; das Setup-AP-Passwort wird neu erzeugt.
+
+## 6. Flash-Backup (unzuverlässig über USB-Serial/JTAG)
 
 ```powershell
 .\tools\backup_flash.ps1 -Port COM4
@@ -97,10 +128,16 @@ Funktioniert nur, solange USB-Serial/JTAG aktiv ist (Werks-Firmware, Smoke-Test 
 Download-Modus). Ergebnis: `backup\flash_backup_<yyyyMMdd-HHmmss>.bin`, SHA256 wird an
 `backup\SHA256SUMS.txt` angehängt (die `.bin` sind git-ignoriert, die Prüfsummenliste nicht).
 
+**Befund 2026-11-11:** Ein vollständiges 16-MB-Backup war an diesem PC nicht zuverlässig
+möglich – datenabhängiger Byteverlust in `esptool read_flash`, auch mit kleinen Paketen nur
+ca. 11 KB/s, einzelne Blöcke scheiterten wiederholt. Das Skript bleibt im Projekt (an
+anderen PCs ggf. brauchbar), Rückfall für die Wiederherstellung ist das Werksabbild
+(Abschnitt 5).
+
 Hintergrund: Ein einzelnes großes `esptool read_flash` über die USB-Serial/JTAG des
 ESP32-S3 bricht reproduzierbar ab („Corrupt data, expected 0x1000 bytes“). Vermutete
 Ursache: FIFO-Überlauf, weil SLIP-Escape-Bytes (0xC0/0xDB) Pakete auf doppelte Größe
-aufblähen. `backup_flash.py` umgeht das:
+aufblähen. `backup_flash.py` versucht das zu umgehen:
 
 - liest in 256-KiB-Blöcken mit kleinen Paketen (1024 B, max. 2 unbestätigte Pakete),
 - prüft jeden Block per MD5 des esptool-Stubs gegen das Flash,
@@ -160,3 +197,29 @@ Weitere relevante Optionen in `firmware/printdrive/sdkconfig.defaults`: TinyUSB
 vorhandenen Dateispeicher unlesbar. Da der Erststart schon vorbei ist, formatiert die
 Firmware nicht automatisch: LCD zeigt „Kein Dateisystem!“, Formatieren über die
 Weboberfläche. Dateien vorher sichern.
+
+Ein Dateisystem, das eine Firmware vor dem FAT-Ausrichtungs-Fix (2026-11-11) erzeugt hat,
+bleibt langsam (ca. 12 statt 47 KB/s schreiben), bis es neu formatiert wird (Web oder
+Abschnitt 5). Details: [06_risiken.md](06_risiken.md) Abschnitt 4.
+
+## 9. Diagnose-Build (Konsole über USB-Serial/JTAG)
+
+`firmware\printdrive\sdkconfig.diag` legt die Konsole der Hauptfirmware auf USB-Serial/JTAG
+statt UART0 (inkl. Bootloader-Log auf INFO). So sind frühe Startmeldungen und Abstürze vor
+dem Start von TinyUSB am COM-Port sichtbar; sobald TinyUSB den PHY übernimmt, verstummt diese
+Konsole (dann CDC-Port bzw. `/api/log`). Eigener Build-Ordner `build_diag`, die normale
+Konfiguration bleibt unberührt.
+
+Der Befehl im Kopf der Datei (`.\tools\idf.ps1 printdrive … -D …`) funktioniert in
+PowerShell nicht, weil `-D` mit der PowerShell-Parameterbindung kollidiert. Stattdessen
+`idf.py` direkt aufrufen:
+
+```powershell
+. "$env:USERPROFILE\esp\esp-idf-v5.5.6\export.ps1"
+cd firmware\printdrive
+idf.py -B build_diag "-DSDKCONFIG=build_diag/sdkconfig" "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag" build
+```
+
+Hinweis: Auch die serielle Ausgabe über USB-Serial/JTAG verliert an diesem PC bei Bursts
+ganze Blöcke (ähnlich wie beim Flash-Backup, Ursache nicht geklärt). Fehlende Zeilen im Log sind
+daher kein sicheres Zeichen für einen Firmware-Fehler.
