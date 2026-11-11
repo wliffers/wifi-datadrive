@@ -2,340 +2,977 @@
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WiFi PrintDrive</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121416" media="(prefers-color-scheme: dark)">
+<title>WiFi DataDrive</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b7a75'/%3E%3Cg fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M9.5 13a9.2 9.2 0 0 1 13 0'/%3E%3Cpath d='M12.7 16.2a4.7 4.7 0 0 1 6.6 0'/%3E%3C/g%3E%3Crect x='8' y='19.5' width='16' height='6' rx='2' fill='%23fff'/%3E%3Ccircle cx='20.5' cy='22.5' r='1.1' fill='%230b7a75'/%3E%3C/svg%3E">
 <style>
-:root{--bg:#f4f5f7;--card:#fff;--fg:#1d2330;--muted:#6b7280;--line:#e3e6eb;--blue:#2563eb;--green:#15803d;--orange:#c2410c;--red:#b91c1c;--cyan:#0e7490}
-@media (prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1b1f27;--fg:#e8eaee;--muted:#9aa1ad;--line:#2b313c;--blue:#60a5fa;--green:#4ade80;--orange:#fb923c;--red:#f87171;--cyan:#22d3ee}}
+/* ---------- Design tokens ---------- */
+:root{
+  --bg:#f7f7f5;--surface:#fff;--text:#1b1d21;--muted:#666b74;--line:#e5e6e2;--hover:#efefec;
+  --accent:#0b7a75;--on-accent:#fff;--accent-soft:#e2f1ef;
+  --usb:#5252cc;--usb-soft:#ebebfa;
+  --warn:#9a5a05;--warn-soft:#fcf0da;
+  --danger:#bd3328;--danger-soft:#fbe8e6;
+  --shadow:0 8px 30px rgba(20,24,28,.16);
+  --r:10px;--r-lg:16px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+  --bg:#121416;--surface:#1b1e21;--text:#e9eaec;--muted:#9da3ab;--line:#2b2f34;--hover:#24282c;
+  --accent:#3dbfb6;--on-accent:#04211f;--accent-soft:#15302e;
+  --usb:#a3a3f7;--usb-soft:#25254d;
+  --warn:#efb45c;--warn-soft:#3a2c13;
+  --danger:#f0766c;--danger-soft:#3e1d1a;
+  --shadow:0 8px 30px rgba(0,0,0,.5);
+  color-scheme:dark;
+}}
+:root[data-theme=dark]{
+  --bg:#121416;--surface:#1b1e21;--text:#e9eaec;--muted:#9da3ab;--line:#2b2f34;--hover:#24282c;
+  --accent:#3dbfb6;--on-accent:#04211f;--accent-soft:#15302e;
+  --usb:#a3a3f7;--usb-soft:#25254d;
+  --warn:#efb45c;--warn-soft:#3a2c13;
+  --danger:#f0766c;--danger-soft:#3e1d1a;
+  --shadow:0 8px 30px rgba(0,0,0,.5);
+  color-scheme:dark;
+}
+
+/* ---------- Base ---------- */
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-main{max-width:760px;margin:0 auto;padding:16px}
-h1{font-size:20px;margin:4px 0 14px;display:flex;align-items:center;gap:10px}
-h2{font-size:15px;margin:0 0 10px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
-.badge{display:inline-block;padding:2px 10px;border-radius:99px;color:#fff;font-size:13px;font-weight:600}
-.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.muted{color:var(--muted);font-size:13px}
-button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:7px 14px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
-button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
-button.danger{color:var(--red);border-color:var(--red)}
-button:disabled{opacity:.5;cursor:default}
-.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
-.bar>div{height:100%;background:var(--green);width:0;transition:width .2s}
-#drop{border:2px dashed var(--line);border-radius:12px;padding:26px 12px;text-align:center;cursor:pointer}
-#drop.over{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 8%,transparent)}
-table{width:100%;border-collapse:collapse}
-td{padding:7px 4px;border-top:1px solid var(--line);vertical-align:middle;word-break:break-all}
-td.num{text-align:right;white-space:nowrap;color:var(--muted);font-size:13px}
-td.act{text-align:right;white-space:nowrap}
-.msg{padding:8px 12px;border-radius:8px;margin-top:10px;font-size:14px}
-.msg.err{background:color-mix(in srgb,var(--red) 14%,transparent);color:var(--red)}
-.msg.ok{background:color-mix(in srgb,var(--green) 14%,transparent);color:var(--green)}
-input[type=text],input[type=password]{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);width:100%}
-label.chk{display:flex;gap:8px;align-items:center;margin:6px 0}
-details summary{cursor:pointer;font-weight:600}
-pre{white-space:pre-wrap;font-size:12px;max-height:320px;overflow:auto;background:var(--bg);padding:8px;border-radius:8px}
-dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);max-width:420px;width:calc(100% - 32px)}
-dialog::backdrop{background:#0006}
-.up-item{margin:8px 0}
-.up-item .name{font-size:14px;word-break:break-all}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-@media (max-width:480px){.grid{grid-template-columns:1fr}}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;-webkit-font-smoothing:antialiased;min-height:100vh}
+h1,h2,h3,p{margin:0}
+h1{font-size:22px;font-weight:650;letter-spacing:-.01em}
+h2{font-size:16px;font-weight:650}
+h3{font-size:15px;font-weight:600}
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.wrap{max-width:960px;margin:0 auto;padding:0 16px}
+
+/* ---------- Controls ---------- */
+button,input,select{font:inherit;color:inherit}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 18px;border:0;border-radius:var(--r);background:var(--hover);font-weight:600;cursor:pointer;white-space:nowrap;text-decoration:none;color:var(--text);transition:filter .12s}
+.btn:hover{filter:brightness(.96)}
+.btn.primary{background:var(--accent);color:var(--on-accent)}
+.btn.danger{background:var(--danger);color:#fff}
+.btn.outline-danger{background:none;color:var(--danger);box-shadow:inset 0 0 0 1.5px var(--danger)}
+.btn:disabled{opacity:.55;cursor:default;filter:none}
+.icon-btn{width:44px;height:44px;display:inline-grid;place-items:center;border:0;border-radius:50%;background:none;cursor:pointer;color:var(--muted)}
+.icon-btn:hover{background:var(--hover);color:var(--text)}
+.field{width:100%;min-height:44px;padding:0 12px;border:1.5px solid var(--line);border-radius:var(--r);background:var(--surface)}
+.field:focus{outline:0;border-color:var(--accent)}
+label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
+.spin{width:16px;height:16px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition:none!important}}
+
+/* ---------- Header ---------- */
+.top{position:sticky;top:0;z-index:20;background:var(--bg);padding-top:env(safe-area-inset-top)}
+.top .wrap{display:flex;align-items:center;gap:10px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:16px;color:inherit;text-decoration:none;margin-right:auto;letter-spacing:-.01em}
+.brand svg{width:30px;height:30px}
+.notice{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:var(--r);background:var(--warn-soft);color:var(--warn);margin:4px 0 12px;font-size:14px}
+.notice.info{background:var(--accent-soft);color:var(--accent)}
+.notice .spin{margin-top:3px}
+
+/* ---------- Status strip ---------- */
+.status{display:grid;grid-template-columns:1.25fr 1fr;background:var(--surface);border-radius:var(--r-lg);margin:4px 0 26px}
+.cell{display:flex;align-items:center;gap:14px;padding:16px 18px;min-width:0}
+.cell + .cell{border-left:1px solid var(--line)}
+.cell .txt{min-width:0;flex:1}
+.cell .title{font-weight:650;display:block}
+.cell .sub{display:block;font-size:13px;color:var(--muted)}
+.badge{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--hover);color:var(--muted)}
+.mode-usb .badge{background:var(--usb-soft);color:var(--usb)}
+.mode-app .badge{background:var(--accent-soft);color:var(--accent)}
+.mode-err .badge{background:var(--danger-soft);color:var(--danger)}
+.bar{display:block;height:6px;border-radius:3px;background:var(--hover);overflow:hidden;margin-top:8px}
+.bar>i{display:block;height:100%;width:0;background:var(--accent);border-radius:3px;transition:width .3s}
+.bar.high>i{background:var(--warn)}
+.bar.full>i{background:var(--danger)}
+
+/* ---------- Files ---------- */
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.toolbar h1{margin-right:auto}
+.count{font-size:13px;color:var(--muted);font-weight:400;margin-left:8px;letter-spacing:0}
+.search{position:relative;flex:0 1 240px}
+.search svg{position:absolute;left:12px;top:12px;color:var(--muted);pointer-events:none}
+.search input{padding-left:40px;border-color:transparent;background:var(--surface)}
+.sort-m{display:none}
+.cols,.row{display:grid;grid-template-columns:40px minmax(0,1fr) 110px 150px 44px;gap:14px;align-items:center}
+.cols{padding:8px 8px 8px 10px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--line)}
+.cols button{background:none;border:0;padding:4px 0;cursor:pointer;color:inherit;font-weight:600;display:inline-flex;gap:4px;align-items:center;text-align:left}
+.cols button svg{width:14px;height:14px}
+.cols button[aria-sort]{color:var(--text)}
+.cols .num,.row .num{text-align:right;justify-content:flex-end}
+.row{padding:8px 8px 8px 10px;border-radius:var(--r);cursor:pointer;min-height:60px}
+.row:hover,.row.open{background:var(--surface)}
+.row .name{display:block;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .meta{display:none;font-size:13px;color:var(--muted)}
+.row .num,.row .date{font-size:14px;color:var(--muted);white-space:nowrap}
+.ficon{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:10px;font-weight:750;letter-spacing:.02em;background:var(--hover);color:var(--muted)}
+.ficon.model{color:var(--accent);background:var(--accent-soft)}
+.ficon.image{color:#b0367f;background:color-mix(in srgb,#b0367f 14%,transparent)}
+.ficon.doc{color:#2f66c4;background:color-mix(in srgb,#2f66c4 14%,transparent)}
+.ficon.archive{color:var(--warn);background:var(--warn-soft)}
+.ficon.media{color:var(--usb);background:var(--usb-soft)}
+:root[data-theme=dark] .ficon.image{color:#f08cc4}:root[data-theme=dark] .ficon.doc{color:#8db4f5}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .ficon.image{color:#f08cc4}:root:not([data-theme=light]) .ficon.doc{color:#8db4f5}}
+.state{text-align:center;padding:56px 16px 40px;color:var(--muted)}
+.state .big{width:64px;height:64px;border-radius:20px;background:var(--surface);display:grid;place-items:center;margin:0 auto 18px;color:var(--muted)}
+.state .big svg{width:28px;height:28px}
+.state h2{color:var(--text);margin-bottom:6px;font-size:18px}
+.state p{max-width:460px;margin:0 auto 20px}
+.state .acts{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.hint{font-size:13px;color:var(--muted);padding:14px 10px 0}
+.skel{height:60px;border-radius:var(--r);background:linear-gradient(90deg,var(--surface),var(--hover),var(--surface));background-size:200% 100%;animation:sk 1.4s infinite;margin-bottom:6px}
+@keyframes sk{to{background-position:-200% 0}}
+.fab{display:none}
+
+/* ---------- Menu / sheet ---------- */
+.scrim{position:fixed;inset:0;z-index:40}
+.menu{position:fixed;z-index:41;min-width:220px;background:var(--surface);border-radius:14px;box-shadow:var(--shadow);padding:6px}
+.menu .mhead{display:none}
+.menu button{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:0 12px;border:0;background:none;border-radius:8px;cursor:pointer;text-align:left}
+.menu button:hover{background:var(--hover)}
+.menu button.danger{color:var(--danger)}
+
+/* ---------- Uploads panel ---------- */
+.uploads{position:fixed;right:20px;bottom:20px;z-index:30;width:380px;max-width:calc(100vw - 32px);background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--shadow);overflow:hidden}
+.uploads header{display:flex;align-items:center;gap:8px;padding:10px 8px 6px 16px;min-height:56px}
+.uploads header strong{margin-right:auto}
+.uploads ul{list-style:none;margin:0;padding:0 16px 12px;max-height:38vh;overflow:auto}
+.uploads li{padding:8px 0}
+.uploads .l1{display:flex;gap:10px;align-items:center;min-height:32px}
+.uploads .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:550}
+.uploads .s{font-size:13px;color:var(--muted);white-space:nowrap}
+.uploads .ok{color:var(--accent)}
+.uploads .err{color:var(--danger);white-space:normal}
+.uploads .x{width:32px;height:32px}
+.uploads .bar{margin-top:4px}
+
+/* ---------- Toasts ---------- */
+.toasts{position:fixed;left:0;right:0;top:calc(68px + env(safe-area-inset-top));z-index:60;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;padding:0 16px}
+.toast{pointer-events:auto;max-width:520px;padding:12px 16px;border-radius:12px;background:var(--text);color:var(--bg);box-shadow:var(--shadow);font-size:14px;animation:tin .18s ease-out}
+.toast.err{background:var(--danger);color:#fff}
+@keyframes tin{from{opacity:0;transform:translateY(-8px)}}
+
+/* ---------- Drop overlay ---------- */
+.drop{position:fixed;inset:12px;z-index:50;border:2.5px dashed var(--accent);border-radius:24px;background:var(--accent-soft);opacity:.96;display:grid;place-items:center;color:var(--accent);font-size:20px;font-weight:650;pointer-events:none;text-align:center;padding:24px}
+
+/* ---------- Dialog ---------- */
+dialog{border:0;border-radius:var(--r-lg);background:var(--surface);color:var(--text);padding:24px;width:min(440px,calc(100vw - 32px));box-shadow:var(--shadow)}
+dialog::backdrop{background:rgba(10,12,14,.5)}
+dialog h2{font-size:18px;margin-bottom:8px}
+dialog p{color:var(--muted);margin-bottom:10px;overflow-wrap:anywhere}
+dialog .derr{color:var(--danger);font-size:13px;min-height:20px;margin-top:6px}
+dialog .dacts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+
+/* ---------- Settings ---------- */
+.back{display:inline-flex;align-items:center;gap:6px;color:var(--muted);text-decoration:none;font-weight:600;margin:6px 0 14px -4px;padding:8px 8px 8px 4px;border-radius:8px}
+.back:hover{color:var(--text)}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin:14px -16px 6px;padding:2px 16px 8px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs a{flex:none;padding:8px 14px;border-radius:99px;background:var(--surface);color:var(--text);text-decoration:none;font-weight:600;font-size:14px}
+.sec{padding:26px 0 8px;scroll-margin-top:70px}
+.sec>h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px}
+.group{background:var(--surface);border-radius:var(--r-lg)}
+.item{display:flex;gap:16px;align-items:center;padding:16px 18px}
+.item + .item{border-top:1px solid var(--line)}
+.item .txt{flex:1;min-width:0}
+.item .txt p{font-size:13px;color:var(--muted);margin-top:2px}
+.item.col{flex-direction:column;align-items:stretch;gap:12px}
+.item .inner{display:flex;gap:16px;align-items:center}
+.kv{display:flex;justify-content:space-between;gap:16px}
+.kv span:last-child{color:var(--muted);text-align:right;overflow-wrap:anywhere}
+.form{display:grid;gap:14px;grid-template-columns:1fr 1fr;align-items:end}
+.form .full{grid-column:1/-1}
+.formmsg{font-size:13px;min-height:20px}
+.formmsg.ok{color:var(--accent)}.formmsg.err{color:var(--danger)}
+.switch{position:relative;width:50px;height:30px;flex:none}
+.switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer;width:100%;height:100%}
+.switch i{position:absolute;inset:0;border-radius:15px;background:var(--line);transition:background .15s;pointer-events:none}
+.switch i::after{content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
+.switch input:checked + i{background:var(--accent)}
+.switch input:checked + i::after{transform:translateX(20px)}
+.switch input:focus-visible + i{outline:2px solid var(--accent);outline-offset:2px}
+.seg{display:inline-flex;background:var(--hover);border-radius:var(--r);padding:3px}
+.seg button{border:0;background:none;padding:7px 14px;border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;color:var(--muted)}
+.seg button[aria-pressed=true]{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+pre.log{margin:0;padding:14px;border-radius:var(--r);background:var(--bg);font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow:auto;max-height:340px}
+.dangerzone .group{box-shadow:inset 0 0 0 1.5px var(--danger-soft)}
+.dangerzone>h2{color:var(--danger)}
+footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom));font-size:13px;color:var(--muted)}
+
+/* ---------- Phone ---------- */
+@media (max-width:720px){
+  h1{font-size:20px}
+  .status{grid-template-columns:1fr}
+  .cell + .cell{border-left:0;border-top:1px solid var(--line)}
+  .cell.mode{flex-wrap:wrap}
+  .cell.mode .btn{width:100%;margin-top:2px}
+  .search{flex:1 1 100%;order:3}
+  .sort-m{display:block;order:2;flex:0 1 auto;width:auto;min-height:40px;padding:0 4px;border-color:transparent;background:transparent;color:var(--muted);font-size:14px;font-weight:600}
+  .cols{display:none}
+  .row{grid-template-columns:40px minmax(0,1fr) 44px;padding-left:4px;padding-right:0}
+  .row .num,.row .date{display:none}
+  .row .meta{display:block}
+  .toolbar .up{display:none}
+  .fab{display:inline-flex;position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom) + var(--ph,0px));z-index:25;min-height:54px;padding:0 20px;border-radius:27px;box-shadow:var(--shadow)}
+  .uploads{right:0;left:0;bottom:0;width:auto;max-width:none;border-radius:var(--r-lg) var(--r-lg) 0 0;padding-bottom:env(safe-area-inset-bottom)}
+  .scrim{background:rgba(10,12,14,.45)}
+  .menu{left:0!important;right:0;top:auto!important;bottom:0;border-radius:var(--r-lg) var(--r-lg) 0 0;padding:8px 8px calc(12px + env(safe-area-inset-bottom))}
+  .menu .mhead{display:block;padding:10px 12px 8px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .menu button{min-height:52px}
+  .form{grid-template-columns:1fr}
+  .list{padding-bottom:84px}
+  .item{padding:14px 16px}
+}
 </style>
 </head>
 <body>
-<main>
-<h1>WiFi PrintDrive <span id="badge" class="badge" style="background:#888">…</span></h1>
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h9.8M18.2 6H20M4 12h3.8M12.2 12H20M4 18h11.3M19.7 18H20"/><circle cx="16" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="17.5" cy="18" r="2.2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V5M7.5 9.5 12 5l4.5 4.5M5 19h14"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 5v11M7.5 11.5 12 16l4.5-4.5M5 19h14"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20l1-4L16.5 4.5a2.1 2.1 0 0 1 3 3L8 19l-4 1z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M9 7V5h6v2M7 7l1 12h8l1-12"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-usb" viewBox="0 0 24 24"><path d="M9 3h6v5H9zM7 8h10v5a5 5 0 0 1-10 0zM12 18v3"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><path d="M7 3h7l4 4v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 7v3M12 7v3"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19zM12 9.5v4.5M12 17v.3"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V6M7 11l5-5 5 5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v13M7 13l5 5 5-5"/></symbol>
+</svg>
 
-<section class="card" id="modeCard">
-  <h2 id="modeTitle">Status wird geladen …</h2>
-  <div id="modeText" class="muted"></div>
-  <div class="row" style="margin-top:10px">
-    <button id="btnApp" class="primary" hidden>Für Upload übernehmen</button>
-    <button id="btnUsb" class="primary" hidden>Am USB bereitstellen</button>
-  </div>
-  <div id="modeMsg"></div>
-</section>
+<header class="top"><div class="wrap">
+  <a class="brand" href="#" aria-label="WiFi DataDrive – Meine Dateien">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><g fill="none" stroke="var(--on-accent)" stroke-width="2.2" stroke-linecap="round"><path d="M9.5 13a9.2 9.2 0 0 1 13 0"/><path d="M12.7 16.2a4.7 4.7 0 0 1 6.6 0"/></g><rect x="8" y="19.5" width="16" height="6" rx="2" fill="var(--on-accent)"/><circle cx="20.5" cy="22.5" r="1.1" fill="var(--accent)"/></svg>
+    WiFi DataDrive
+  </a>
+  <a class="icon-btn" href="#einstellungen" id="navSettings" aria-label="Einstellungen" title="Einstellungen"><svg class="i"><use href="#i-settings"/></svg></a>
+</div></header>
 
-<section class="card">
-  <h2>Datei hochladen</h2>
-  <div id="drop">
-    <strong>3MF-Datei hierher ziehen</strong><br>
-    <span class="muted">oder tippen, um eine Datei auszuwählen</span>
-    <input id="fileInput" type="file" multiple hidden>
-  </div>
-  <label class="chk"><input type="checkbox" id="autoProvide" checked> Nach dem Upload automatisch am USB bereitstellen</label>
-  <div id="uploads"></div>
-</section>
+<div class="wrap">
+  <div class="notice" id="notice" role="status" hidden></div>
 
-<section class="card">
-  <div class="row" style="justify-content:space-between">
-    <h2 style="margin:0">Dateien</h2>
-    <span class="muted" id="space"></span>
-  </div>
-  <div class="bar" style="margin:8px 0 4px"><div id="spaceBar"></div></div>
-  <div id="fileArea" class="muted">…</div>
-</section>
+  <!-- ================= Files view ================= -->
+  <main id="vFiles">
+    <section class="status" id="status">
+      <div class="cell mode" id="modeCell">
+        <span class="badge"><svg class="i"><use id="modeIcon" href="#i-usb"/></svg></span>
+        <span class="txt"><span class="title" id="modeTitle">Verbindung wird hergestellt …</span><span class="sub" id="modeSub">&nbsp;</span></span>
+        <button class="btn" id="modeBtn" hidden></button>
+      </div>
+      <div class="cell">
+        <span class="badge"><svg class="i"><use href="#i-card"/></svg></span>
+        <span class="txt"><span class="title" id="stoTitle">Speicher</span><span class="sub" id="stoSub">&nbsp;</span>
+          <span class="bar" id="stoBar"><i></i></span></span>
+      </div>
+    </section>
 
-<section class="card">
-  <details>
-    <summary>Einstellungen</summary>
-    <h2 style="margin-top:14px">WLAN</h2>
-    <div class="muted" id="wifiInfo"></div>
-    <form id="wifiForm" class="grid" style="margin-top:8px">
-      <input type="text" id="ssid" placeholder="WLAN-Name (SSID)" autocomplete="off" required maxlength="32">
-      <input type="password" id="pass" placeholder="Passwort" autocomplete="new-password" maxlength="63">
-      <button class="primary" type="submit">Speichern &amp; verbinden</button>
-    </form>
-    <div id="wifiMsg"></div>
-
-    <h2 style="margin-top:18px">USB-Zugriff des Hosts</h2>
-    <label class="chk"><input type="checkbox" id="hostWritable"> Host darf auf das Laufwerk schreiben</label>
-    <div class="muted">Für den Drucker empfohlen: aus (nur lesen). Dann kann der Host das Dateisystem nicht beschädigen. Wirkt beim nächsten Bereitstellen.</div>
-
-    <h2 style="margin-top:18px">Gerät</h2>
-    <div class="row">
-      <button id="btnLog">Log anzeigen</button>
-      <button id="btnReboot">Neustart</button>
-      <button id="btnFlash">Flash-Modus</button>
-      <button id="btnFormat" class="danger">Formatieren …</button>
+    <div class="toolbar">
+      <h1>Meine Dateien<span class="count" id="count"></span></h1>
+      <label class="search" id="searchBox" hidden><svg class="i"><use href="#i-search"/></svg>
+        <input class="field" id="search" type="search" placeholder="Dateien suchen" aria-label="Dateien suchen" autocomplete="off"></label>
+      <select class="field sort-m" id="sortM" aria-label="Sortierung" hidden>
+        <option value="name,1">Name (A–Z)</option><option value="name,-1">Name (Z–A)</option>
+        <option value="mtime,-1">Neueste zuerst</option><option value="mtime,1">Älteste zuerst</option>
+        <option value="size,-1">Größte zuerst</option><option value="size,1">Kleinste zuerst</option>
+      </select>
+      <button class="btn primary up" id="upBtn" hidden><svg class="i"><use href="#i-upload"/></svg>Hochladen</button>
     </div>
-    <div class="muted" id="devInfo" style="margin-top:8px"></div>
-    <pre id="log" hidden></pre>
-  </details>
-</section>
-</main>
+    <div class="list" id="list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+  </main>
 
-<dialog id="dlg">
-  <h2 id="dlgTitle"></h2>
-  <p id="dlgText"></p>
-  <input type="text" id="dlgInput" hidden>
-  <div class="row" style="justify-content:flex-end;margin-top:12px">
-    <button id="dlgNo">Abbrechen</button>
-    <button id="dlgYes" class="primary">OK</button>
-  </div>
+  <!-- ================= Settings view ================= -->
+  <main id="vSettings" hidden>
+    <a class="back" href="#"><svg class="i"><use href="#i-back"/></svg>Meine Dateien</a>
+    <h1>Einstellungen</h1>
+    <nav class="tabs" aria-label="Bereiche">
+      <a href="#s-net">Netzwerk</a><a href="#s-usb">Speicher &amp; USB</a><a href="#s-sec">Sicherheit</a><a href="#s-sys">System</a>
+    </nav>
+
+    <section class="sec" id="s-net"><h2>Netzwerk</h2>
+      <div class="group">
+        <div class="item"><div class="txt"><h3 id="netTitle">WLAN</h3><p id="netSub"></p></div></div>
+        <div class="item col"><div class="kv"><span>Adresse</span><span id="netAddr">–</span></div>
+          <div class="kv"><span>Name im Netzwerk</span><span id="netHost">–</span></div></div>
+        <div class="item col">
+          <div class="txt"><h3>Mit anderem WLAN verbinden</h3><p>Nach dem Speichern verbindet sich das Laufwerk neu. Die neue Adresse steht dann auf seinem Display.</p></div>
+          <form class="form" id="wifiForm" novalidate>
+            <div><label class="lbl" for="ssid">WLAN-Name</label><input class="field" id="ssid" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
+            <div><label class="lbl" for="pass">Passwort</label><input class="field" id="pass" type="password" maxlength="63" autocomplete="new-password"></div>
+            <div class="formmsg full" id="wifiMsg" role="status"></div>
+            <div class="full"><button class="btn primary" id="wifiBtn" type="submit">Speichern und verbinden</button></div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="s-usb"><h2>Speicher &amp; USB</h2>
+      <div class="group">
+        <div class="item col"><div class="kv"><span>Speichermedium</span><span id="suMedium">–</span></div>
+          <div class="kv"><span>Belegt</span><span id="suUsed">–</span></div>
+          <div class="kv"><span>Frei</span><span id="suFree">–</span></div></div>
+        <div class="item"><div class="txt"><h3>USB-Gerät darf Dateien ändern</h3><p>Ausgeschaltet kann das angeschlossene Gerät Dateien nur lesen – empfohlen für Drucker und andere Geräte, die nichts speichern müssen. Gilt ab dem nächsten Bereitstellen.</p></div>
+          <label class="switch"><input type="checkbox" id="swWrite" aria-label="USB-Gerät darf Dateien ändern"><i></i></label></div>
+        <div class="item"><div class="txt"><h3>Nach dem Hochladen wieder bereitstellen</h3><p>Wird ein Upload gestartet, während das USB-Laufwerk aktiv ist, steht es danach automatisch wieder für das USB-Gerät bereit. Gilt für diesen Browser.</p></div>
+          <label class="switch"><input type="checkbox" id="swAuto" aria-label="Nach dem Hochladen wieder bereitstellen"><i></i></label></div>
+      </div>
+    </section>
+
+    <section class="sec" id="s-sec"><h2>Sicherheit</h2>
+      <div class="group">
+        <div class="item"><div class="txt"><h3>Zugriff auf diese Oberfläche</h3><p>Alle Geräte im selben WLAN können diese Seite öffnen und Dateien verwalten. Ein Passwortschutz ist noch nicht verfügbar – verwende das Laufwerk daher nur in einem vertrauenswürdigen Netzwerk.</p></div></div>
+        <div class="item"><div class="txt"><h3>Einrichtungs-WLAN</h3><p id="secAp"></p></div></div>
+        <div class="item"><div class="txt"><h3>Erlaubte Dateien</h3><p id="secTypes">–</p></div></div>
+      </div>
+    </section>
+
+    <section class="sec" id="s-sys"><h2>System</h2>
+      <div class="group">
+        <div class="item"><div class="txt"><h3>Darstellung</h3></div>
+          <div class="seg" id="theme" role="group" aria-label="Darstellung">
+            <button data-t="">Automatisch</button><button data-t="light">Hell</button><button data-t="dark">Dunkel</button></div></div>
+        <div class="item col"><div class="kv"><span>Version</span><span id="sysVer">–</span></div>
+          <div class="kv"><span>In Betrieb seit</span><span id="sysUp">–</span></div>
+          <div class="kv"><span>Freier Arbeitsspeicher</span><span id="sysHeap">–</span></div></div>
+        <div class="item col"><div class="inner"><div class="txt"><h3>Protokoll</h3><p>Hilft bei der Fehlersuche.</p></div>
+          <button class="btn" id="logBtn">Anzeigen</button></div><pre class="log" id="log" hidden></pre></div>
+        <div class="item"><div class="txt"><h3>Neu starten</h3><p>Ein angeschlossenes USB-Gerät verliert das Laufwerk dabei für einige Sekunden.</p></div>
+          <button class="btn" id="rebootBtn">Neu starten</button></div>
+      </div>
+    </section>
+
+    <section class="sec dangerzone" id="s-danger"><h2>Gefahrenbereich</h2>
+      <div class="group">
+        <div class="item"><div class="txt"><h3>Speicher formatieren</h3><p id="fmtSub">Löscht alle Dateien unwiderruflich.</p></div>
+          <button class="btn outline-danger" id="fmtBtn">Formatieren …</button></div>
+        <div class="item"><div class="txt"><h3>Wartungsmodus</h3><p>Startet das Laufwerk so, dass neue Gerätesoftware aufgespielt werden kann. Diese Oberfläche ist danach nicht erreichbar, bis das Laufwerk aus- und wieder eingesteckt wird.</p></div>
+          <button class="btn outline-danger" id="flashBtn">Starten …</button></div>
+      </div>
+    </section>
+    <footer id="foot"></footer>
+  </main>
+</div>
+
+<button class="btn primary fab" id="fab" hidden><svg class="i"><use href="#i-upload"/></svg>Hochladen</button>
+<input type="file" id="picker" multiple hidden>
+
+<aside class="uploads" id="uploads" aria-label="Uploads" hidden>
+  <header><strong id="upHead">Uploads</strong><button class="icon-btn" id="upClose" aria-label="Schließen" title="Schließen"><svg class="i"><use href="#i-x"/></svg></button></header>
+  <ul id="upList"></ul>
+</aside>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="drop" id="drop" hidden>Dateien zum Hochladen hier ablegen</div>
+<div class="scrim" id="scrim" hidden></div>
+<div class="menu" id="menu" role="menu" hidden></div>
+
+<dialog id="dlg" aria-labelledby="dTitle">
+  <form method="dialog" id="dForm">
+    <h2 id="dTitle"></h2><div id="dBody"></div>
+    <div id="dInputWrap" hidden><label class="lbl" id="dLabel" for="dInput"></label><input class="field" id="dInput" autocomplete="off" spellcheck="false"></div>
+    <div class="derr" id="dErr" role="alert"></div>
+    <div class="dacts"><button class="btn" type="button" id="dNo">Abbrechen</button><button class="btn primary" type="submit" id="dYes">OK</button></div>
+  </form>
 </dialog>
 
 <script>
 "use strict";
-const $ = id => document.getElementById(id);
-const H = {"X-PrintDrive": "1"};
-let st = null, uploading = false, pollTimer = null;
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const icon = n => `<svg class="i" aria-hidden="true"><use href="#i-${n}"/></svg>`;
+const enc = encodeURIComponent;
+const GIB4 = 4294967296;
 
-function fmt(b){ if(b>=1073741824) return (b/1073741824).toFixed(1)+" GB"; if(b>=1048576) return (b/1048576).toFixed(1)+" MB"; if(b>=1024) return (b/1024).toFixed(0)+" kB"; return b+" B"; }
-function esc(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
-function msg(el, text, ok){ el.innerHTML = text ? `<div class="msg ${ok?"ok":"err"}">${esc(text)}</div>` : ""; }
+const S = {
+  st: null,            // last status from the device
+  files: null,         // null = not loaded, [] = empty
+  dirs: 0, trunc: false,
+  listKey: "",         // change detector for reloading the file list
+  q: "", sort: {k: "name", d: 1},
+  switching: "",       // "app" | "usb" while a mode change is running
+  fails: 0,            // consecutive failed status polls
+  restart: "",         // "normal" | "download" | "format" after such a request
+  sawDown: false,      // device was unreachable since the restart request
+  ups: [], working: false, upSeq: 0
+};
 
-function ask(title, text, opts={}){
-  return new Promise(res => {
-    const d=$("dlg"); $("dlgTitle").textContent=title; $("dlgText").textContent=text;
-    const inp=$("dlgInput"); inp.hidden=!opts.input; inp.value=""; inp.placeholder=opts.input||"";
-    $("dlgYes").textContent=opts.yes||"OK"; $("dlgYes").className=opts.danger?"danger":"primary";
-    const done=v=>{ d.close(); $("dlgYes").onclick=$("dlgNo").onclick=null; res(v); };
-    $("dlgYes").onclick=()=>done(opts.input?inp.value:true);
-    $("dlgNo").onclick=()=>done(false);
+/* ---------- preferences (per browser) ---------- */
+const pref = {
+  get(k, d){ try { const v = localStorage.getItem("dd-" + k); return v === null ? d : v; } catch(e) { return d; } },
+  set(k, v){ try { v === "" ? localStorage.removeItem("dd-" + k) : localStorage.setItem("dd-" + k, v); } catch(e) {} }
+};
+function applyTheme(){ const t = pref.get("theme", ""); if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
+applyTheme();
+
+/* ---------- formatting ---------- */
+const nf = new Intl.NumberFormat("de-DE", {maximumFractionDigits: 1});
+function fsize(b){ const u = ["B","kB","MB","GB","TB"]; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return nf.format(b) + " " + u[i]; }
+// mtime is local wall-clock time stored as if it were UTC (the file system has no time zone).
+function fdate(t){
+  if (!t) return "–";
+  const d = new Date(t * 1000), now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+  const day = x => Math.floor(x.getTime() / 864e5), diff = day(now) - day(d);
+  const tm = d.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", timeZone: "UTC"});
+  if (diff === 0) return "Heute, " + tm;
+  if (diff === 1) return "Gestern, " + tm;
+  return d.toLocaleDateString("de-DE", {day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC"});
+}
+function fdur(s){ if (s < 90) return "gerade eben"; if (s < 5400) return Math.round(s / 60) + " Minuten"; if (s < 129600) return Math.round(s / 3600) + " Stunden"; return Math.round(s / 86400) + " Tagen"; }
+const localSecs = ms => Math.floor(ms / 1000) - new Date(ms).getTimezoneOffset() * 60;
+const CATS = {model: "3mf stl obj step stp gcode amf", image: "jpg jpeg png gif webp svg bmp heic", doc: "pdf txt md doc docx odt xls xlsx csv ppt pptx", archive: "zip 7z rar gz tar", media: "mp3 wav flac m4a mp4 mov mkv avi"};
+function ftype(name){
+  const m = /\.([^.]+)$/.exec(name), ext = m ? m[1].toLowerCase() : "";
+  const cat = Object.keys(CATS).find(c => CATS[c].split(" ").includes(ext)) || "";
+  return {cat, label: ext ? ext.slice(0, 4).toUpperCase() : "?"};
+}
+
+/* ---------- server ---------- */
+async function api(path, o = {}){
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), o.timeout || 20000);
+  const init = {method: o.method || "GET", cache: "no-store", signal: ctl.signal, headers: {}};
+  if (init.method === "POST") init.headers["X-PrintDrive"] = "1";
+  if (o.body !== undefined) { init.body = o.body; init.headers["Content-Type"] = "application/x-www-form-urlencoded"; }
+  try {
+    const r = await fetch(path, init);
+    if (o.text) return r.ok ? await r.text() : null;
+    let j = null; try { j = await r.json(); } catch(e) {}
+    return j || {ok: false, code: "HTTP", error: "Unerwartete Antwort des Laufwerks (" + r.status + ")."};
+  } catch(e) {
+    return o.text ? null : {ok: false, code: "OFFLINE", error: "Keine Antwort vom Laufwerk."};
+  } finally { clearTimeout(timer); }
+}
+const post = (path, o = {}) => api(path, Object.assign({method: "POST"}, o));
+
+/* ---------- toasts & dialog ---------- */
+function toast(text, err){
+  const el = document.createElement("div");
+  el.className = "toast" + (err ? " err" : ""); el.setAttribute("role", err ? "alert" : "status"); el.textContent = text;
+  $("#toasts").appendChild(el);
+  setTimeout(() => el.remove(), err ? 8000 : 4500);
+}
+/* ask({title, text|html, yes, no, danger, input:{label,value,placeholder,select}, run})
+   run(value) may return an error string: the dialog then stays open and shows it. */
+function ask(o){
+  return new Promise(resolve => {
+    const d = $("#dlg"), yes = $("#dYes"), no = $("#dNo"), inp = $("#dInput");
+    $("#dTitle").textContent = o.title;
+    $("#dBody").innerHTML = o.html || (o.text ? `<p>${esc(o.text)}</p>` : "");
+    $("#dErr").textContent = "";
+    $("#dInputWrap").hidden = !o.input;
+    if (o.input) { $("#dLabel").textContent = o.input.label; inp.value = o.input.value || ""; inp.placeholder = o.input.placeholder || ""; }
+    yes.textContent = o.yes || "OK"; yes.className = "btn " + (o.danger ? "danger" : "primary"); yes.disabled = false;
+    no.textContent = o.no || "Abbrechen";
+    let done = false;
+    const finish = v => { if (done) return; done = true; d.close(); resolve(v); };
+    $("#dForm").onsubmit = async e => {
+      e.preventDefault();
+      const val = o.input ? inp.value.trim() : true;
+      if (o.run) {
+        yes.disabled = true; $("#dErr").textContent = "";
+        const err = await o.run(val);
+        yes.disabled = false;
+        if (err) { $("#dErr").textContent = err; return; }
+      }
+      finish(val);
+    };
+    no.onclick = () => finish(false);
+    d.oncancel = e => { e.preventDefault(); finish(false); };
+    d.onclick = e => { if (e.target === d) finish(false); };
     d.showModal();
+    if (o.input) { inp.focus(); if (o.input.select) inp.setSelectionRange(0, o.input.select); else inp.select(); }
+    else (o.danger ? no : yes).focus();
   });
 }
 
-async function api(path, opts={}){
-  let r;
-  try { r = await fetch(path, Object.assign({cache:"no-store"}, opts)); }
-  catch(e) { return {ok:false, code:"OFFLINE", error:"Keine Verbindung zum Dongle."}; }
-  let j = {}; try { j = await r.json(); } catch(e) {}
-  if(!r.ok && j.ok===undefined) j = {ok:false, error:"HTTP "+r.status};
-  return j;
+/* ---------- status polling ---------- */
+let pollTimer = 0;
+function schedule(ms){ clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
+async function poll(){
+  if (S.working || document.hidden) return schedule(3000);   // the device handles one request at a time
+  await refresh();
+  schedule(S.restart || S.fails ? 2000 : 3000);
 }
-const post = (path, body) => api(path, {method:"POST", headers:H, body});
-
-// ---------------------------------------------------------------- status
-async function refresh(){
-  const s = await api("/api/status");
-  if(s.ok===false){ $("badge").textContent="offline"; $("badge").style.background="#888"; return; }
-  st = s;
-  render();
-  if(st.drive.owner==="app" && st.drive.fs_ok) loadFiles(); else showFilesUnavailable();
-}
-
-function render(){
-  const d=st.drive, w=st.wifi;
-  let badge="BEREIT", col="var(--blue)", title, text;
-  if(!d.fs_ok){ badge="FEHLER"; col="var(--red)"; }
-  else if(st.upload.active){ badge="UPLOAD"; col="var(--orange)"; }
-  else if(d.owner==="usb"){ badge="USB"; col="var(--green)"; }
-  $("badge").textContent=badge; $("badge").style.background=col;
-
-  if(d.needs_format){
-    title="Kein gültiges Dateisystem";
-    text="Der Speicher enthält kein lesbares FAT-Dateisystem. Unter Einstellungen → Formatieren kann ein neues angelegt werden (alle Daten gehen verloren).";
-  } else if(d.owner==="usb"){
-    title="Laufwerk ist am USB-Host bereitgestellt";
-    text = !d.usb_connected ? "Kein USB-Host verbunden." :
-      (d.host_write_idle_ms>=0 && d.host_write_idle_ms<d.write_guard_ms) ? "Der Host schreibt gerade." :
-      (d.host_idle_ms>=0 && d.host_idle_ms<d.write_guard_ms) ? "Der Host liest gerade." :
-      d.host_writable ? "Host hat Lese- und Schreibzugriff." : "Host hat nur Lesezugriff.";
-    text += " Zum Hochladen wird das Laufwerk vom Host übernommen.";
-  } else {
-    title="Upload-Modus – Laufwerk gehört dem Dongle";
-    text = d.usb_connected ? "Der USB-Host sieht gerade kein Medium. Nach dem Upload „Am USB bereitstellen“ wählen." : "Kein USB-Host verbunden.";
+async function refresh(forceList){
+  const j = await api("/api/status", {timeout: 6000});
+  if (!j || !j.version) {
+    S.fails++;
+    if (S.restart) S.sawDown = true;
+    renderNotice();
+    return false;
   }
-  $("modeTitle").textContent=title; $("modeText").textContent=text;
-  $("btnApp").hidden = d.owner!=="usb" || uploading;
-  $("btnUsb").hidden = d.owner!=="app" || !d.fs_ok || uploading;
-
-  $("space").textContent = d.total ? `${st.medium.sd ? "microSD" : "Interner Flash"}: ${fmt(d.free)} frei von ${fmt(d.total)}` : "";
-  $("spaceBar").style.width = d.total ? (100*(d.total-d.free)/d.total).toFixed(1)+"%" : "0";
-
-  $("wifiInfo").textContent = w.sta_connected ? `Verbunden mit „${w.ssid}“, IP ${w.ip}, ${w.rssi} dBm, http://${w.hostname}.local` :
-      (w.sta_configured ? `Verbinde mit „${w.ssid}“ …` : "Kein WLAN konfiguriert.") +
-      (w.ap_active ? ` Einrichtungs-WLAN „${w.ap_ssid}“ aktiv (${w.ap_ip}), Passwort steht auf dem Display.` : "");
-  $("hostWritable").checked = d.host_writable;
-  $("devInfo").textContent = `Firmware ${st.version} · Laufzeit ${Math.floor(st.uptime_s/60)} min · freier RAM ${fmt(st.heap)} · Sektor ${d.sector} B`;
-  $("fileInput").accept = st.allow_gcode ? ".3mf,.gcode" : ".3mf";
+  // A restart counts as finished only once the device was unreachable or reports a fresh start.
+  if (S.restart && (S.sawDown || j.uptime_s < 15)) { toast("Das Laufwerk ist wieder bereit."); S.restart = ""; S.sawDown = false; }
+  S.fails = 0; S.st = j;
+  const d = j.drive, key = [d.owner, d.fs_ok, d.files, d.free].join("|");
+  if (d.owner === "app" && d.fs_ok) {
+    if (forceList || key !== S.listKey || S.files === null) await loadFiles();
+  } else S.files = null;
+  S.listKey = key;
+  render();
+  return true;
 }
-
-function showFilesUnavailable(){
-  const d=st.drive;
-  $("fileArea").innerHTML = `<span class="muted">${d.owner==="usb" ? "Dateiliste nur im Upload-Modus verfügbar (das Laufwerk gehört gerade dem USB-Host)." : "Keine Dateiliste verfügbar."}</span>`;
-}
-
 async function loadFiles(){
   const j = await api("/api/files");
-  if(!j.ok){ $("fileArea").innerHTML=`<span class="muted">${esc(j.error||"Fehler")}</span>`; return; }
-  if(!j.files.length){ $("fileArea").innerHTML='<span class="muted">Keine Dateien.</span>'; return; }
-  j.files.sort((a,b)=>a.name.localeCompare(b.name));
-  $("fileArea").innerHTML = "<table>" + j.files.map(f =>
-    `<tr><td>${esc(f.name)}</td><td class="num">${fmt(f.size)}</td><td class="act">
-     <a class="btn" href="/api/download?name=${encodeURIComponent(f.name)}" download="${esc(f.name)}">⬇</a>
-     <button class="danger" data-del="${esc(f.name)}">Löschen</button></td></tr>`).join("") + "</table>" +
-    (j.truncated ? '<div class="muted">Liste gekürzt.</div>' : "");
-  document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => del(b.dataset.del));
+  if (j.ok) { S.files = j.files; S.dirs = j.dirs || 0; S.trunc = !!j.truncated; }
+  else if (j.code !== "OFFLINE") S.files = null;
 }
 
-async function del(name){
-  if(!await ask("Datei löschen?", name, {yes:"Löschen", danger:true})) return;
-  const j = await post("/api/delete?name="+encodeURIComponent(name));
-  if(!j.ok) await ask("Fehler", j.error, {yes:"OK"});
-  refresh();
+/* ---------- rendering ---------- */
+function render(){ renderNotice(); renderStatus(); renderList(); renderSettings(); }
+
+function renderNotice(){
+  const n = $("#notice");
+  let html = "", cls = "notice";
+  if (S.restart === "download") { cls += " info"; html = icon("alert") + "<span>Der Wartungsmodus ist aktiv. Zum Beenden das Laufwerk aus- und wieder einstecken.</span>"; }
+  else if (S.restart) { cls += " info"; html = '<span class="spin"></span><span>Das Laufwerk startet neu …</span>'; }
+  else if (S.fails >= 2) html = icon("alert") + "<span>Keine Antwort vom Laufwerk. Wird gerade eine große Datei übertragen, ist das normal – sonst bitte die WLAN-Verbindung prüfen. Neuer Versuch läuft …</span>";
+  n.className = cls; n.innerHTML = html; n.hidden = !html;
 }
 
-// ---------------------------------------------------------------- mode switching
-async function takeOver(){
-  let j = await post("/api/mode?target=app");
-  if(j.code==="HOST_ACTIVE"){
-    const ok = await ask("Laufwerk vom Host übernehmen?",
-      "Der USB-Host hat das Laufwerk nicht ausgeworfen. Läuft gerade ein Druck von diesem Laufwerk, wird er dadurch abgebrochen. Besser zuerst am Host „Auswerfen“ wählen. Trotzdem übernehmen?",
-      {yes:"Übernehmen", danger:true});
-    if(!ok) return false;
-    j = await post("/api/mode?target=app&force=1");
+function hostText(d){
+  if (!d.usb_connected) return "Kein USB-Gerät angeschlossen.";
+  const g = d.write_guard_ms || 3000;
+  if (d.host_write_idle_ms >= 0 && d.host_write_idle_ms < g) return "Das USB-Gerät schreibt gerade auf das Laufwerk.";
+  if (d.host_idle_ms >= 0 && d.host_idle_ms < g) return "Das USB-Gerät greift gerade auf das Laufwerk zu.";
+  return d.host_writable ? "Das angeschlossene USB-Gerät hat Zugriff auf die Dateien." : "Das angeschlossene USB-Gerät kann die Dateien lesen.";
+}
+const broken = d => d.needs_format || !d.fs_ok || d.owner === "none";
+
+function renderStatus(){
+  const st = S.st; if (!st) return;
+  const d = st.drive, cell = $("#modeCell"), btn = $("#modeBtn");
+  let mode, ic, title, sub, label = "", primary = false;
+  if (broken(d)) {
+    mode = "err"; ic = "alert"; title = "Speicher nicht lesbar";
+    sub = "Auf dem Speicher wurde kein lesbares Dateisystem gefunden.";
+  } else if (d.owner === "usb") {
+    mode = "usb"; ic = "usb"; title = "USB-Laufwerk aktiv"; sub = hostText(d);
+    label = "Dateiverwaltung aktivieren"; primary = true;
+  } else {
+    mode = "app"; ic = "folder"; title = "Dateiverwaltung aktiv";
+    sub = d.usb_connected ? "Das USB-Gerät sieht das Laufwerk im Moment nicht." : "Kein USB-Gerät angeschlossen.";
+    label = "USB-Laufwerk bereitstellen";
   }
-  msg($("modeMsg"), j.ok ? "" : j.error, false);
-  await refresh();
-  return j.ok;
+  cell.className = "cell mode mode-" + mode;
+  $("#modeIcon").setAttribute("href", "#i-" + ic);
+  $("#modeTitle").textContent = title; $("#modeSub").textContent = sub;
+  btn.hidden = !label;
+  if (label) {
+    btn.className = "btn" + (primary ? " primary" : "");
+    btn.disabled = !!S.switching || S.working;
+    btn.innerHTML = S.switching ? '<span class="spin"></span>' + (S.switching === "app" ? "Wird aktiviert …" : "Wird bereitgestellt …") : esc(label);
+    btn.onclick = mode === "usb" ? () => activate() : () => provide();
+  }
+  const used = Math.max(0, d.total - d.free), pct = d.total ? used / d.total * 100 : 0, bar = $("#stoBar");
+  $("#stoTitle").textContent = st.medium.sd ? "microSD-Karte" : "Interner Speicher";
+  $("#stoSub").textContent = d.total ? `${fsize(used)} von ${fsize(d.total)} belegt` : "Größe unbekannt";
+  bar.className = "bar" + (pct > 97 ? " full" : pct > 85 ? " high" : "");
+  bar.firstElementChild.style.width = (used && pct < 1 ? 1 : pct).toFixed(1) + "%";
 }
 
-async function provide(){
-  const j = await post("/api/mode?target=usb");
-  msg($("modeMsg"), j.ok ? "Laufwerk wurde am USB bereitgestellt." : j.error, j.ok);
-  refresh();
-  return j.ok;
+function visibleFiles(){
+  const q = S.q.toLowerCase(), {k, d} = S.sort;
+  const list = (S.files || []).filter(f => !q || f.name.toLowerCase().includes(q));
+  const byName = (a, b) => a.name.localeCompare(b.name, "de", {numeric: true, sensitivity: "base"});
+  return list.sort((a, b) => (k === "name" ? byName(a, b) : (a[k] - b[k]) || byName(a, b)) * d);
 }
-$("btnApp").onclick = takeOver;
-$("btnUsb").onclick = provide;
+const inSettings = () => !$("#vSettings").hidden;
 
-// ---------------------------------------------------------------- upload
-function allowed(name){ const n=name.toLowerCase(); return n.endsWith(".3mf") || (st && st.allow_gcode && n.endsWith(".gcode")); }
+function renderList(){
+  const st = S.st, box = $("#list"); if (!st) return;
+  const d = st.drive, fileMode = d.owner === "app" && !broken(d);
+  const has = fileMode && S.files && S.files.length > 0;
+  $("#searchBox").hidden = $("#sortM").hidden = !has;
+  $("#upBtn").hidden = !fileMode; $("#fab").hidden = !fileMode || inSettings();
+  $("#upBtn").disabled = $("#fab").disabled = !!S.switching;
+  $("#count").textContent = has ? (S.q ? `${visibleFiles().length} von ${S.files.length}` : `${S.files.length}`) : "";
 
-function uploadOne(file, overwrite, ui){
-  return new Promise(resolve => {
-    const x = new XMLHttpRequest();
-    x.open("POST", `/api/upload?name=${encodeURIComponent(file.name)}&overwrite=${overwrite?1:0}`);
-    x.setRequestHeader("X-PrintDrive","1");
-    x.setRequestHeader("Content-Type","application/octet-stream");
-    x.upload.onprogress = e => { if(e.lengthComputable){ ui.bar.style.width=(100*e.loaded/e.total).toFixed(1)+"%"; ui.info.textContent=`${fmt(e.loaded)} / ${fmt(e.total)}`; } };
-    x.onload = () => { let j={}; try{ j=JSON.parse(x.responseText); }catch(e){ j={ok:false,error:"HTTP "+x.status}; } resolve(j); };
-    x.onerror = () => resolve({ok:false, error:"Verbindung abgebrochen – Datei wurde nicht gespeichert."});
-    x.send(file);
+  if (broken(d)) {
+    box.innerHTML = `<div class="state"><div class="big">${icon("alert")}</div><h2>Der Speicher muss eingerichtet werden</h2>
+      <p>Das Laufwerk kann den Speicher nicht lesen. In den Einstellungen lässt er sich neu formatieren – dabei gehen alle vorhandenen Daten verloren.</p>
+      <div class="acts"><a class="btn primary" href="#einstellungen">Zu den Einstellungen</a></div></div>`;
+    return;
+  }
+  if (!fileMode) {
+    const n = d.files;
+    box.innerHTML = `<div class="state"><div class="big">${icon("lock")}</div><h2>Die Dateien gehören gerade dem USB-Gerät</h2>
+      <p>Damit nichts durcheinandergerät, kann immer nur eine Seite auf das Laufwerk zugreifen. Aktiviere die Dateiverwaltung, um Dateien anzusehen, hochzuladen oder zu löschen – das USB-Gerät sieht das Laufwerk so lange nicht.${n ? ` Zuletzt ${n === 1 ? "war 1 Datei" : "waren " + n + " Dateien"} gespeichert.` : ""}</p>
+      <div class="acts"><button class="btn" id="lockedUp" ${S.switching || S.working ? "disabled" : ""}>${icon("upload")}Dateien hochladen</button></div></div>`;
+    $("#lockedUp").onclick = pick;
+    return;
+  }
+  if (S.files === null) { box.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>'; return; }
+  if (!S.files.length) {
+    box.innerHTML = `<div class="state"><div class="big">${icon("folder")}</div><h2>Noch keine Dateien</h2>
+      <p>Lade Dateien hoch, um sie auf dem Laufwerk zu speichern. Am Computer kannst du sie auch einfach in dieses Fenster ziehen.</p>
+      <div class="acts"><button class="btn primary" id="emptyUp">${icon("upload")}Dateien hochladen</button></div></div>` + notes();
+    $("#emptyUp").onclick = pick;
+    return;
+  }
+  const list = visibleFiles(), {k, d: dir} = S.sort;
+  const col = (key, label, cls) => `<button data-sort="${key}" ${k === key ? `aria-sort="${dir > 0 ? "ascending" : "descending"}"` : ""} class="${cls || ""}">${label}${k === key ? icon(dir > 0 ? "up" : "down") : ""}</button>`;
+  let html = `<div class="cols"><span></span>${col("name", "Name")}${col("size", "Größe", "num")}${col("mtime", "Geändert")}<span></span></div>`;
+  if (!list.length) html += `<div class="state"><h2>Keine Treffer</h2><p>Keine Datei enthält „${esc(S.q)}“.</p></div>`;
+  for (const f of list) {
+    const t = ftype(f.name);
+    html += `<div class="row" role="button" tabindex="0" data-name="${esc(f.name)}" title="${esc(f.name)}">
+      <span class="ficon ${t.cat}">${esc(t.label)}</span>
+      <span><span class="name">${esc(f.name)}</span><span class="meta">${fsize(f.size)}${f.mtime ? " · " + fdate(f.mtime) : ""}</span></span>
+      <span class="num">${fsize(f.size)}</span><span class="date">${fdate(f.mtime)}</span>
+      <button class="icon-btn" data-more aria-label="Aktionen für ${esc(f.name)}">${icon("more")}</button></div>`;
+  }
+  box.innerHTML = html + notes();
+}
+function notes(){
+  let s = "";
+  if (S.dirs) s += `<p class="hint">${S.dirs === 1 ? "1 Ordner wird" : S.dirs + " Ordner werden"} hier nicht angezeigt. Ordner lassen sich bisher nur am USB-Gerät öffnen.</p>`;
+  if (S.trunc) s += '<p class="hint">Es sind sehr viele Dateien gespeichert – die Liste zeigt nur einen Teil davon.</p>';
+  return s;
+}
+
+/* ---------- list interaction ---------- */
+$("#list").addEventListener("click", e => {
+  const sortBtn = e.target.closest("[data-sort]");
+  if (sortBtn) {
+    const key = sortBtn.dataset.sort;
+    S.sort = {k: key, d: S.sort.k === key ? -S.sort.d : (key === "name" ? 1 : -1)};
+    $("#sortM").value = S.sort.k + "," + S.sort.d;
+    return renderList();
+  }
+  const row = e.target.closest(".row");
+  if (row) openMenu(row, e.target.closest("[data-more]") ? null : e);
+});
+$("#list").addEventListener("contextmenu", e => { const row = e.target.closest(".row"); if (row) { e.preventDefault(); openMenu(row, e); } });
+$("#list").addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("row")) { e.preventDefault(); openMenu(e.target, null); } });
+$("#search").addEventListener("input", e => { S.q = e.target.value.trim(); renderList(); });
+$("#sortM").addEventListener("change", e => { const [k, d] = e.target.value.split(","); S.sort = {k, d: +d}; renderList(); });
+
+function closeMenu(){ $("#menu").hidden = $("#scrim").hidden = true; document.querySelectorAll(".row.open").forEach(r => r.classList.remove("open")); }
+function openMenu(row, ev){
+  const name = row.dataset.name, m = $("#menu");
+  closeMenu(); row.classList.add("open");
+  m.innerHTML = `<div class="mhead">${esc(name)}</div>
+    <button role="menuitem" data-act="dl">${icon("download")}Herunterladen</button>
+    <button role="menuitem" data-act="ren">${icon("edit")}Umbenennen</button>
+    <button role="menuitem" data-act="del" class="danger">${icon("trash")}Löschen</button>`;
+  m.hidden = $("#scrim").hidden = false;
+  const r = ev && ev.clientX ? {left: ev.clientX, bottom: ev.clientY} : row.querySelector("[data-more]").getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + "px";
+  m.style.top = Math.max(8, Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8)) + "px";
+  m.onclick = e => {
+    const b = e.target.closest("[data-act]"); if (!b) return;
+    closeMenu();
+    ({dl: download, ren: renameFile, del: deleteFile})[b.dataset.act](name);
+  };
+  m.querySelector("button").focus();
+}
+$("#scrim").onclick = closeMenu;
+addEventListener("keydown", e => { if (e.key === "Escape") closeMenu(); });
+addEventListener("resize", closeMenu);
+
+/* ---------- file actions ---------- */
+function download(name){
+  const a = document.createElement("a");
+  a.href = "/api/download?name=" + enc(name); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+const BAD_CHARS = /[\/\\:*?"<>|\x00-\x1f]/;
+async function renameFile(name){
+  const dot = name.lastIndexOf(".");
+  const to = await ask({
+    title: "Datei umbenennen", yes: "Umbenennen",
+    input: {label: "Neuer Name", value: name, select: dot > 0 ? dot : 0},
+    run: async v => {
+      if (!v) return "Bitte einen Namen eingeben.";
+      if (v === name) return "";
+      if (BAD_CHARS.test(v) || /^[. ]|[. ]$/.test(v)) return 'Der Name darf nicht mit Punkt oder Leerzeichen beginnen oder enden und keines dieser Zeichen enthalten: / \\ : * ? " < > |';
+      const r = await post(`/api/rename?name=${enc(name)}&to=${enc(v)}`);
+      if (r.ok) return "";
+      return r.code === "EXISTS" ? "Eine Datei mit diesem Namen gibt es bereits." : r.error;
+    }
+  });
+  if (to && to !== name) { await refresh(true); toast("Umbenannt in „" + to + "“."); }
+}
+async function deleteFile(name){
+  const ok = await ask({title: "Datei löschen?", text: `„${name}“ wird endgültig vom Laufwerk gelöscht.`, yes: "Löschen", danger: true,
+    run: async () => { const r = await post("/api/delete?name=" + enc(name)); return r.ok ? "" : r.error; }});
+  if (ok) { await refresh(true); toast("Gelöscht."); }
+}
+
+/* ---------- switching between USB drive and file management ---------- */
+async function activate(){
+  if (S.switching) return false;
+  S.switching = "app"; render();
+  try {
+    let r = await post("/api/mode?target=app");
+    if (r.code === "HOST_ACTIVE") {
+      S.switching = ""; render();
+      const ok = await ask({
+        title: "Laufwerk vom USB-Gerät trennen?", yes: "Trennen und fortfahren", danger: true,
+        html: "<p>Das angeschlossene USB-Gerät verwendet das Laufwerk noch. Beim Trennen wird ein laufender Zugriff unterbrochen – zum Beispiel ein Druck oder ein Kopiervorgang von diesem Laufwerk.</p><p>Sicherer ist es, das Laufwerk zuerst am USB-Gerät auszuwerfen. Dann entfällt diese Rückfrage.</p>"
+      });
+      if (!ok) return false;
+      S.switching = "app"; render();
+      r = await post("/api/mode?target=app&force=1");
+    }
+    if (!r.ok) {
+      toast(r.code === "HOST_WRITING" ? "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warte, bis es fertig ist, und versuche es dann erneut." : r.error, true);
+      return false;
+    }
+    await refresh(true);
+    return true;
+  } finally { S.switching = ""; render(); }
+}
+async function provide(quiet){
+  if (S.switching) return false;
+  S.switching = "usb"; render();
+  try {
+    const r = await post("/api/mode?target=usb");
+    if (!r.ok) { toast(r.error, true); return false; }
+    await refresh();
+    if (!quiet) toast("Das USB-Laufwerk ist bereitgestellt.");
+    return true;
+  } finally { S.switching = ""; render(); }
+}
+
+/* ---------- uploads ---------- */
+function pick(){ $("#picker").click(); }
+$("#upBtn").onclick = $("#fab").onclick = pick;
+$("#picker").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
+
+function addFiles(list){
+  const files = Array.from(list || []);
+  if (!files.length) return;
+  for (const f of files) S.ups.push({id: ++S.upSeq, file: f, name: f.name, size: f.size, state: "queued", pct: 0, msg: "Wartet"});
+  renderUploads();
+  work();
+}
+const endUp = (u, state, msg) => { u.state = state; u.msg = msg; u.xhr = null; renderUploads(); };
+
+async function work(){
+  if (S.working) return;
+  S.working = true; render();
+  let okCount = 0, tookOver = false;
+  const failQueued = msg => S.ups.filter(u => u.state === "queued").forEach(u => endUp(u, "err", msg));
+  try {
+    if (!await refresh()) failQueued("Keine Verbindung zum Laufwerk – nicht hochgeladen.");
+    else if (broken(S.st.drive)) failQueued("Der Speicher ist nicht lesbar – nicht hochgeladen.");
+    else {
+      if (S.st.drive.owner === "usb") {
+        if (await activate()) tookOver = true;
+        else failQueued("Nicht hochgeladen – die Dateiverwaltung wurde nicht aktiviert.");
+      }
+      let u;
+      while ((u = S.ups.find(x => x.state === "queued"))) { await uploadOne(u); if (u.state === "done") okCount++; }
+    }
+  } finally { S.working = false; }
+  await refresh(true);
+  if (okCount) {
+    const what = okCount === 1 ? "1 Datei gespeichert." : okCount + " Dateien gespeichert.";
+    if (tookOver && pref.get("auto", "1") === "1") toast(await provide(true) ? what + " Das USB-Laufwerk ist wieder bereitgestellt." : what);
+    else toast(what);
+  }
+  render();
+}
+
+async function uploadOne(u){
+  const types = S.st.types;
+  if (types !== "all" && !types.split(",").some(t => u.name.toLowerCase().endsWith(t))) return endUp(u, "err", "Dieser Dateityp ist nicht erlaubt (möglich: " + types.replace(/,/g, ", ") + ").");
+  if (!u.size) return endUp(u, "err", "Die Datei ist leer.");
+  if (u.size >= GIB4) return endUp(u, "err", "Zu groß – möglich sind höchstens 4 GB pro Datei.");
+  u.state = "check"; u.msg = "Wird geprüft …"; renderUploads();
+  const q = `name=${enc(u.name)}&size=${u.size}`;
+  let over = 0, c = await post(`/api/upload/check?${q}&overwrite=0`);
+  if (c.code === "EXISTS") {
+    const ok = await ask({title: "Vorhandene Datei ersetzen?", text: `„${u.name}“ gibt es auf dem Laufwerk bereits.`, yes: "Ersetzen", no: "Überspringen", danger: true});
+    if (!ok) return endUp(u, "skip", "Übersprungen");
+    over = 1; c = await post(`/api/upload/check?${q}&overwrite=1`);
+  }
+  if (!c.ok) return endUp(u, "err", c.code === "OFFLINE" ? "Keine Verbindung – nicht hochgeladen." : c.error);
+  if (u.state === "cancel") return;
+
+  u.state = "up"; u.pct = 0; u.msg = "0 %"; renderUploads();
+  const lm = u.file.lastModified || Date.now();
+  await new Promise(resolve => {
+    const x = u.xhr = new XMLHttpRequest();
+    let t0 = performance.now(), last = 0, rate = 0;
+    x.open("POST", `/api/upload?name=${enc(u.name)}&overwrite=${over}&mtime=${localSecs(lm)}&now=${localSecs(Date.now())}`);
+    x.setRequestHeader("X-PrintDrive", "1");
+    x.setRequestHeader("Content-Type", "application/octet-stream");
+    x.upload.onprogress = e => {
+      if (!e.lengthComputable) return;
+      const now = performance.now(), dt = (now - t0) / 1000;
+      if (dt > .4) { const r = (e.loaded - last) / dt; rate = rate ? rate * .7 + r * .3 : r; t0 = now; last = e.loaded; }
+      u.pct = e.loaded / e.total * 100;
+      const left = rate ? (e.total - e.loaded) / rate : 0;
+      // 100 % only means "sent"; the file counts as saved once the device confirms it.
+      u.msg = e.loaded >= e.total ? "Wird gespeichert …" : Math.floor(u.pct) + " %" + (left > 5 ? " · noch " + (left > 90 ? Math.round(left / 60) + " min" : Math.round(left) + " s") : "");
+      paintUpload(u);
+    };
+    x.onload = () => {
+      let j = null; try { j = JSON.parse(x.responseText); } catch(e) {}
+      if (j && j.ok) { u.pct = 100; endUp(u, "done", "Gespeichert"); }
+      else endUp(u, "err", j && j.error ? j.error : "Unerwartete Antwort des Laufwerks – nicht gespeichert.");
+      resolve();
+    };
+    x.onerror = () => { endUp(u, "err", "Verbindung unterbrochen – die Datei wurde nicht gespeichert."); resolve(); };
+    x.onabort = () => { endUp(u, "cancel", "Abgebrochen"); resolve(); };
+    x.send(u.file);
   });
 }
 
-async function handleFiles(list){
-  if(uploading) return;
-  const files = Array.from(list);
-  if(!files.length) return;
-  await refresh();
-  if(!st) return;
-  const bad = files.filter(f => !allowed(f.name));
-  if(bad.length){ await ask("Dateityp nicht erlaubt", bad.map(f=>f.name).join(", ") + (st.allow_gcode ? " – erlaubt: .3mf, .gcode" : " – erlaubt: .3mf"), {yes:"OK"}); return; }
-  if(st.drive.owner==="usb" && !await takeOver()) return;
-  if(st.drive.owner!=="app" || !st.drive.fs_ok){ msg($("modeMsg"), "Upload-Modus nicht verfügbar.", false); return; }
+function paintUpload(u){
+  const li = document.getElementById("up" + u.id); if (!li) return;
+  li.querySelector(".s").textContent = u.msg;
+  const bar = li.querySelector(".bar>i"); if (bar) bar.style.width = u.pct.toFixed(1) + "%";
+}
+const LIVE = ["queued", "check", "up"];
+function renderUploads(){
+  const box = $("#uploads");
+  box.hidden = !S.ups.length;
+  if (S.ups.length) {
+    const active = S.ups.filter(u => LIVE.includes(u.state)).length;
+    const done = S.ups.filter(u => u.state === "done").length, failed = S.ups.filter(u => u.state === "err").length;
+    $("#upHead").textContent = active ? `${active === 1 ? "1 Datei wird" : active + " Dateien werden"} hochgeladen` : failed ? `${failed} von ${S.ups.length} nicht gespeichert` : done ? `${done === 1 ? "1 Datei" : done + " Dateien"} gespeichert` : "Uploads";
+    $("#upClose").hidden = active > 0;
+    $("#upList").innerHTML = S.ups.map(u => {
+      const live = LIVE.includes(u.state);
+      return `<li id="up${u.id}"><div class="l1"><span class="n" title="${esc(u.name)}">${esc(u.name)}</span>
+        <span class="s ${u.state === "done" ? "ok" : ""}">${u.state === "err" ? "" : esc(u.msg)}</span>
+        ${live ? `<button class="icon-btn x" data-cancel="${u.id}" aria-label="Upload abbrechen" title="Abbrechen">${icon("x")}</button>` : ""}</div>
+        ${u.state === "up" ? `<div class="bar"><i style="width:${u.pct.toFixed(1)}%"></i></div>` : ""}
+        ${u.state === "err" ? `<div class="s err">${esc(u.msg)}</div>` : ""}</li>`;
+    }).join("");
+  }
+  document.body.style.setProperty("--ph", (box.hidden ? 0 : box.offsetHeight) + "px");
+}
+$("#upList").onclick = e => {
+  const b = e.target.closest("[data-cancel]"); if (!b) return;
+  const u = S.ups.find(x => x.id === +b.dataset.cancel); if (!u) return;
+  if (u.xhr) u.xhr.abort(); else endUp(u, "cancel", "Abgebrochen");
+};
+$("#upClose").onclick = () => { S.ups = []; renderUploads(); };
+addEventListener("beforeunload", e => { if (S.working) { e.preventDefault(); e.returnValue = ""; } });
 
-  uploading = true; clearInterval(pollTimer); render();
-  const box=$("uploads"); box.innerHTML="";
-  let okCount=0;
-  try {
-  for(const f of files){
-    const el=document.createElement("div"); el.className="up-item";
-    el.innerHTML=`<div class="name">${esc(f.name)} <span class="muted"></span></div><div class="bar"><div></div></div><div class="res"></div>`;
-    box.appendChild(el);
-    const ui={bar:el.querySelector(".bar>div"), info:el.querySelector(".muted"), res:el.querySelector(".res")};
-    let overwrite=false;
-    let c = await post(`/api/upload/check?name=${encodeURIComponent(f.name)}&size=${f.size}&overwrite=0`);
-    if(c.code==="EXISTS"){
-      if(!await ask("Datei überschreiben?", f.name+" existiert bereits.", {yes:"Überschreiben", danger:true})){ msg(ui.res,"Übersprungen.",false); continue; }
-      overwrite=true;
-      c = await post(`/api/upload/check?name=${encodeURIComponent(f.name)}&size=${f.size}&overwrite=1`);
-    }
-    if(!c.ok){ msg(ui.res, c.error, false); continue; }
-    const t0=performance.now();
-    const j = await uploadOne(f, overwrite, ui);
-    const s=(performance.now()-t0)/1000;
-    if(j.ok){ okCount++; ui.bar.style.width="100%"; msg(ui.res, `Gespeichert (${fmt(f.size/s)}/s).`, true); }
-    else msg(ui.res, j.error || "Fehler", false);
-  }
-  } finally {
-    uploading=false;
-    pollTimer=setInterval(refresh, 2000);
-  }
-  await refresh();
-  if(okCount && $("autoProvide").checked) await provide();
+/* drag & drop anywhere in the window */
+let dragDepth = 0;
+const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
+const canDrop = () => S.st && !broken(S.st.drive) && !inSettings();
+addEventListener("dragenter", e => { if (hasFiles(e) && canDrop()) { e.preventDefault(); dragDepth++; $("#drop").hidden = false; } });
+addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
+addEventListener("dragleave", () => { if (dragDepth && --dragDepth === 0) $("#drop").hidden = true; });
+addEventListener("drop", e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $("#drop").hidden = true; if (canDrop()) addFiles(e.dataTransfer.files); });
+
+/* ---------- settings ---------- */
+function renderSettings(){
+  const st = S.st; if (!st || !inSettings()) return;
+  const w = st.wifi, d = st.drive, used = Math.max(0, d.total - d.free);
+  const q = w.rssi >= -60 ? "Sehr guter Empfang." : w.rssi >= -72 ? "Guter Empfang." : "Schwacher Empfang.";
+  $("#netTitle").textContent = w.sta_connected ? `Verbunden mit „${w.ssid}“` : w.sta_configured ? `Verbindung mit „${w.ssid}“ wird hergestellt …` : "Kein WLAN eingerichtet";
+  $("#netSub").textContent = w.sta_connected ? q : w.ap_active ? `Das Einrichtungs-WLAN „${w.ap_ssid}“ ist aktiv.` : "";
+  $("#netAddr").textContent = w.sta_connected ? "http://" + w.ip : w.ap_active ? "http://" + w.ap_ip : "–";
+  $("#netHost").textContent = "http://" + w.hostname + ".local";
+  $("#suMedium").textContent = st.medium.sd ? "microSD-Karte" + (st.medium.name ? " (" + st.medium.name + ")" : "") : "Interner Speicher";
+  $("#suUsed").textContent = d.total ? `${fsize(used)} von ${fsize(d.total)}` : "–";
+  $("#suFree").textContent = d.total ? fsize(d.free) : "–";
+  if (document.activeElement !== $("#swWrite")) $("#swWrite").checked = d.host_writable;
+  $("#swAuto").checked = pref.get("auto", "1") === "1";
+  $("#secAp").textContent = (w.ap_active ? `Das Einrichtungs-WLAN „${w.ap_ssid}“ ist gerade aktiv. ` : "") + "Findet das Laufwerk kein bekanntes WLAN, öffnet es ein eigenes, passwortgeschütztes Einrichtungs-WLAN. Das Passwort wird nur auf dem Display angezeigt.";
+  $("#secTypes").textContent = st.types === "all" ? "Es können Dateien aller Typen hochgeladen werden, bis 4 GB pro Datei. 3MF-Dateien werden beim Hochladen auf Vollständigkeit geprüft." : "Hochgeladen werden können nur Dateien mit den Endungen " + st.types.replace(/,/g, ", ") + ".";
+  $("#sysVer").textContent = st.version;
+  $("#sysUp").textContent = fdur(st.uptime_s);
+  $("#sysHeap").textContent = fsize(st.heap);
+  $("#fmtSub").textContent = `Löscht alle Dateien auf ${st.medium.sd ? "der microSD-Karte" : "dem internen Speicher"} unwiderruflich und richtet den Speicher neu ein.`;
+  $("#foot").textContent = "WiFi DataDrive " + st.version;
+  const t = pref.get("theme", "");
+  document.querySelectorAll("#theme button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
 }
 
-const drop=$("drop");
-drop.onclick = () => $("fileInput").click();
-$("fileInput").onchange = e => { handleFiles(e.target.files); e.target.value=""; };
-["dragenter","dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
-["dragleave","drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
-window.addEventListener("dragover", e => e.preventDefault());
-window.addEventListener("drop", e => e.preventDefault());
-
-// ---------------------------------------------------------------- settings
-$("wifiForm").onsubmit = async e => {
+$("#theme").onclick = e => { const b = e.target.closest("button"); if (!b) return; pref.set("theme", b.dataset.t); applyTheme(); renderSettings(); };
+$("#swAuto").onchange = e => pref.set("auto", e.target.checked ? "1" : "0");
+$("#swWrite").onchange = async e => {
+  const want = e.target.checked, r = await post("/api/settings/host_writable?value=" + (want ? 1 : 0));
+  if (!r.ok) { e.target.checked = !want; return toast(r.error, true); }
+  await refresh();
+  toast(want ? "Das USB-Gerät darf Dateien ändern. Gilt ab dem nächsten Bereitstellen." : "Das USB-Gerät darf nur noch lesen. Gilt ab dem nächsten Bereitstellen.");
+};
+$("#wifiForm").onsubmit = async e => {
   e.preventDefault();
-  const body = new URLSearchParams({ssid:$("ssid").value, pass:$("pass").value}).toString();
-  const j = await post("/api/wifi", body);
-  msg($("wifiMsg"), j.ok ? "Gespeichert. Der Dongle verbindet sich jetzt – die neue IP steht auf dem Display." : j.error, j.ok);
-  $("pass").value="";
+  const ssid = $("#ssid").value, pass = $("#pass").value, msg = $("#wifiMsg"), btn = $("#wifiBtn");
+  const fail = t => { msg.className = "formmsg full err"; msg.textContent = t; };
+  if (!ssid.trim()) return fail("Bitte den WLAN-Namen eingeben.");
+  if (pass.length && pass.length < 8) return fail("Das Passwort muss mindestens 8 Zeichen lang sein (oder leer bei einem offenen WLAN).");
+  btn.disabled = true; msg.className = "formmsg full"; msg.textContent = "Wird gespeichert …";
+  const r = await post("/api/wifi", {body: new URLSearchParams({ssid, pass}).toString()});
+  btn.disabled = false;
+  if (!r.ok) return fail(r.error);
+  $("#pass").value = "";
+  msg.className = "formmsg full ok";
+  msg.textContent = `Gespeichert. Das Laufwerk verbindet sich jetzt mit „${ssid}“ – ob es geklappt hat, zeigt sein Display.`;
 };
-$("hostWritable").onchange = async e => { await post("/api/settings/host_writable?value="+(e.target.checked?1:0)); refresh(); };
-$("btnLog").onclick = async () => { const p=$("log"); p.hidden=!p.hidden; if(!p.hidden){ p.textContent=await (await fetch("/api/log",{cache:"no-store"})).text(); p.scrollTop=p.scrollHeight; } };
-async function reboot(mode){
-  const j = await post("/api/reboot?mode="+mode);
-  if(!j.ok && j.code!=="OFFLINE") await ask("Neustart nicht möglich", j.error, {yes:"OK"});
-}
-$("btnReboot").onclick = async () => { if(await ask("Neustart?","Der Dongle startet neu. Ein USB-Host verliert dabei kurz das Laufwerk.",{yes:"Neustart"})) reboot("normal"); };
-$("btnFlash").onclick = async () => { if(await ask("Flash-Modus?","Startet den Download-Modus zum Flashen neuer Firmware. Zurück: Dongle aus- und wieder einstecken.",{yes:"Flash-Modus",danger:true})) reboot("download"); };
-$("btnFormat").onclick = async () => {
-  const v = await ask("Speicher formatieren?","ALLE Dateien werden gelöscht. Zum Bestätigen FORMAT eingeben.",{input:"FORMAT", yes:"Formatieren", danger:true});
-  if(v!=="FORMAT") return;
-  const j = await post("/api/format?confirm=FORMAT");
-  await ask(j.ok ? "Formatierung gestartet" : "Fehler", j.ok ? "Der Dongle startet neu und formatiert. Seite in ca. 15 Sekunden neu laden." : j.error, {yes:"OK"});
+$("#logBtn").onclick = async () => {
+  const pre = $("#log"), btn = $("#logBtn");
+  btn.disabled = true;
+  const t = await api("/api/log", {text: true});
+  btn.disabled = false; btn.textContent = "Aktualisieren";
+  pre.hidden = false; pre.textContent = typeof t === "string" ? t || "(leer)" : "Das Protokoll konnte nicht geladen werden.";
+  pre.scrollTop = pre.scrollHeight;
+};
+function restartError(r){ return r.code === "HOST_WRITING" ? "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warte, bis es fertig ist." : r.code === "BUSY" ? "Es läuft gerade eine Dateiübertragung. Bitte warte, bis sie abgeschlossen ist." : r.error; }
+function awaitRestart(kind){ S.restart = kind; S.sawDown = false; S.files = null; renderNotice(); schedule(2500); }
+$("#rebootBtn").onclick = async () => {
+  const ok = await ask({title: "Laufwerk neu starten?", text: "Das dauert etwa 10 Sekunden. Ein angeschlossenes USB-Gerät verliert das Laufwerk kurz.", yes: "Neu starten",
+    run: async () => { const r = await post("/api/reboot?mode=normal"); return r.ok ? "" : restartError(r); }});
+  if (ok) awaitRestart("normal");
+};
+$("#flashBtn").onclick = async () => {
+  const ok = await ask({title: "Wartungsmodus starten?", yes: "Wartungsmodus starten", danger: true,
+    text: "Nur nötig, um neue Gerätesoftware aufzuspielen. Das Laufwerk und diese Oberfläche sind danach nicht erreichbar, bis es aus- und wieder eingesteckt wird.",
+    run: async () => { const r = await post("/api/reboot?mode=download"); return r.ok ? "" : restartError(r); }});
+  if (ok) awaitRestart("download");
+};
+$("#fmtBtn").onclick = async () => {
+  if (!S.st) return;
+  if (S.st.drive.owner === "usb" && !await activate()) return;
+  const where = S.st.medium.sd ? "der microSD-Karte" : "dem internen Speicher";
+  const ok = await ask({title: "Speicher formatieren?", yes: "Alles löschen", danger: true,
+    text: `Alle Dateien auf ${where} werden unwiderruflich gelöscht. Tippe zur Bestätigung das Wort LÖSCHEN ein.`,
+    input: {label: "Bestätigung", placeholder: "LÖSCHEN"},
+    run: async v => {
+      if (v.toUpperCase() !== "LÖSCHEN") return "Bitte genau das Wort LÖSCHEN eingeben.";
+      const r = await post("/api/format?confirm=FORMAT");
+      return r.ok ? "" : r.code === "WRONG_OWNER" ? "Bitte zuerst die Dateiverwaltung aktivieren." : restartError(r);
+    }});
+  if (ok) awaitRestart("format");
 };
 
-refresh();
-pollTimer = setInterval(refresh, 2000);
+/* ---------- routing: "#einstellungen" shows the settings, "#s-…" jumps to a section ---------- */
+function route(){
+  const h = location.hash, sec = h.startsWith("#s-") ? document.getElementById(h.slice(1)) : null;
+  const settings = h === "#einstellungen" || !!sec;
+  if (sec) history.replaceState(null, "", "#einstellungen");
+  $("#vFiles").hidden = settings; $("#vSettings").hidden = !settings;
+  $("#navSettings").hidden = settings;
+  closeMenu(); render();
+  if (sec) sec.scrollIntoView({behavior: "smooth"}); else scrollTo(0, 0);
+}
+addEventListener("hashchange", route);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) schedule(0); });
+
+route();
+poll();
 </script>
 </body>
 </html>

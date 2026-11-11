@@ -93,7 +93,7 @@ static void load_config(void)
 
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
-    snprintf(s_st.ap_ssid, sizeof(s_st.ap_ssid), "PrintDrive-%02X%02X", mac[4], mac[5]);
+    snprintf(s_st.ap_ssid, sizeof(s_st.ap_ssid), "DataDrive-%02X%02X", mac[4], mac[5]);
     strlcpy(s_st.hostname, CONFIG_PD_WIFI_HOSTNAME, sizeof(s_st.hostname));
 }
 
@@ -257,7 +257,7 @@ static void start_mdns(void)
         return;
     }
     mdns_hostname_set(s_st.hostname);
-    mdns_instance_name_set("WiFi PrintDrive");
+    mdns_instance_name_set("WiFi DataDrive");
     mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
     ESP_LOGI(TAG, "mDNS: http://%s.local", s_st.hostname);
 }

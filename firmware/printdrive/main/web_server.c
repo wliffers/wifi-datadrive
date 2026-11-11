@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 #include "applog.h"
 #include "drive.h"
@@ -21,17 +23,20 @@
 
 static const char *TAG = "web";
 
-extern const char index_html_start[] asm("_binary_index_html_start");
-extern const char index_html_end[] asm("_binary_index_html_end");
+// index.html is gzip-compressed at build time (see CMakeLists.txt).
+extern const char index_html_gz_start[] asm("_binary_index_html_gz_start");
+extern const char index_html_gz_end[] asm("_binary_index_html_gz_end");
 
-#ifdef CONFIG_PD_ALLOW_GCODE
-#define ALLOW_GCODE "true"
+#if CONFIG_PD_UPLOAD_ALL_TYPES
+#define UPLOAD_TYPES "all"
+#elif CONFIG_PD_ALLOW_GCODE
+#define UPLOAD_TYPES ".3mf,.gcode"
 #else
-#define ALLOW_GCODE "false"
+#define UPLOAD_TYPES ".3mf"
 #endif
 
 #define UPLOAD_BUF_SIZE (16 * 1024)
-#define MAX_LIST        64
+#define LIST_BUF_SIZE   (32 * 1024)   // packed file list, enough for ~1000 typical names
 
 static uint8_t *s_upload_buf;
 
@@ -194,7 +199,7 @@ static bool check_csrf(httpd_req_t *req)
     if (httpd_req_get_hdr_value_str(req, "X-PrintDrive", v, sizeof(v)) == ESP_OK && strcmp(v, "1") == 0) {
         return true;
     }
-    send_error(req, "403 Forbidden", "FORBIDDEN", "Header X-PrintDrive fehlt");
+    send_error(req, "403 Forbidden", "FORBIDDEN", "Anfrage nicht erlaubt.");
     return false;
 }
 
@@ -214,7 +219,8 @@ static esp_err_t h_index(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    return httpd_resp_send(req, index_html_start, index_html_end - index_html_start - 1);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    return httpd_resp_send(req, index_html_gz_start, index_html_gz_end - index_html_gz_start);
 }
 
 static esp_err_t h_status(httpd_req_t *req)
@@ -227,9 +233,9 @@ static esp_err_t h_status(httpd_req_t *req)
     char buf[1600] = "";
     appendf(buf, sizeof(buf), "{\"version\":");
     json_str(buf, sizeof(buf), esp_app_get_description()->version);
-    appendf(buf, sizeof(buf), ",\"uptime_s\":%lld,\"heap\":%lu,\"allow_gcode\":%s",
+    appendf(buf, sizeof(buf), ",\"uptime_s\":%lld,\"heap\":%lu,\"types\":\"%s\"",
             esp_timer_get_time() / 1000000, (unsigned long)esp_get_free_heap_size(),
-            ALLOW_GCODE);
+            UPLOAD_TYPES);
     appendf(buf, sizeof(buf),
             ",\"drive\":{\"owner\":\"%s\",\"fs_ok\":%s,\"needs_format\":%s,\"usb_connected\":%s,"
             "\"usb_suspended\":%s,\"host_ejected\":%s,\"host_writable\":%s,\"host_idle_ms\":%ld,"
@@ -262,30 +268,37 @@ static esp_err_t h_status(httpd_req_t *req)
 
 static esp_err_t h_files(httpd_req_t *req)
 {
-    drive_file_t *files = calloc(MAX_LIST, sizeof(drive_file_t));
-    if (!files) {
-        return send_error(req, "500 Internal Server Error", "NO_MEM", "Kein Speicher");
+    char *list = malloc(LIST_BUF_SIZE);
+    if (!list) {
+        return send_error(req, "500 Internal Server Error", "NO_MEM", "Zu wenig Arbeitsspeicher.");
     }
-    size_t count = 0;
-    const drive_result_t r = drive_list(files, MAX_LIST, &count);
+    drive_list_info_t info;
+    const drive_result_t r = drive_list(list, LIST_BUF_SIZE, &info);
     if (r != DRIVE_OK) {
-        free(files);
+        free(list);
         return send_result(req, r);
     }
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr_chunk(req, "{\"ok\":true,\"files\":[");
-    char item[DRIVE_FILE_NAME_MAX * 2 + 64];
-    for (size_t i = 0; i < count; i++) {
+    char item[DRIVE_FILE_NAME_MAX * 2 + 96];
+    size_t pos = 0;
+    for (uint32_t i = 0; i < info.count; i++) {
+        uint32_t size, mtime;
+        memcpy(&size, list + pos, sizeof(size));
+        memcpy(&mtime, list + pos + sizeof(size), sizeof(mtime));
+        const char *name = list + pos + 2 * sizeof(uint32_t);
+        pos += 2 * sizeof(uint32_t) + strlen(name) + 1;
         item[0] = '\0';
         appendf(item, sizeof(item), "%s{\"name\":", i ? "," : "");
-        json_str(item, sizeof(item), files[i].name);
-        appendf(item, sizeof(item), ",\"size\":%lu}", (unsigned long)files[i].size);
+        json_str(item, sizeof(item), name);
+        appendf(item, sizeof(item), ",\"size\":%lu,\"mtime\":%lu}", (unsigned long)size, (unsigned long)mtime);
         httpd_resp_sendstr_chunk(req, item);
     }
-    snprintf(item, sizeof(item), "],\"truncated\":%s}", count == MAX_LIST ? "true" : "false");
+    snprintf(item, sizeof(item), "],\"dirs\":%lu,\"truncated\":%s}", (unsigned long)info.dirs,
+             info.truncated ? "true" : "false");
     httpd_resp_sendstr_chunk(req, item);
-    free(files);
+    free(list);
     return httpd_resp_sendstr_chunk(req, NULL);
 }
 
@@ -372,7 +385,17 @@ static esp_err_t h_upload(httpd_req_t *req)
             }
         }
     }
-    r = drive_upload_finish();
+    // Optional: original modification time of the file, and the client's clock (both local
+    // time as seconds since 1970). The device has no clock of its own.
+    char num[16];
+    const uint32_t mtime = query_param(req, "mtime", num, sizeof(num)) ? (uint32_t)strtoul(num, NULL, 10) : 0;
+    if (query_param(req, "now", num, sizeof(num)) && time(NULL) < 1700000000) {
+        const struct timeval tv = {.tv_sec = (time_t)strtoul(num, NULL, 10)};
+        if (tv.tv_sec > 1700000000) {
+            settimeofday(&tv, NULL);
+        }
+    }
+    r = drive_upload_finish(mtime);
     const int64_t dt_ms = (esp_timer_get_time() - t0) / 1000;
     ESP_LOGI(TAG, "upload '%s' %u bytes in %lld ms (%.1f KB/s): %s", name, (unsigned)total, dt_ms,
              dt_ms ? (double)total / dt_ms : 0.0, drive_result_str(r));
@@ -389,6 +412,18 @@ static esp_err_t h_delete(httpd_req_t *req)
         return send_result(req, DRIVE_ERR_BAD_NAME);
     }
     return send_result(req, drive_delete(name));
+}
+
+static esp_err_t h_rename(httpd_req_t *req)
+{
+    if (!check_csrf(req)) {
+        return ESP_OK;
+    }
+    char name[DRIVE_FILE_NAME_MAX + 1], to[DRIVE_NAME_MAX + 1];
+    if (!query_param(req, "name", name, sizeof(name)) || !query_param(req, "to", to, sizeof(to))) {
+        return send_result(req, DRIVE_ERR_BAD_NAME);
+    }
+    return send_result(req, drive_rename(name, to));
 }
 
 static esp_err_t h_download(httpd_req_t *req)
@@ -468,14 +503,14 @@ static esp_err_t h_wifi(httpd_req_t *req)
     body[got] = '\0';
     char ssid[64] = "", pass[128] = "";
     if (httpd_query_key_value(body, "ssid", ssid, sizeof(ssid)) != ESP_OK || !url_decode(ssid)) {
-        return send_error(req, "400 Bad Request", "BAD_REQUEST", "SSID fehlt");
+        return send_error(req, "400 Bad Request", "BAD_REQUEST", "Bitte den WLAN-Namen angeben.");
     }
     if (httpd_query_key_value(body, "pass", pass, sizeof(pass)) == ESP_OK) {
         url_decode(pass);
     }
     if (pd_wifi_set_credentials(ssid, pass) != ESP_OK) {
         return send_error(req, "400 Bad Request", "BAD_REQUEST",
-                          "Ungültig: SSID 1-32 Zeichen, Passwort leer oder 8-63 Zeichen");
+                          "Bitte einen WLAN-Namen (höchstens 32 Zeichen) und ein Passwort mit 8 bis 63 Zeichen angeben – oder das Passwort leer lassen.");
     }
     return send_json(req, "200 OK", "{\"ok\":true}");
 }
@@ -562,6 +597,7 @@ esp_err_t web_server_start(void)
         {.uri = "/api/upload/check", .method = HTTP_POST, .handler = h_upload_check},
         {.uri = "/api/upload", .method = HTTP_POST, .handler = h_upload},
         {.uri = "/api/delete", .method = HTTP_POST, .handler = h_delete},
+        {.uri = "/api/rename", .method = HTTP_POST, .handler = h_rename},
         {.uri = "/api/mode", .method = HTTP_POST, .handler = h_mode},
         {.uri = "/api/settings/host_writable", .method = HTTP_POST, .handler = h_host_writable},
         {.uri = "/api/wifi", .method = HTTP_POST, .handler = h_wifi},

@@ -72,7 +72,10 @@ def main():
 
     # --- validation
     r = s.post(f"{base}/api/upload/check?name=notes.txt&size=10", headers=H, timeout=10)
-    check("wrong extension refused (415)", r.status_code == 415, r.text)
+    if st.get("types") == "all":
+        check("any file type accepted (types=all)", r.ok, r.text)
+    else:
+        check("wrong extension refused (415)", r.status_code == 415, r.text)
     r = s.post(f"{base}/api/upload/check?name=..%2Fx.3mf&size=10", headers=H, timeout=10)
     check("path in name refused (400)", r.status_code == 400, r.text)
     big = st["drive"]["free"] + 1024 * 1024
@@ -97,15 +100,41 @@ def main():
     r = s.post(f"{base}/api/upload/check?name={requests.utils.quote(name)}&size={len(data)}", headers=H,
                timeout=10)
     check("upload check ok", r.ok, r.text)
+    mtime = 1790000000   # fixed "local" timestamp: must come back unchanged in the listing
     t = time.time()
-    r = s.post(f"{base}/api/upload?name={requests.utils.quote(name)}", headers=H, data=data, timeout=600)
+    r = s.post(f"{base}/api/upload?name={requests.utils.quote(name)}&mtime={mtime}&now={int(time.time())}",
+               headers=H, data=data, timeout=600)
     dt = time.time() - t
     check("upload ok", r.ok and r.json().get("ok"), f"{len(data) / 1024:.0f} kB in {dt:.1f} s = "
           f"{len(data) / 1024 / dt:.1f} kB/s")
 
-    files = s.get(f"{base}/api/files", timeout=10).json()["files"]
+    listing = s.get(f"{base}/api/files", timeout=10).json()
+    files = listing["files"]
     check("file listed", any(f["name"] == name and f["size"] == len(data) for f in files),
           [f["name"] for f in files])
+    got = next((f.get("mtime") for f in files if f["name"] == name), None)
+    check("modification time stored (FAT: 2 s resolution)", got is not None and abs(got - mtime) <= 2, got)
+    check("listing reports hidden folders and truncation", "dirs" in listing and "truncated" in listing)
+
+    # --- rename
+    new = "Umbenannt ÄÖ.3mf"
+    s.post(f"{base}/api/delete?name={requests.utils.quote(new)}", headers=H, timeout=10)
+    r = s.post(f"{base}/api/rename?name={requests.utils.quote(name)}&to={requests.utils.quote(new)}",
+               headers=H, timeout=10)
+    names = [f["name"] for f in s.get(f"{base}/api/files", timeout=10).json()["files"]]
+    check("rename", r.ok and new in names and name not in names, r.text)
+    r = s.post(f"{base}/api/rename?name={requests.utils.quote(new)}&to=a%2Fb.3mf", headers=H, timeout=10)
+    check("rename to invalid name refused (400)", r.status_code == 400, r.text)
+    r = s.post(f"{base}/api/rename?name=gibtsnicht.bin&to=x.bin", headers=H, timeout=10)
+    check("rename of missing file refused (404)", r.status_code == 404, r.text)
+    s.post(f"{base}/api/upload?name=zweite.3mf", headers=H, data=make_3mf(1), timeout=60)
+    r = s.post(f"{base}/api/rename?name=zweite.3mf&to={requests.utils.quote(new)}", headers=H, timeout=10)
+    check("rename onto existing file refused (409)", r.status_code == 409 and r.json().get("code") == "EXISTS",
+          r.text)
+    s.post(f"{base}/api/delete?name=zweite.3mf", headers=H, timeout=10)
+    r = s.post(f"{base}/api/rename?name={requests.utils.quote(new)}&to={requests.utils.quote(name)}",
+               headers=H, timeout=10)
+    check("rename back", r.ok, r.text)
     dl = s.get(f"{base}/api/download?name={requests.utils.quote(name)}", timeout=120).content
     check("download identical", hashlib.sha256(dl).digest() == hashlib.sha256(data).digest())
 

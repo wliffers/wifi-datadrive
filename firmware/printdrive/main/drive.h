@@ -55,10 +55,13 @@ typedef struct {
     uint32_t upload_total;
 } drive_status_t;
 
+/** Result summary of drive_list(). */
 typedef struct {
-    char name[DRIVE_FILE_NAME_MAX + 1];
-    uint32_t size;
-} drive_file_t;
+    uint32_t count;                   // files written to the buffer
+    uint32_t dirs;                    // folders in the root directory (not listed)
+    size_t used;                      // bytes used in the buffer
+    bool truncated;                   // buffer was too small for all files
+} drive_list_info_t;
 
 typedef enum {
     DRIVE_OK = 0,
@@ -98,8 +101,15 @@ drive_result_t drive_set_owner(drive_owner_t target, bool force);
 /** Allow or deny host writes. Stored in NVS; takes effect the next time the drive is provided. */
 esp_err_t drive_set_host_writable(bool writable);
 
-/** List regular files in the root folder (APP only). Returns number of entries written. */
-drive_result_t drive_list(drive_file_t *files, size_t max, size_t *count);
+/**
+ * List regular files in the root folder (APP only) into a packed buffer. Each entry is
+ * 4 bytes size + 4 bytes mtime (both native uint32_t, copy with memcpy) followed by the
+ * NUL-terminated name. mtime is seconds since 1970 in the writer's local time, 0 = unknown.
+ */
+drive_result_t drive_list(char *buf, size_t buf_len, drive_list_info_t *info);
+
+/** Rename a file in the root folder (APP only). `to` must pass drive_check_name(). */
+drive_result_t drive_rename(const char *name, const char *to);
 
 drive_result_t drive_delete(const char *name);
 
@@ -116,7 +126,8 @@ void drive_download_close(int fd);
 // ---- Upload: written to a temp file and renamed only after validation ----
 drive_result_t drive_upload_begin(const char *name, uint32_t size, bool overwrite);
 drive_result_t drive_upload_write(const void *data, size_t len);
-drive_result_t drive_upload_finish(void);
+/** mtime: modification time to store for the file (local time as seconds since 1970), 0 = now. */
+drive_result_t drive_upload_finish(uint32_t mtime);
 void drive_upload_abort(void);
 
 /**

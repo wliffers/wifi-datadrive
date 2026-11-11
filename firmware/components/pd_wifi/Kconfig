@@ -1,8 +1,8 @@
-menu "PrintDrive Wi-Fi"
+menu "DataDrive Wi-Fi"
 
     config PD_WIFI_HOSTNAME
         string "Hostname (DHCP and mDNS)"
-        default "printdrive"
+        default "datadrive"
         help
             The web interface is reachable as http://<hostname>.local where mDNS works.
 

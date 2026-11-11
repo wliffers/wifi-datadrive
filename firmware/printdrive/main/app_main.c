@@ -14,7 +14,7 @@ static const char *TAG = "main";
 void app_main(void)
 {
     applog_init();
-    ESP_LOGI(TAG, "WiFi PrintDrive %s", esp_app_get_description()->version);
+    ESP_LOGI(TAG, "WiFi DataDrive %s", esp_app_get_description()->version);
 
     // NVS holds Wi-Fi credentials and drive flags. Only the NVS partition is erased
     // if its format is outdated; firmware and file storage are never touched here.

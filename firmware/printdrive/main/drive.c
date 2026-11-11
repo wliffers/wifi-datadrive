@@ -22,6 +22,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utime.h>
 #include "board.h"
 #include "diskio_impl.h"
 #include "diskio_wl.h"
@@ -52,6 +53,7 @@ static const char *NVS_NS = "pd_drive";
 #define TMP_PATH           DRIVE_BASE_PATH "/.pd_upload.tmp"
 #define OLD_PATH           DRIVE_BASE_PATH "/.pd_old.tmp"     // previous version during overwrite
 #define FREE_RESERVE_BYTES (64 * 1024)      // keep room for FAT/dir growth
+#define MTIME_MIN          347155200        // 1981-01-01: older FAT stamps mean "clock was not set"
 #define TAIL_SIZE          1024             // bytes kept for the ZIP end-of-central-directory check
 // Cluster size (Kconfig). 4096: every FatFs write covers whole 4 KiB flash sectors (fast, but
 // FAT12 on this ~11 MB volume). 2048: FAT16, but each cluster write is a slow partial sector.
@@ -136,23 +138,24 @@ static void unlock(void) { xSemaphoreGive(s_lock); }
 
 const char *drive_result_str(drive_result_t r)
 {
+    // Shown to end users in the web UI: plain language, no internal terms.
     switch (r) {
     case DRIVE_OK:               return "OK";
-    case DRIVE_ERR_BUSY:         return "Upload oder Download läuft gerade";
-    case DRIVE_ERR_HOST_ACTIVE:  return "Das Laufwerk ist am USB-Host eingebunden. Am Host zuerst auswerfen oder Umschalten bestätigen.";
-    case DRIVE_ERR_HOST_WRITING: return "Der USB-Host schreibt gerade. Bitte warten, bis der Kopiervorgang fertig ist.";
-    case DRIVE_ERR_WRONG_OWNER:  return "Nicht möglich, solange das Laufwerk dem USB-Host bereitgestellt ist";
-    case DRIVE_ERR_NO_FS:        return "Kein gültiges Dateisystem - bitte formatieren";
-    case DRIVE_ERR_BAD_NAME:     return "Ungültiger Dateiname";
-    case DRIVE_ERR_BAD_TYPE:     return "Dateityp nicht erlaubt";
-    case DRIVE_ERR_EXISTS:       return "Datei existiert bereits";
-    case DRIVE_ERR_NOT_FOUND:    return "Datei nicht gefunden";
-    case DRIVE_ERR_NO_SPACE:     return "Nicht genug freier Speicher";
-    case DRIVE_ERR_INVALID_FILE: return "Datei ist beschädigt oder kein gültiges 3MF (ZIP)";
-    case DRIVE_ERR_INCOMPLETE:   return "Upload unvollständig";
-    case DRIVE_ERR_TOO_LARGE:    return "Datei zu groß (FAT erlaubt höchstens 4 GB pro Datei)";
-    case DRIVE_ERR_IO:           return "Lese-/Schreibfehler";
-    default:                     return "Unbekannter Fehler";
+    case DRIVE_ERR_BUSY:         return "Es läuft gerade eine Dateiübertragung. Bitte warten, bis sie abgeschlossen ist.";
+    case DRIVE_ERR_HOST_ACTIVE:  return "Das USB-Gerät verwendet das Laufwerk noch. Bitte dort zuerst auswerfen oder das Trennen bestätigen.";
+    case DRIVE_ERR_HOST_WRITING: return "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warten, bis es fertig ist.";
+    case DRIVE_ERR_WRONG_OWNER:  return "Das geht nur, solange die Dateiverwaltung aktiv ist.";
+    case DRIVE_ERR_NO_FS:        return "Der Speicher ist nicht lesbar und muss formatiert werden.";
+    case DRIVE_ERR_BAD_NAME:     return "Ungültiger Dateiname.";
+    case DRIVE_ERR_BAD_TYPE:     return "Dieser Dateityp ist nicht erlaubt.";
+    case DRIVE_ERR_EXISTS:       return "Eine Datei mit diesem Namen gibt es bereits.";
+    case DRIVE_ERR_NOT_FOUND:    return "Die Datei wurde nicht gefunden.";
+    case DRIVE_ERR_NO_SPACE:     return "Nicht genug freier Speicher.";
+    case DRIVE_ERR_INVALID_FILE: return "Die Datei ist unvollständig oder beschädigt (keine gültige 3MF-Datei).";
+    case DRIVE_ERR_INCOMPLETE:   return "Die Übertragung war unvollständig.";
+    case DRIVE_ERR_TOO_LARGE:    return "Die Datei ist zu groß – möglich sind höchstens 4 GB pro Datei.";
+    case DRIVE_ERR_IO:           return "Lese- oder Schreibfehler auf dem Speicher.";
+    default:                     return "Unbekannter Fehler.";
     }
 }
 
@@ -219,8 +222,8 @@ uint32_t tud_msc_inquiry2_cb(uint8_t lun, scsi_inquiry_resp_t *resp, uint32_t bu
     if (bufsize < sizeof(*resp)) {
         return 0;
     }
-    memcpy(resp->vendor_id, "PrintDrv", 8);
-    memcpy(resp->product_id, "WiFi PrintDrive ", 16);
+    memcpy(resp->vendor_id, "DataDrv ", 8);
+    memcpy(resp->product_id, "WiFi DataDrive  ", 16);
     memcpy(resp->product_rev, "0.1 ", 4);
     return sizeof(*resp);
 }
@@ -407,7 +410,7 @@ static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
     if (fr == FR_OK) {
         if (do_format) {
             char new_label[16];
-            snprintf(new_label, sizeof(new_label), "%sPRINTDRIVE", drv);
+            snprintf(new_label, sizeof(new_label), "%sDATADRIVE", drv);
             f_setlabel(new_label);   // best effort
         }
         char label[40] = "";   // UTF-8 label can be up to 34 bytes (FatFs docs)
@@ -717,6 +720,9 @@ drive_result_t drive_check_name(const char *name)
             return DRIVE_ERR_BAD_NAME;
         }
     }
+#if CONFIG_PD_UPLOAD_ALL_TYPES
+    return DRIVE_OK;
+#else
     if (is_3mf(name)) {
         return DRIVE_OK;
     }
@@ -726,6 +732,7 @@ drive_result_t drive_check_name(const char *name)
     }
 #endif
     return DRIVE_ERR_BAD_TYPE;
+#endif
 }
 
 static void make_path(char *out, size_t len, const char *name)
@@ -743,9 +750,9 @@ static drive_result_t require_app_fs(void)
 
 // ---- file operations
 
-drive_result_t drive_list(drive_file_t *files, size_t max, size_t *count)
+drive_result_t drive_list(char *buf, size_t buf_len, drive_list_info_t *info)
 {
-    *count = 0;
+    memset(info, 0, sizeof(*info));
     lock();
     drive_result_t r = require_app_fs();
     if (r == DRIVE_OK) {
@@ -755,17 +762,70 @@ drive_result_t drive_list(drive_file_t *files, size_t max, size_t *count)
         } else {
             struct dirent *e;
             char path[sizeof(DRIVE_BASE_PATH) + 1 + 256];
-            while ((e = readdir(d)) != NULL && *count < max) {
-                if (e->d_type != DT_REG || e->d_name[0] == '.') {
+            while ((e = readdir(d)) != NULL) {
+                if (e->d_name[0] == '.') {
                     continue;
                 }
-                struct stat st;
+                if (e->d_type == DT_DIR) {
+                    if (strcasecmp(e->d_name, "System Volume Information") != 0) {
+                        info->dirs++;
+                    }
+                    continue;
+                }
+                if (e->d_type != DT_REG) {
+                    continue;
+                }
+                const size_t name_len = strlen(e->d_name) + 1;
+                if (info->used + 2 * sizeof(uint32_t) + name_len > buf_len) {
+                    info->truncated = true;
+                    continue;   // keep counting folders
+                }
+                struct stat st = {0};
                 make_path(path, sizeof(path), e->d_name);
-                strlcpy(files[*count].name, e->d_name, sizeof(files[*count].name));
-                files[*count].size = stat(path, &st) == 0 ? (uint32_t)st.st_size : 0;
-                (*count)++;
+                const bool ok = stat(path, &st) == 0;
+                const uint32_t size = ok ? (uint32_t)st.st_size : 0;
+                const uint32_t mtime = ok && st.st_mtime >= MTIME_MIN ? (uint32_t)st.st_mtime : 0;
+                memcpy(buf + info->used, &size, sizeof(size));
+                memcpy(buf + info->used + sizeof(size), &mtime, sizeof(mtime));
+                memcpy(buf + info->used + 2 * sizeof(uint32_t), e->d_name, name_len);
+                info->used += 2 * sizeof(uint32_t) + name_len;
+                info->count++;
             }
             closedir(d);
+        }
+    }
+    unlock();
+    return r;
+}
+
+drive_result_t drive_rename(const char *name, const char *to)
+{
+    if (!name || strlen(name) > DRIVE_FILE_NAME_MAX || strchr(name, '/') || strchr(name, '\\') ||
+        name[0] == '.' || name[0] == '\0') {
+        return DRIVE_ERR_BAD_NAME;
+    }
+    drive_result_t r = drive_check_name(to);
+    if (r != DRIVE_OK) {
+        return r;
+    }
+    lock();
+    r = require_app_fs();
+    if (r == DRIVE_OK && (s_st.upload_active || s_open_downloads > 0)) {
+        r = DRIVE_ERR_BUSY;
+    }
+    if (r == DRIVE_OK && strcmp(name, to) != 0) {
+        char from[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
+        char dest[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
+        make_path(from, sizeof(from), name);
+        make_path(dest, sizeof(dest), to);
+        struct stat st;
+        if (stat(from, &st) != 0 || !S_ISREG(st.st_mode)) {
+            r = DRIVE_ERR_NOT_FOUND;
+        } else if (rename(from, dest) != 0) {
+            // FatFs refuses an existing target itself (and allows changing only the case).
+            r = errno == EEXIST ? DRIVE_ERR_EXISTS : (errno == ENOENT ? DRIVE_ERR_NOT_FOUND : DRIVE_ERR_IO);
+        } else {
+            ESP_LOGI(TAG, "renamed '%s' -> '%s'", name, to);
         }
     }
     unlock();
@@ -966,7 +1026,7 @@ static void upload_reset_locked(void)
     refresh_fs_info();
 }
 
-drive_result_t drive_upload_finish(void)
+drive_result_t drive_upload_finish(uint32_t mtime)
 {
     drive_result_t r = DRIVE_OK;
     lock();
@@ -1009,6 +1069,10 @@ drive_result_t drive_upload_finish(void)
             }
         } else if (rename(TMP_PATH, path) != 0) {
             r = DRIVE_ERR_IO;
+        }
+        if (r == DRIVE_OK && mtime >= MTIME_MIN) {
+            const struct utimbuf times = {.actime = mtime, .modtime = mtime};
+            utime(path, &times);   // best effort: keep the file's original modification time
         }
     }
     if (r == DRIVE_OK) {

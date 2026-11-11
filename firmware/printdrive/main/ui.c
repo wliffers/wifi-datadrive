@@ -54,7 +54,7 @@ esp_err_t ui_init(void)
     if (err == ESP_OK) {
         display_fill(DISPLAY_BLACK);
         header("BOOT", DISPLAY_GREY);
-        display_text(3, 24, "WiFi PrintDrive", DISPLAY_WHITE, DISPLAY_BLACK, 1);
+        display_text(3, 24, "WiFi DataDrive", DISPLAY_WHITE, DISPLAY_BLACK, 1);
         display_text(3, 36, "startet ...", DISPLAY_GREY, DISPLAY_BLACK, 1);
         display_flush();
     }
@@ -123,7 +123,7 @@ static void handle_button(void)
         r = drive_set_owner(DRIVE_OWNER_APP, force);
         if (r == DRIVE_ERR_HOST_ACTIVE) {
             s_confirm_until_ms = t + 4000;
-            ui_notify("Host aktiv! Nochmal=OK", true);
+            ui_notify("Gerät aktiv! Nochmal=OK", true);
             return;
         }
     } else {
@@ -133,7 +133,7 @@ static void handle_button(void)
     if (r == DRIVE_OK) {
         ui_notify(d.owner == DRIVE_OWNER_USB ? "Upload-Modus" : "USB bereitgestellt", false);
     } else if (r == DRIVE_ERR_HOST_WRITING) {
-        ui_notify("Host schreibt - warten", true);
+        ui_notify("Gerät schreibt - warten", true);
     } else if (r == DRIVE_ERR_BUSY) {
         ui_notify("Up-/Download läuft", true);
     } else {
@@ -208,17 +208,17 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w)
     } else {
         const char *host;
         if (!d->usb_connected) {
-            host = "Kein USB-Host";
+            host = "Kein USB-Gerät";
         } else if (d->owner != DRIVE_OWNER_USB) {
-            host = d->host_ejected ? "Host: ausgeworfen" : "Host: kein Medium";
+            host = d->host_ejected ? "Gerät: ausgeworfen" : "Gerät: kein Laufwerk";
         } else if (d->host_write_idle_ms < CONFIG_PD_HOST_WRITE_GUARD_MS) {
-            host = "Host schreibt...";
+            host = "Gerät schreibt...";
         } else if (d->host_idle_ms < CONFIG_PD_HOST_WRITE_GUARD_MS) {
-            host = "Host liest...";
+            host = "Gerät liest...";
         } else if (d->usb_suspended) {
-            host = "Host: Standby";
+            host = "Gerät: Standby";
         } else {
-            host = d->host_writable ? "Host: verbunden" : "Host: nur lesen";
+            host = d->host_writable ? "Gerät: verbunden" : "Gerät: nur lesen";
         }
         display_text(3, 59, host, DISPLAY_WHITE, DISPLAY_BLACK, 1);
     }

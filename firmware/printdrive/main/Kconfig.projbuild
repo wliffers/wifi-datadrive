@@ -51,8 +51,16 @@ menu "PrintDrive"
             2: FAT16 (more common), but web uploads are slow (each cluster write is a
                partial flash sector). Only applied when the storage is (re)formatted.
 
+    config PD_UPLOAD_ALL_TYPES
+        bool "Accept uploads of any file type"
+        default y
+        help
+            Off: only .3mf (and optionally .gcode) may be uploaded. The content check for
+            .3mf files (must be a complete ZIP) applies in both cases.
+
     config PD_ALLOW_GCODE
         bool "Also accept .gcode uploads (in addition to .3mf)"
+        depends on !PD_UPLOAD_ALL_TYPES
         default n
 
 endmenu
