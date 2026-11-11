@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=5.5,<6.0"
+  # Pinned to releases that were at least two weeks old when the project was set up.
+  espressif/esp_tinyusb: "~2.4.0"
+  espressif/tinyusb: "0.21.0~2"

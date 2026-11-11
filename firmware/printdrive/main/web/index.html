@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WiFi PrintDrive</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#1d2330;--muted:#6b7280;--line:#e3e6eb;--blue:#2563eb;--green:#15803d;--orange:#c2410c;--red:#b91c1c;--cyan:#0e7490}
+@media (prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1b1f27;--fg:#e8eaee;--muted:#9aa1ad;--line:#2b313c;--blue:#60a5fa;--green:#4ade80;--orange:#fb923c;--red:#f87171;--cyan:#22d3ee}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 14px;display:flex;align-items:center;gap:10px}
+h2{font-size:15px;margin:0 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
+.badge{display:inline-block;padding:2px 10px;border-radius:99px;color:#fff;font-size:13px;font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.muted{color:var(--muted);font-size:13px}
+button,.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--fg);padding:7px 14px;border-radius:8px;cursor:pointer;text-decoration:none;display:inline-block}
+button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+button.danger{color:var(--red);border-color:var(--red)}
+button:disabled{opacity:.5;cursor:default}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}
+.bar>div{height:100%;background:var(--green);width:0;transition:width .2s}
+#drop{border:2px dashed var(--line);border-radius:12px;padding:26px 12px;text-align:center;cursor:pointer}
+#drop.over{border-color:var(--blue);background:color-mix(in srgb,var(--blue) 8%,transparent)}
+table{width:100%;border-collapse:collapse}
+td{padding:7px 4px;border-top:1px solid var(--line);vertical-align:middle;word-break:break-all}
+td.num{text-align:right;white-space:nowrap;color:var(--muted);font-size:13px}
+td.act{text-align:right;white-space:nowrap}
+.msg{padding:8px 12px;border-radius:8px;margin-top:10px;font-size:14px}
+.msg.err{background:color-mix(in srgb,var(--red) 14%,transparent);color:var(--red)}
+.msg.ok{background:color-mix(in srgb,var(--green) 14%,transparent);color:var(--green)}
+input[type=text],input[type=password]{font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);width:100%}
+label.chk{display:flex;gap:8px;align-items:center;margin:6px 0}
+details summary{cursor:pointer;font-weight:600}
+pre{white-space:pre-wrap;font-size:12px;max-height:320px;overflow:auto;background:var(--bg);padding:8px;border-radius:8px}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--card);color:var(--fg);max-width:420px;width:calc(100% - 32px)}
+dialog::backdrop{background:#0006}
+.up-item{margin:8px 0}
+.up-item .name{font-size:14px;word-break:break-all}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media (max-width:480px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<h1>WiFi PrintDrive <span id="badge" class="badge" style="background:#888">…</span></h1>
+
+<section class="card" id="modeCard">
+  <h2 id="modeTitle">Status wird geladen …</h2>
+  <div id="modeText" class="muted"></div>
+  <div class="row" style="margin-top:10px">
+    <button id="btnApp" class="primary" hidden>Für Upload übernehmen</button>
+    <button id="btnUsb" class="primary" hidden>Am USB bereitstellen</button>
+  </div>
+  <div id="modeMsg"></div>
+</section>
+
+<section class="card">
+  <h2>Datei hochladen</h2>
+  <div id="drop">
+    <strong>3MF-Datei hierher ziehen</strong><br>
+    <span class="muted">oder tippen, um eine Datei auszuwählen</span>
+    <input id="fileInput" type="file" multiple hidden>
+  </div>
+  <label class="chk"><input type="checkbox" id="autoProvide" checked> Nach dem Upload automatisch am USB bereitstellen</label>
+  <div id="uploads"></div>
+</section>
+
+<section class="card">
+  <div class="row" style="justify-content:space-between">
+    <h2 style="margin:0">Dateien</h2>
+    <span class="muted" id="space"></span>
+  </div>
+  <div class="bar" style="margin:8px 0 4px"><div id="spaceBar"></div></div>
+  <div id="fileArea" class="muted">…</div>
+</section>
+
+<section class="card">
+  <details>
+    <summary>Einstellungen</summary>
+    <h2 style="margin-top:14px">WLAN</h2>
+    <div class="muted" id="wifiInfo"></div>
+    <form id="wifiForm" class="grid" style="margin-top:8px">
+      <input type="text" id="ssid" placeholder="WLAN-Name (SSID)" autocomplete="off" required maxlength="32">
+      <input type="password" id="pass" placeholder="Passwort" autocomplete="new-password" maxlength="63">
+      <button class="primary" type="submit">Speichern &amp; verbinden</button>
+    </form>
+    <div id="wifiMsg"></div>
+
+    <h2 style="margin-top:18px">USB-Zugriff des Hosts</h2>
+    <label class="chk"><input type="checkbox" id="hostWritable"> Host darf auf das Laufwerk schreiben</label>
+    <div class="muted">Für den Drucker empfohlen: aus (nur lesen). Dann kann der Host das Dateisystem nicht beschädigen. Wirkt beim nächsten Bereitstellen.</div>
+
+    <h2 style="margin-top:18px">Gerät</h2>
+    <div class="row">
+      <button id="btnLog">Log anzeigen</button>
+      <button id="btnReboot">Neustart</button>
+      <button id="btnFlash">Flash-Modus</button>
+      <button id="btnFormat" class="danger">Formatieren …</button>
+    </div>
+    <div class="muted" id="devInfo" style="margin-top:8px"></div>
+    <pre id="log" hidden></pre>
+  </details>
+</section>
+</main>
+
+<dialog id="dlg">
+  <h2 id="dlgTitle"></h2>
+  <p id="dlgText"></p>
+  <input type="text" id="dlgInput" hidden>
+  <div class="row" style="justify-content:flex-end;margin-top:12px">
+    <button id="dlgNo">Abbrechen</button>
+    <button id="dlgYes" class="primary">OK</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const H = {"X-PrintDrive": "1"};
+let st = null, uploading = false, pollTimer = null;
+
+function fmt(b){ if(b>=1048576) return (b/1048576).toFixed(1)+" MB"; if(b>=1024) return (b/1024).toFixed(0)+" kB"; return b+" B"; }
+function esc(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
+function msg(el, text, ok){ el.innerHTML = text ? `<div class="msg ${ok?"ok":"err"}">${esc(text)}</div>` : ""; }
+
+function ask(title, text, opts={}){
+  return new Promise(res => {
+    const d=$("dlg"); $("dlgTitle").textContent=title; $("dlgText").textContent=text;
+    const inp=$("dlgInput"); inp.hidden=!opts.input; inp.value=""; inp.placeholder=opts.input||"";
+    $("dlgYes").textContent=opts.yes||"OK"; $("dlgYes").className=opts.danger?"danger":"primary";
+    const done=v=>{ d.close(); $("dlgYes").onclick=$("dlgNo").onclick=null; res(v); };
+    $("dlgYes").onclick=()=>done(opts.input?inp.value:true);
+    $("dlgNo").onclick=()=>done(false);
+    d.showModal();
+  });
+}
+
+async function api(path, opts={}){
+  const r = await fetch(path, Object.assign({cache:"no-store"}, opts));
+  let j = {}; try { j = await r.json(); } catch(e) {}
+  if(!r.ok && j.ok===undefined) j = {ok:false, error:"HTTP "+r.status};
+  return j;
+}
+const post = (path, body) => api(path, {method:"POST", headers:H, body});
+
+// ---------------------------------------------------------------- status
+async function refresh(){
+  try { st = await api("/api/status"); } catch(e) { $("badge").textContent="offline"; $("badge").style.background="#888"; return; }
+  render();
+  if(st.drive.owner==="app" && st.drive.fs_ok) loadFiles(); else showFilesUnavailable();
+}
+
+function render(){
+  const d=st.drive, w=st.wifi;
+  let badge="BEREIT", col="var(--blue)", title, text;
+  if(!d.fs_ok){ badge="FEHLER"; col="var(--red)"; }
+  else if(st.upload.active){ badge="UPLOAD"; col="var(--orange)"; }
+  else if(d.owner==="usb"){ badge="USB"; col="var(--green)"; }
+  $("badge").textContent=badge; $("badge").style.background=col;
+
+  if(d.needs_format){
+    title="Kein gültiges Dateisystem";
+    text="Der Speicher enthält kein lesbares FAT-Dateisystem. Unter Einstellungen → Formatieren kann ein neues angelegt werden (alle Daten gehen verloren).";
+  } else if(d.owner==="usb"){
+    title="Laufwerk ist am USB-Host bereitgestellt";
+    text = !d.usb_connected ? "Kein USB-Host verbunden." :
+      (d.host_write_idle_ms>=0 && d.host_write_idle_ms<3000) ? "Der Host schreibt gerade." :
+      (d.host_idle_ms>=0 && d.host_idle_ms<3000) ? "Der Host liest gerade." :
+      d.host_writable ? "Host hat Lese- und Schreibzugriff." : "Host hat nur Lesezugriff.";
+    text += " Zum Hochladen wird das Laufwerk vom Host übernommen.";
+  } else {
+    title="Upload-Modus – Laufwerk gehört dem Dongle";
+    text = d.usb_connected ? "Der USB-Host sieht gerade kein Medium. Nach dem Upload „Am USB bereitstellen“ wählen." : "Kein USB-Host verbunden.";
+  }
+  $("modeTitle").textContent=title; $("modeText").textContent=text;
+  $("btnApp").hidden = d.owner!=="usb" || uploading;
+  $("btnUsb").hidden = d.owner!=="app" || !d.fs_ok || uploading;
+
+  $("space").textContent = d.total ? `${fmt(d.free)} frei von ${fmt(d.total)}` : "";
+  $("spaceBar").style.width = d.total ? (100*(d.total-d.free)/d.total).toFixed(1)+"%" : "0";
+
+  $("wifiInfo").textContent = w.sta_connected ? `Verbunden mit „${w.ssid}“, IP ${w.ip}, ${w.rssi} dBm, http://${w.hostname}.local` :
+      (w.sta_configured ? `Verbinde mit „${w.ssid}“ …` : "Kein WLAN konfiguriert.") +
+      (w.ap_active ? ` Einrichtungs-WLAN „${w.ap_ssid}“ aktiv (${w.ap_ip}), Passwort steht auf dem Display.` : "");
+  $("hostWritable").checked = d.host_writable;
+  $("devInfo").textContent = `Firmware ${st.version} · Laufzeit ${Math.floor(st.uptime_s/60)} min · freier RAM ${fmt(st.heap)} · Sektor ${d.sector} B`;
+  $("fileInput").accept = st.allow_gcode ? ".3mf,.gcode" : ".3mf";
+}
+
+function showFilesUnavailable(){
+  const d=st.drive;
+  $("fileArea").innerHTML = `<span class="muted">${d.owner==="usb" ? "Dateiliste nur im Upload-Modus verfügbar (das Laufwerk gehört gerade dem USB-Host)." : "Keine Dateiliste verfügbar."}</span>`;
+}
+
+async function loadFiles(){
+  const j = await api("/api/files");
+  if(!j.ok){ $("fileArea").innerHTML=`<span class="muted">${esc(j.error||"Fehler")}</span>`; return; }
+  if(!j.files.length){ $("fileArea").innerHTML='<span class="muted">Keine Dateien.</span>'; return; }
+  j.files.sort((a,b)=>a.name.localeCompare(b.name));
+  $("fileArea").innerHTML = "<table>" + j.files.map(f =>
+    `<tr><td>${esc(f.name)}</td><td class="num">${fmt(f.size)}</td><td class="act">
+     <a class="btn" href="/api/download?name=${encodeURIComponent(f.name)}" download="${esc(f.name)}">⬇</a>
+     <button class="danger" data-del="${esc(f.name)}">Löschen</button></td></tr>`).join("") + "</table>" +
+    (j.truncated ? '<div class="muted">Liste gekürzt.</div>' : "");
+  document.querySelectorAll("[data-del]").forEach(b => b.onclick = () => del(b.dataset.del));
+}
+
+async function del(name){
+  if(!await ask("Datei löschen?", name, {yes:"Löschen", danger:true})) return;
+  const j = await post("/api/delete?name="+encodeURIComponent(name));
+  if(!j.ok) await ask("Fehler", j.error, {yes:"OK"});
+  refresh();
+}
+
+// ---------------------------------------------------------------- mode switching
+async function takeOver(){
+  let j = await post("/api/mode?target=app");
+  if(j.code==="HOST_ACTIVE"){
+    const ok = await ask("Laufwerk vom Host übernehmen?",
+      "Der USB-Host hat das Laufwerk nicht ausgeworfen. Läuft gerade ein Druck von diesem Laufwerk, wird er dadurch abgebrochen. Besser zuerst am Host „Auswerfen“ wählen. Trotzdem übernehmen?",
+      {yes:"Übernehmen", danger:true});
+    if(!ok) return false;
+    j = await post("/api/mode?target=app&force=1");
+  }
+  msg($("modeMsg"), j.ok ? "" : j.error, false);
+  await refresh();
+  return j.ok;
+}
+
+async function provide(){
+  const j = await post("/api/mode?target=usb");
+  msg($("modeMsg"), j.ok ? "Laufwerk wurde am USB bereitgestellt." : j.error, j.ok);
+  refresh();
+  return j.ok;
+}
+$("btnApp").onclick = takeOver;
+$("btnUsb").onclick = provide;
+
+// ---------------------------------------------------------------- upload
+function allowed(name){ const n=name.toLowerCase(); return n.endsWith(".3mf") || (st && st.allow_gcode && n.endsWith(".gcode")); }
+
+function uploadOne(file, overwrite, ui){
+  return new Promise(resolve => {
+    const x = new XMLHttpRequest();
+    x.open("POST", `/api/upload?name=${encodeURIComponent(file.name)}&overwrite=${overwrite?1:0}`);
+    x.setRequestHeader("X-PrintDrive","1");
+    x.setRequestHeader("Content-Type","application/octet-stream");
+    x.upload.onprogress = e => { if(e.lengthComputable){ ui.bar.style.width=(100*e.loaded/e.total).toFixed(1)+"%"; ui.info.textContent=`${fmt(e.loaded)} / ${fmt(e.total)}`; } };
+    x.onload = () => { let j={}; try{ j=JSON.parse(x.responseText); }catch(e){ j={ok:false,error:"HTTP "+x.status}; } resolve(j); };
+    x.onerror = () => resolve({ok:false, error:"Verbindung abgebrochen – Datei wurde nicht gespeichert."});
+    x.send(file);
+  });
+}
+
+async function handleFiles(list){
+  if(uploading) return;
+  const files = Array.from(list);
+  if(!files.length) return;
+  await refresh();
+  if(!st) return;
+  const bad = files.filter(f => !allowed(f.name));
+  if(bad.length){ await ask("Dateityp nicht erlaubt", bad.map(f=>f.name).join(", ") + (st.allow_gcode ? " – erlaubt: .3mf, .gcode" : " – erlaubt: .3mf"), {yes:"OK"}); return; }
+  if(st.drive.owner==="usb" && !await takeOver()) return;
+  if(st.drive.owner!=="app" || !st.drive.fs_ok){ msg($("modeMsg"), "Upload-Modus nicht verfügbar.", false); return; }
+
+  uploading = true; clearInterval(pollTimer); render();
+  const box=$("uploads"); box.innerHTML="";
+  let okCount=0;
+  for(const f of files){
+    const el=document.createElement("div"); el.className="up-item";
+    el.innerHTML=`<div class="name">${esc(f.name)} <span class="muted"></span></div><div class="bar"><div></div></div><div class="res"></div>`;
+    box.appendChild(el);
+    const ui={bar:el.querySelector(".bar>div"), info:el.querySelector(".muted"), res:el.querySelector(".res")};
+    let overwrite=false;
+    let c = await post(`/api/upload/check?name=${encodeURIComponent(f.name)}&size=${f.size}&overwrite=0`);
+    if(c.code==="EXISTS"){
+      if(!await ask("Datei überschreiben?", f.name+" existiert bereits.", {yes:"Überschreiben", danger:true})){ msg(ui.res,"Übersprungen.",false); continue; }
+      overwrite=true;
+      c = await post(`/api/upload/check?name=${encodeURIComponent(f.name)}&size=${f.size}&overwrite=1`);
+    }
+    if(!c.ok){ msg(ui.res, c.error, false); continue; }
+    const t0=performance.now();
+    const j = await uploadOne(f, overwrite, ui);
+    const s=(performance.now()-t0)/1000;
+    if(j.ok){ okCount++; ui.bar.style.width="100%"; msg(ui.res, `Gespeichert (${fmt(f.size/s)}/s).`, true); }
+    else msg(ui.res, j.error || "Fehler", false);
+  }
+  uploading=false;
+  await refresh();
+  if(okCount && $("autoProvide").checked) await provide();
+  pollTimer=setInterval(refresh, 2000);
+}
+
+const drop=$("drop");
+drop.onclick = () => $("fileInput").click();
+$("fileInput").onchange = e => { handleFiles(e.target.files); e.target.value=""; };
+["dragenter","dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => e.preventDefault());
+
+// ---------------------------------------------------------------- settings
+$("wifiForm").onsubmit = async e => {
+  e.preventDefault();
+  const body = new URLSearchParams({ssid:$("ssid").value, pass:$("pass").value}).toString();
+  const j = await post("/api/wifi", body);
+  msg($("wifiMsg"), j.ok ? "Gespeichert. Der Dongle verbindet sich jetzt – die neue IP steht auf dem Display." : j.error, j.ok);
+  $("pass").value="";
+};
+$("hostWritable").onchange = async e => { await post("/api/settings/host_writable?value="+(e.target.checked?1:0)); refresh(); };
+$("btnLog").onclick = async () => { const p=$("log"); p.hidden=!p.hidden; if(!p.hidden){ p.textContent=await (await fetch("/api/log",{cache:"no-store"})).text(); p.scrollTop=p.scrollHeight; } };
+$("btnReboot").onclick = async () => { if(await ask("Neustart?","Der Dongle startet neu. Ein USB-Host verliert dabei kurz das Laufwerk.",{yes:"Neustart"})) post("/api/reboot?mode=normal"); };
+$("btnFlash").onclick = async () => { if(await ask("Flash-Modus?","Startet den Download-Modus zum Flashen neuer Firmware. Zurück: Dongle aus- und wieder einstecken.",{yes:"Flash-Modus",danger:true})) post("/api/reboot?mode=download"); };
+$("btnFormat").onclick = async () => {
+  const v = await ask("Speicher formatieren?","ALLE Dateien werden gelöscht. Zum Bestätigen FORMAT eingeben.",{input:"FORMAT", yes:"Formatieren", danger:true});
+  if(v!=="FORMAT") return;
+  const j = await post("/api/format?confirm=FORMAT");
+  await ask(j.ok ? "Formatierung gestartet" : "Fehler", j.ok ? "Der Dongle startet neu und formatiert. Seite in ca. 15 Sekunden neu laden." : j.error, {yes:"OK"});
+};
+
+refresh();
+pollTimer = setInterval(refresh, 2000);
+</script>
+</body>
+</html>

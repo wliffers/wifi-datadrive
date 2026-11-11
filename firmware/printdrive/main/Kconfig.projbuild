@@ -1,0 +1,41 @@
+menu "PrintDrive"
+
+    config PD_HOST_WRITABLE_DEFAULT
+        bool "USB host may write to the drive (default; changeable in the web UI)"
+        default y
+        help
+            Needed for phase 1 tests on Windows (copy files to the drive). For the
+            printer a read-only drive is safer: the host can then never damage the
+            file system and the drive can always be taken back for uploads.
+
+    config PD_BOOT_WAIT_HOST_MS
+        int "At boot, wait this long for a USB host before staying in upload mode"
+        default 3000
+        range 0 20000
+
+    config PD_PROVIDE_ON_ATTACH
+        bool "Provide the drive automatically when a USB host connects"
+        default y
+
+    config PD_EJECT_TO_APP
+        bool "Switch to upload mode automatically when the host ejects the drive"
+        default y
+
+    config PD_REPLUG_ON_PROVIDE
+        bool "Always re-enumerate (soft unplug/replug) when providing the drive"
+        default y
+        help
+            Makes the host treat the drive like a freshly inserted USB stick. Without
+            it, only a SCSI "medium changed" notification is sent (unless the host had
+            ejected the drive, then a re-plug is always done).
+
+    config PD_HOST_WRITE_GUARD_MS
+        int "Never take the drive from the host within this time after its last write (ms)"
+        default 3000
+        range 500 60000
+
+    config PD_ALLOW_GCODE
+        bool "Also accept .gcode uploads (in addition to .3mf)"
+        default n
+
+endmenu

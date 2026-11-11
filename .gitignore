@@ -1,0 +1,20 @@
+# ESP-IDF build output and generated config (sdkconfig.defaults stays tracked)
+firmware/*/build/
+firmware/*/sdkconfig
+firmware/*/sdkconfig.old
+# Downloaded by the component manager; dependencies.lock stays tracked for reproducible builds
+firmware/*/managed_components/
+
+# Local Wi-Fi credentials (template: firmware/pd_secrets.h.example)
+firmware/pd_secrets.h
+
+# Flash dumps are large and device-specific; backup/SHA256SUMS.txt stays tracked
+backup/*.bin
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor: local VS Code settings, shared extension recommendations stay tracked
+.vscode/*
+!.vscode/extensions.json

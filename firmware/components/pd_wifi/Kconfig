@@ -1,0 +1,19 @@
+menu "PrintDrive Wi-Fi"
+
+    config PD_WIFI_HOSTNAME
+        string "Hostname (DHCP and mDNS)"
+        default "printdrive"
+        help
+            The web interface is reachable as http://<hostname>.local where mDNS works.
+
+    config PD_WIFI_AP_FALLBACK_S
+        int "Start setup access point after this many seconds without connection"
+        default 20
+        range 5 600
+
+    config PD_WIFI_AP_LINGER_S
+        int "Keep setup access point on for this many seconds after the station connected"
+        default 120
+        range 10 3600
+
+endmenu

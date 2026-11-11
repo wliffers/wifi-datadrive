@@ -1,0 +1,51 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# ---- T-Dongle-S3: 16 MB quad flash, no PSRAM (LILYGO boards/dongles3.json) ----
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="../partitions.csv"
+
+# ---- Console ----
+# The native USB is used by TinyUSB, so the USB-Serial/JTAG console is gone.
+# Primary console stays on UART0 (GPIO43/44 = QWIIC connector); logs are also
+# available on the TinyUSB CDC port and via http://<ip>/api/log.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# ---- Protect bootloader / partition table from accidental flash writes ----
+CONFIG_SPI_FLASH_DANGEROUS_WRITE_ABORTS=y
+
+# ---- TinyUSB: MSC + CDC (log port; disable CDC for printer tests if needed) ----
+CONFIG_TINYUSB_MSC_ENABLED=y
+CONFIG_TINYUSB_MSC_BUFSIZE=8192
+CONFIG_TINYUSB_CDC_ENABLED=y
+CONFIG_TINYUSB_CDC_COUNT=1
+CONFIG_TINYUSB_DESC_MANUFACTURER_STRING="WiFi PrintDrive"
+CONFIG_TINYUSB_DESC_PRODUCT_STRING="PrintDrive"
+CONFIG_TINYUSB_DESC_SERIAL_STRING=""
+CONFIG_TINYUSB_DESC_CDC_STRING="PrintDrive Log"
+CONFIG_TINYUSB_DESC_MSC_STRING="PrintDrive Disk"
+
+# ---- Wear levelling: 512 byte sectors (best host compatibility, as in Espressif's
+# tusb_msc example) in SAFE mode (power-loss safe; Espressif's example uses PERF).
+CONFIG_WL_SECTOR_SIZE_512=y
+CONFIG_WL_SECTOR_MODE_SAFE=y
+
+# ---- FAT ----
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+CONFIG_FATFS_API_ENCODING_UTF_8=y
+CONFIG_FATFS_CODEPAGE_850=y
+CONFIG_FATFS_USE_LABEL=y
+
+# ---- HTTP ----
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+
+# ---- Wi-Fi / lwIP throughput for uploads (moderate, no PSRAM) ----
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=32
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32

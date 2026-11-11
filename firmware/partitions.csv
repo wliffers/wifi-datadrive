@@ -1,0 +1,13 @@
+# WiFi PrintDrive partition table for the 16 MB T-Dongle-S3 (shared by all firmware projects).
+#
+# Layout is OTA-ready from the start so that adding OTA later does not require
+# re-partitioning (which would wipe the user file storage).
+#
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x5000
+otadata,  data, ota,     0xe000,   0x2000
+ota_0,    app,  ota_0,   0x10000,  0x280000
+ota_1,    app,  ota_1,   0x290000, 0x280000
+# FAT file storage (wear levelled). 0xAF0000 = 10.94 MiB raw; usable space is smaller
+# (wear-levelling and FAT overhead). Ends exactly at 16 MiB.
+storage,  data, fat,     0x510000, 0xAF0000
