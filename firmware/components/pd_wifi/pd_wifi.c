@@ -125,8 +125,8 @@ static void set_ap(bool on)
         ap.ap.pmf_cfg.capable = true;
         esp_wifi_set_mode(WIFI_MODE_APSTA);
         esp_wifi_set_config(WIFI_IF_AP, &ap);
-        ESP_LOGW(TAG, "setup access point on: SSID '%s', password '%s', http://192.168.4.1",
-                 s_st.ap_ssid, s_st.ap_pass);
+        // The password is only shown on the LCD (the log is readable via the web UI).
+        ESP_LOGW(TAG, "setup access point on: SSID '%s' (password on the LCD), http://192.168.4.1", s_st.ap_ssid);
     } else {
         esp_wifi_set_mode(WIFI_MODE_STA);
         ESP_LOGI(TAG, "setup access point off");

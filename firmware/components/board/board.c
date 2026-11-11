@@ -5,6 +5,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "soc/rtc_cntl_reg.h"
+#include "soc/usb_serial_jtag_reg.h"
 
 static const char *TAG = "board";
 
@@ -71,7 +72,13 @@ uint32_t board_flash_size(void)
 void board_restart_to_download_mode(void)
 {
     ESP_LOGW(TAG, "restarting into ROM download mode");
-    // Same mechanism the Arduino core uses for its "1200 baud touch" on ESP32-S2/S3.
+    // TinyUSB routes the internal USB PHY to the OTG controller via RTC_CNTL_USB_CONF.
+    // That RTC register survives a software reset, so the ROM's USB-Serial/JTAG would
+    // stay disconnected (verified on the device: nothing enumerated). Give the PHY back
+    // to USB-Serial/JTAG first (same as the Arduino core's usb_switch_to_cdc_jtag()).
+    CLEAR_PERI_REG_MASK(RTC_CNTL_USB_CONF_REG, RTC_CNTL_SW_HW_USB_PHY_SEL | RTC_CNTL_SW_USB_PHY_SEL);
+    CLEAR_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_PHY_SEL);
+    SET_PERI_REG_MASK(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_USB_PAD_ENABLE | USB_SERIAL_JTAG_DP_PULLUP);
     REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
     esp_restart();
 }

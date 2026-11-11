@@ -1,0 +1,9 @@
+# Diagnostic overlay: console on the USB-Serial/JTAG (COM port) instead of UART0, so
+# early boot messages and crashes before TinyUSB starts are visible without extra hardware.
+# Once TinyUSB takes over the USB PHY the console goes silent (use the CDC port / web log).
+#
+# Build:  .\tools\idf.ps1 printdrive -B build_diag -D SDKCONFIG=build_diag/sdkconfig -D "SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.diag" build
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+CONFIG_BOOTLOADER_LOG_LEVEL_INFO=y

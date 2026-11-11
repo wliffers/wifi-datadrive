@@ -18,3 +18,6 @@ __pycache__/
 # Editor: local VS Code settings, shared extension recommendations stay tracked
 .vscode/*
 !.vscode/extensions.json
+
+# Diagnostic build (console on USB-Serial/JTAG)
+firmware/*/build_diag/

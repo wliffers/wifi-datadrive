@@ -51,6 +51,7 @@ static const char *NVS_NS = "pd_drive";
 #define FREE_RESERVE_BYTES (64 * 1024)      // keep room for FAT/dir growth
 #define TAIL_SIZE          1024             // bytes kept for the ZIP end-of-central-directory check
 #define FAT_ALLOC_UNIT     2048             // with 512 B sectors -> FAT16 on this volume size
+#define FLASH_SECTOR_SECTORS 8             // 4096 B flash erase sector / 512 B FAT sector
 
 // Boolean Kconfig options are undefined (not 0) when disabled.
 #ifdef CONFIG_PD_PROVIDE_ON_ATTACH
@@ -367,7 +368,10 @@ static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
     FRESULT fr = FR_OK;
     if (do_format) {
         ESP_LOGW(TAG, "formatting storage (FAT, %d byte clusters)", FAT_ALLOC_UNIT);
-        const MKFS_PARM opt = {.fmt = FM_FAT, .n_fat = 2, .align = 0, .n_root = 0, .au_size = FAT_ALLOC_UNIT};
+        // align = 8 sectors (4 KiB): data area starts on a flash erase-sector boundary, so
+        // sequential cluster writes avoid the slow read-modify-erase path of wear levelling.
+        const MKFS_PARM opt = {.fmt = FM_FAT, .n_fat = 2, .align = FLASH_SECTOR_SECTORS, .n_root = 0,
+                               .au_size = FAT_ALLOC_UNIT};
         fr = f_mkfs(drv, &opt, work, 4096);
         if (fr != FR_OK) {
             ESP_LOGE(TAG, "f_mkfs failed (%d)", fr);
@@ -399,6 +403,14 @@ out:
 }
 
 // ============================================================== tasks / events
+
+static void on_msc_event(tinyusb_msc_storage_handle_t handle, tinyusb_msc_event_t *event, void *arg)
+{
+    ESP_LOGD(TAG, "msc event %d (mount point %d)", event->id, event->mount_point);
+    if (event->id == TINYUSB_MSC_EVENT_MOUNT_FAILED || event->id == TINYUSB_MSC_EVENT_FORMAT_FAILED) {
+        ESP_LOGE(TAG, "msc event %d: mount/format failed", event->id);
+    }
+}
 
 static void on_usb_event(bool attached)
 {
@@ -498,7 +510,7 @@ esp_err_t drive_init(void)
     // MSC driver with automatic ownership switching OFF - we decide (see header).
     const tinyusb_msc_driver_config_t drv_cfg = {
         .user_flags.auto_mount_off = 1,
-        .callback = NULL,
+        .callback = on_msc_event,
     };
     ESP_RETURN_ON_ERROR(tinyusb_msc_install_driver(&drv_cfg), TAG, "msc driver");
 
@@ -530,6 +542,7 @@ esp_err_t drive_init(void)
     }
     unlock();
 
+    esp_log_level_set("tusb_desc", ESP_LOG_ERROR);   // default-descriptor notes, MS OS string 0xEE
     ESP_RETURN_ON_ERROR(usb_dev_install(on_usb_event), TAG, "usb");
     xTaskCreate(drive_task, "drive", 4096, NULL, 5, NULL);
     return ESP_OK;
