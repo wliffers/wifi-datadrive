@@ -50,7 +50,10 @@ static const char *NVS_NS = "pd_drive";
 #define OLD_PATH           DRIVE_BASE_PATH "/.pd_old.tmp"     // previous version during overwrite
 #define FREE_RESERVE_BYTES (64 * 1024)      // keep room for FAT/dir growth
 #define TAIL_SIZE          1024             // bytes kept for the ZIP end-of-central-directory check
-#define FAT_ALLOC_UNIT     2048             // with 512 B sectors -> FAT16 on this volume size
+// Cluster size (Kconfig). 4096: every FatFs write covers whole 4 KiB flash sectors (fast, but
+// FAT12 on this ~11 MB volume). 2048: FAT16, but each cluster write is a slow partial sector.
+#define FAT_ALLOC_UNIT     (CONFIG_PD_FAT_CLUSTER_KB * 1024)
+_Static_assert(CONFIG_PD_FAT_CLUSTER_KB == 2 || CONFIG_PD_FAT_CLUSTER_KB == 4, "PD_FAT_CLUSTER_KB must be 2 or 4");
 #define FLASH_SECTOR_SECTORS 8             // 4096 B flash erase sector / 512 B FAT sector
 
 // Boolean Kconfig options are undefined (not 0) when disabled.
@@ -367,7 +370,7 @@ static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
     }
     FRESULT fr = FR_OK;
     if (do_format) {
-        ESP_LOGW(TAG, "formatting storage (FAT, %d byte clusters)", FAT_ALLOC_UNIT);
+        ESP_LOGW(TAG, "formatting storage (FAT, %d byte clusters)", (int)FAT_ALLOC_UNIT);
         // align = 8 sectors (4 KiB): data area starts on a flash erase-sector boundary, so
         // sequential cluster writes avoid the slow read-modify-erase path of wear levelling.
         const MKFS_PARM opt = {.fmt = FM_FAT, .n_fat = 2, .align = FLASH_SECTOR_SECTORS, .n_root = 0,

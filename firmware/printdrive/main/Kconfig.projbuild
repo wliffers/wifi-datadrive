@@ -34,6 +34,16 @@ menu "PrintDrive"
         default 3000
         range 500 60000
 
+    config PD_FAT_CLUSTER_KB
+        int "FAT cluster size in KiB used when formatting (2 or 4)"
+        default 4
+        range 2 4
+        help
+            4: web uploads write whole 4 KiB flash sectors (about 6x faster than 2 KiB),
+               but the ~11 MB volume becomes FAT12.
+            2: FAT16 (more common), but web uploads are slow (each cluster write is a
+               partial flash sector). Only applied when the storage is (re)formatted.
+
     config PD_ALLOW_GCODE
         bool "Also accept .gcode uploads (in addition to .3mf)"
         default n

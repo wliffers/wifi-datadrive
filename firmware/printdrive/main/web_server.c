@@ -304,6 +304,25 @@ static esp_err_t h_upload_check(httpd_req_t *req)
     return send_result(req, r);
 }
 
+/** Read and discard the rest of the request body so an error answer reaches the client.
+ *  Returns false if the client is gone. */
+static bool drain_body(httpd_req_t *req, size_t remaining)
+{
+    int timeouts = 0;
+    while (remaining > 0) {
+        const int n = httpd_req_recv(req, (char *)s_upload_buf,
+                                     remaining < UPLOAD_BUF_SIZE ? remaining : UPLOAD_BUF_SIZE);
+        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= 3) {
+            continue;
+        }
+        if (n <= 0) {
+            return false;
+        }
+        remaining -= (size_t)n;
+    }
+    return true;
+}
+
 static esp_err_t h_upload(httpd_req_t *req)
 {
     if (!check_csrf(req)) {
@@ -316,8 +335,7 @@ static esp_err_t h_upload(httpd_req_t *req)
     const size_t total = req->content_len;
     drive_result_t r = drive_upload_begin(name, (uint32_t)total, query_flag(req, "overwrite"));
     if (r != DRIVE_OK) {
-        send_result(req, r);
-        return ESP_FAIL;   // close the connection instead of draining a large body
+        return drain_body(req, total) ? send_result(req, r) : ESP_FAIL;
     }
 
     const int64_t t0 = esp_timer_get_time();
@@ -342,8 +360,7 @@ static esp_err_t h_upload(httpd_req_t *req)
             fill = 0;
             if (r != DRIVE_OK) {
                 drive_upload_abort();
-                send_result(req, r);
-                return ESP_FAIL;
+                return drain_body(req, remaining) ? send_result(req, r) : ESP_FAIL;
             }
         }
     }
