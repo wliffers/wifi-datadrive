@@ -47,6 +47,7 @@ static const char *TAG = "drive";
 static const char *NVS_NS = "pd_drive";
 
 #define TMP_PATH           DRIVE_BASE_PATH "/.pd_upload.tmp"
+#define OLD_PATH           DRIVE_BASE_PATH "/.pd_old.tmp"     // previous version during overwrite
 #define FREE_RESERVE_BYTES (64 * 1024)      // keep room for FAT/dir growth
 #define TAIL_SIZE          1024             // bytes kept for the ZIP end-of-central-directory check
 #define FAT_ALLOC_UNIT     2048             // with 512 B sectors -> FAT16 on this volume size
@@ -105,6 +106,18 @@ static volatile bool s_host_read_seen, s_host_write_seen;
 static uint32_t now_ms(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+/** Milliseconds since *last (UINT32_MAX if never). Reads *last before the clock so a
+ *  concurrent host access can never make the result wrap to a huge value. */
+static uint32_t idle_ms(bool seen, const volatile uint32_t *last)
+{
+    if (!seen) {
+        return UINT32_MAX;
+    }
+    const uint32_t l = *last;
+    const int32_t d = (int32_t)(now_ms() - l);
+    return d < 0 ? 0 : (uint32_t)d;
 }
 
 static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -253,6 +266,11 @@ static void cleanup_temp_file(void)
         ESP_LOGW(TAG, "removing stale upload temp file (%ld bytes)", (long)st.st_size);
         unlink(TMP_PATH);
     }
+    if (stat(OLD_PATH, &st) == 0) {
+        // Only left behind by a power loss in the middle of an overwrite.
+        ESP_LOGW(TAG, "removing stale previous-version file (%ld bytes)", (long)st.st_size);
+        unlink(OLD_PATH);
+    }
 }
 
 static esp_err_t nvs_get_flag(const char *key, uint8_t *val)
@@ -284,7 +302,9 @@ static esp_err_t nvs_set_flag(const char *key, uint8_t val)
 static drive_result_t do_mount_app(void)
 {
     set_host_io(false);                         // refuse all new host I/O
-    if (!usb_dev_barrier(2000)) {               // drain host writes already accepted
+    // Two barrier rounds: the first lets a WRITE(10) callback that already passed the
+    // gate finish (and queue its deferred sector write), the second drains that write.
+    if (!usb_dev_barrier(2000) || !usb_dev_barrier(2000)) {
         ESP_LOGE(TAG, "USB barrier timeout - host writes may still be pending");
         set_host_io(true);
         return DRIVE_ERR_IO;
@@ -300,6 +320,7 @@ static drive_result_t do_mount_app(void)
         ESP_LOGE(TAG, "file system could not be mounted for the app");
         return DRIVE_ERR_NO_FS;
     }
+    s_st.needs_format = false;
     cleanup_temp_file();
     refresh_fs_info();
     ESP_LOGI(TAG, "owner: APP (web upload possible), %llu of %llu bytes free",
@@ -362,7 +383,7 @@ static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
             snprintf(new_label, sizeof(new_label), "%sPRINTDRIVE", drv);
             f_setlabel(new_label);   // best effort
         }
-        char label[24] = "";
+        char label[40] = "";   // UTF-8 label can be up to 34 bytes (FatFs docs)
         f_getlabel(drv, label, NULL);
         ESP_LOGI(TAG, "FAT ok (type %d: 1=FAT12 2=FAT16 3=FAT32, label '%s')", fs->fs_type, label);
         f_mount(NULL, drv, 0);
@@ -392,7 +413,8 @@ static void drive_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     lock();
-    if (usb_dev_connected() && s_st.owner == DRIVE_OWNER_APP && s_st.fs_ok && !s_st.upload_active) {
+    if (PROVIDE_ON_ATTACH && usb_dev_connected() && s_st.owner == DRIVE_OWNER_APP && s_st.fs_ok &&
+        !s_st.upload_active) {
         ESP_LOGI(TAG, "host present at boot -> providing drive");
         do_mount_usb(false);
     } else if (!usb_dev_connected()) {
@@ -518,12 +540,11 @@ void drive_get_status(drive_status_t *out)
     lock();
     *out = s_st;
     unlock();
-    const uint32_t t = now_ms();
     out->usb_connected = usb_dev_connected();
     out->usb_suspended = usb_dev_suspended();
     out->host_ejected = s_host_ejected;
-    out->host_write_idle_ms = s_host_write_seen ? t - s_last_host_write_ms : UINT32_MAX;
-    const uint32_t read_idle = s_host_read_seen ? t - s_last_host_read_ms : UINT32_MAX;
+    out->host_write_idle_ms = idle_ms(s_host_write_seen, &s_last_host_write_ms);
+    const uint32_t read_idle = idle_ms(s_host_read_seen, &s_last_host_read_ms);
     out->host_idle_ms = read_idle < out->host_write_idle_ms ? read_idle : out->host_write_idle_ms;
 }
 
@@ -539,17 +560,14 @@ drive_result_t drive_set_owner(drive_owner_t target, bool force)
         goto out;
     }
     if (target == DRIVE_OWNER_USB) {
-        if (!s_st.fs_ok) {
-            r = DRIVE_ERR_NO_FS;
-            goto out;
-        }
+        // Allowed even without a readable FS: the host can then format the drive itself.
         // If the host ejected the drive it will not look at the medium again by
         // itself, so re-plug in that case (or always, if configured).
         do_mount_usb(REPLUG_ON_PROVIDE || s_host_ejected);
     } else if (target == DRIVE_OWNER_APP) {
         const bool host_holds_it = usb_dev_connected() && !s_host_ejected;
         if (host_holds_it) {
-            const uint32_t write_idle = s_host_write_seen ? now_ms() - s_last_host_write_ms : UINT32_MAX;
+            const uint32_t write_idle = idle_ms(s_host_write_seen, &s_last_host_write_ms);
             if (s_host_write_enabled && write_idle < CONFIG_PD_HOST_WRITE_GUARD_MS) {
                 r = DRIVE_ERR_HOST_WRITING;   // never taken away during a copy
                 goto out;
@@ -662,14 +680,14 @@ drive_result_t drive_list(drive_file_t *files, size_t max, size_t *count)
 
 drive_result_t drive_delete(const char *name)
 {
-    if (!name || strlen(name) > DRIVE_NAME_MAX || strchr(name, '/') || strchr(name, '\\') ||
+    if (!name || strlen(name) > DRIVE_FILE_NAME_MAX || strchr(name, '/') || strchr(name, '\\') ||
         name[0] == '.' || name[0] == '\0') {
         return DRIVE_ERR_BAD_NAME;
     }
     lock();
     drive_result_t r = require_app_fs();
     if (r == DRIVE_OK) {
-        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_NAME_MAX + 1];
+        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
         make_path(path, sizeof(path), name);
         if (unlink(path) != 0) {
             r = errno == ENOENT ? DRIVE_ERR_NOT_FOUND : DRIVE_ERR_IO;
@@ -707,13 +725,13 @@ drive_result_t drive_format(void)
 
 drive_result_t drive_download_open(const char *name, int *fd, uint32_t *size)
 {
-    if (!name || name[0] == '.' || strchr(name, '/') || strchr(name, '\\') || strlen(name) > DRIVE_NAME_MAX) {
+    if (!name || name[0] == '.' || strchr(name, '/') || strchr(name, '\\') || strlen(name) > DRIVE_FILE_NAME_MAX) {
         return DRIVE_ERR_BAD_NAME;
     }
     lock();
     drive_result_t r = require_app_fs();
     if (r == DRIVE_OK) {
-        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_NAME_MAX + 1];
+        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
         make_path(path, sizeof(path), name);
         struct stat st;
         *fd = open(path, O_RDONLY);
@@ -760,7 +778,7 @@ drive_result_t drive_upload_begin(const char *name, uint32_t size, bool overwrit
         r = DRIVE_ERR_BUSY;
         goto out;
     }
-    char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_NAME_MAX + 1];
+    char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
     make_path(path, sizeof(path), name);
     struct stat st;
     if (stat(path, &st) == 0 && !overwrite) {
@@ -878,15 +896,24 @@ drive_result_t drive_upload_finish(void)
         }
     }
     if (r == DRIVE_OK) {
-        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_NAME_MAX + 1];
+        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
         make_path(path, sizeof(path), s_st.upload_name);
         struct stat st;
-        if (stat(path, &st) == 0) {
-            if (!s_up_overwrite || unlink(path) != 0) {
-                r = s_up_overwrite ? DRIVE_ERR_IO : DRIVE_ERR_EXISTS;
+        const bool exists = stat(path, &st) == 0;
+        if (exists && !s_up_overwrite) {
+            r = DRIVE_ERR_EXISTS;
+        } else if (exists) {
+            // Keep the previous version until the new file is in place.
+            unlink(OLD_PATH);
+            if (rename(path, OLD_PATH) != 0) {
+                r = DRIVE_ERR_IO;
+            } else if (rename(TMP_PATH, path) != 0) {
+                rename(OLD_PATH, path);
+                r = DRIVE_ERR_IO;
+            } else {
+                unlink(OLD_PATH);
             }
-        }
-        if (r == DRIVE_OK && rename(TMP_PATH, path) != 0) {
+        } else if (rename(TMP_PATH, path) != 0) {
             r = DRIVE_ERR_IO;
         }
     }
@@ -911,7 +938,32 @@ void drive_upload_abort(void)
     unlock();
 }
 
+drive_result_t drive_prepare_restart(bool force)
+{
+    lock();
+    if (!force && s_st.upload_active) {
+        unlock();
+        return DRIVE_ERR_BUSY;
+    }
+    if (!force && s_host_write_enabled &&
+        idle_ms(s_host_write_seen, &s_last_host_write_ms) < CONFIG_PD_HOST_WRITE_GUARD_MS) {
+        unlock();
+        return DRIVE_ERR_HOST_WRITING;
+    }
+    set_host_io(false);
+    usb_dev_barrier(2000);
+    usb_dev_barrier(2000);
+    if (s_st.upload_active) {
+        ESP_LOGW(TAG, "restart: dropping upload '%s'", s_st.upload_name);
+        upload_reset_locked();
+    }
+    unlock();
+    ESP_LOGI(TAG, "ready for restart");
+    return DRIVE_OK;
+}
+
 void drive_restart_to_download(void)
 {
+    drive_prepare_restart(true);
     board_restart_to_download_mode();   // USB shutdown handler detaches first
 }

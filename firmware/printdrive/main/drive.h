@@ -23,7 +23,8 @@ extern "C" {
 #endif
 
 #define DRIVE_BASE_PATH  "/data"
-#define DRIVE_NAME_MAX   120          // max filename length in bytes (UTF-8)
+#define DRIVE_NAME_MAX   120          // max length of uploaded file names (bytes, UTF-8)
+#define DRIVE_FILE_NAME_MAX 255      // max length of existing (e.g. host-created) names
 
 typedef enum {
     DRIVE_OWNER_NONE = 0,             // not initialised / failed
@@ -53,7 +54,7 @@ typedef struct {
 } drive_status_t;
 
 typedef struct {
-    char name[DRIVE_NAME_MAX + 1];
+    char name[DRIVE_FILE_NAME_MAX + 1];
     uint32_t size;
 } drive_file_t;
 
@@ -114,6 +115,13 @@ drive_result_t drive_upload_begin(const char *name, uint32_t size, bool overwrit
 drive_result_t drive_upload_write(const void *data, size_t len);
 drive_result_t drive_upload_finish(void);
 void drive_upload_abort(void);
+
+/**
+ * Prepare a restart: refuse (unless force) while an upload runs or the host wrote
+ * recently; otherwise block host I/O, drain pending host writes and drop an open upload.
+ * Host I/O stays blocked afterwards - the caller is expected to restart.
+ */
+drive_result_t drive_prepare_restart(bool force);
 
 /** Restart into ROM download mode (USB is detached first). */
 void drive_restart_to_download(void) __attribute__((noreturn));

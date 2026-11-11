@@ -155,6 +155,14 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         s_retry_delay_ms = s_retry_delay_ms * 2 > RETRY_MAX_MS ? RETRY_MAX_MS : s_retry_delay_ms * 2;
         unlock();
         ESP_LOGW(TAG, "station disconnected (reason %d)", d ? d->reason : -1);
+    } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
+        lock();
+        s_st.sta_connected = false;
+        s_st.sta_ip[0] = '\0';
+        s_last_ip_change_ms = now_ms();
+        unlock();
+        ESP_LOGW(TAG, "station lost its IP address - reconnecting");
+        esp_wifi_disconnect();   // DISCONNECTED event schedules the reconnect
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         const ip_event_got_ip_t *e = data;
         lock();
@@ -206,7 +214,14 @@ static void wifi_task(void *arg)
             if (!configured || since_change > AP_FALLBACK_MS) {
                 set_ap(true);
             }
-            if (configured && !connecting && retry_due) {
+            if (configured && connecting && retry_due) {
+                // Safety net: associated but no IP (e.g. DHCP never answered) - start over.
+                ESP_LOGW(TAG, "no IP address after 20 s - retrying");
+                lock();
+                s_connecting = false;
+                unlock();
+                esp_wifi_disconnect();
+            } else if (configured && !connecting && retry_due) {
                 lock();
                 s_connecting = true;
                 s_next_retry_ms = t + 20000;   // safety net if no event arrives
@@ -265,6 +280,7 @@ esp_err_t pd_wifi_start(void)
     ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_RAM), TAG, "storage");
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, on_event, NULL));
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, on_event, NULL));
+    ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, on_event, NULL));
 
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "mode");
     apply_sta_config();

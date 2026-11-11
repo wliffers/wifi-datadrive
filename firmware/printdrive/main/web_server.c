@@ -69,14 +69,16 @@ static bool url_decode(char *s)
 /** Read a decoded query parameter. Returns false if missing. */
 static bool query_param(httpd_req_t *req, const char *key, char *out, size_t len)
 {
-    char query[384];
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+    // The raw value is percent-encoded and can be up to 3x longer than the decoded one.
+    char query[CONFIG_HTTPD_MAX_URI_LEN + 1];
+    char raw[3 * DRIVE_FILE_NAME_MAX + 1];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, key, raw, sizeof(raw)) != ESP_OK || !url_decode(raw) ||
+        strlen(raw) >= len) {
         return false;
     }
-    if (httpd_query_key_value(query, key, out, len) != ESP_OK) {
-        return false;
-    }
-    return url_decode(out);
+    memcpy(out, raw, strlen(raw) + 1);
+    return true;
 }
 
 static bool query_flag(httpd_req_t *req, const char *key)
@@ -228,11 +230,12 @@ static esp_err_t h_status(httpd_req_t *req)
     appendf(buf, sizeof(buf),
             ",\"drive\":{\"owner\":\"%s\",\"fs_ok\":%s,\"needs_format\":%s,\"usb_connected\":%s,"
             "\"usb_suspended\":%s,\"host_ejected\":%s,\"host_writable\":%s,\"host_idle_ms\":%ld,"
-            "\"host_write_idle_ms\":%ld,\"total\":%llu,\"free\":%llu,\"files\":%lu,\"sector\":%lu}",
+            "\"host_write_idle_ms\":%ld,\"write_guard_ms\":%d,\"total\":%llu,\"free\":%llu,\"files\":%lu,"
+            "\"sector\":%lu}",
             owner_str(d.owner), d.fs_ok ? "true" : "false", d.needs_format ? "true" : "false",
             d.usb_connected ? "true" : "false", d.usb_suspended ? "true" : "false",
             d.host_ejected ? "true" : "false", d.host_writable ? "true" : "false",
-            idle_json(d.host_idle_ms), idle_json(d.host_write_idle_ms),
+            idle_json(d.host_idle_ms), idle_json(d.host_write_idle_ms), CONFIG_PD_HOST_WRITE_GUARD_MS,
             (unsigned long long)d.total_bytes, (unsigned long long)d.free_bytes,
             (unsigned long)d.file_count, (unsigned long)d.sector_size);
     appendf(buf, sizeof(buf), ",\"upload\":{\"active\":%s,\"name\":", d.upload_active ? "true" : "false");
@@ -266,7 +269,7 @@ static esp_err_t h_files(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     httpd_resp_sendstr_chunk(req, "{\"ok\":true,\"files\":[");
-    char item[DRIVE_NAME_MAX * 2 + 64];
+    char item[DRIVE_FILE_NAME_MAX * 2 + 64];
     for (size_t i = 0; i < count; i++) {
         item[0] = '\0';
         appendf(item, sizeof(item), "%s{\"name\":", i ? "," : "");
@@ -356,7 +359,7 @@ static esp_err_t h_delete(httpd_req_t *req)
     if (!check_csrf(req)) {
         return ESP_OK;
     }
-    char name[DRIVE_NAME_MAX + 1];
+    char name[DRIVE_FILE_NAME_MAX + 1];
     if (!query_param(req, "name", name, sizeof(name))) {
         return send_result(req, DRIVE_ERR_BAD_NAME);
     }
@@ -365,7 +368,7 @@ static esp_err_t h_delete(httpd_req_t *req)
 
 static esp_err_t h_download(httpd_req_t *req)
 {
-    char name[DRIVE_NAME_MAX + 1];
+    char name[DRIVE_FILE_NAME_MAX + 1];
     if (!query_param(req, "name", name, sizeof(name))) {
         return send_result(req, DRIVE_ERR_BAD_NAME);
     }
@@ -481,6 +484,10 @@ static esp_err_t h_reboot(httpd_req_t *req)
     }
     char mode[16] = "normal";
     query_param(req, "mode", mode, sizeof(mode));
+    const drive_result_t r = drive_prepare_restart(query_flag(req, "force"));
+    if (r != DRIVE_OK) {
+        return send_result(req, r);
+    }
     send_json(req, "200 OK", "{\"ok\":true}");
     vTaskDelay(pdMS_TO_TICKS(300));
     if (strcmp(mode, "download") == 0) {
@@ -512,7 +519,7 @@ esp_err_t web_server_start(void)
     ESP_RETURN_ON_FALSE(s_upload_buf, ESP_ERR_NO_MEM, TAG, "upload buffer");
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.stack_size = 8192;
+    cfg.stack_size = 10240;   // FatFs + LFN + URL/query buffers
     cfg.max_uri_handlers = 20;
     cfg.lru_purge_enable = true;
     cfg.recv_wait_timeout = 10;

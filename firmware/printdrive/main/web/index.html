@@ -139,7 +139,9 @@ function ask(title, text, opts={}){
 }
 
 async function api(path, opts={}){
-  const r = await fetch(path, Object.assign({cache:"no-store"}, opts));
+  let r;
+  try { r = await fetch(path, Object.assign({cache:"no-store"}, opts)); }
+  catch(e) { return {ok:false, code:"OFFLINE", error:"Keine Verbindung zum Dongle."}; }
   let j = {}; try { j = await r.json(); } catch(e) {}
   if(!r.ok && j.ok===undefined) j = {ok:false, error:"HTTP "+r.status};
   return j;
@@ -148,7 +150,9 @@ const post = (path, body) => api(path, {method:"POST", headers:H, body});
 
 // ---------------------------------------------------------------- status
 async function refresh(){
-  try { st = await api("/api/status"); } catch(e) { $("badge").textContent="offline"; $("badge").style.background="#888"; return; }
+  const s = await api("/api/status");
+  if(s.ok===false){ $("badge").textContent="offline"; $("badge").style.background="#888"; return; }
+  st = s;
   render();
   if(st.drive.owner==="app" && st.drive.fs_ok) loadFiles(); else showFilesUnavailable();
 }
@@ -167,8 +171,8 @@ function render(){
   } else if(d.owner==="usb"){
     title="Laufwerk ist am USB-Host bereitgestellt";
     text = !d.usb_connected ? "Kein USB-Host verbunden." :
-      (d.host_write_idle_ms>=0 && d.host_write_idle_ms<3000) ? "Der Host schreibt gerade." :
-      (d.host_idle_ms>=0 && d.host_idle_ms<3000) ? "Der Host liest gerade." :
+      (d.host_write_idle_ms>=0 && d.host_write_idle_ms<d.write_guard_ms) ? "Der Host schreibt gerade." :
+      (d.host_idle_ms>=0 && d.host_idle_ms<d.write_guard_ms) ? "Der Host liest gerade." :
       d.host_writable ? "Host hat Lese- und Schreibzugriff." : "Host hat nur Lesezugriff.";
     text += " Zum Hochladen wird das Laufwerk vom Host übernommen.";
   } else {
@@ -269,6 +273,7 @@ async function handleFiles(list){
   uploading = true; clearInterval(pollTimer); render();
   const box=$("uploads"); box.innerHTML="";
   let okCount=0;
+  try {
   for(const f of files){
     const el=document.createElement("div"); el.className="up-item";
     el.innerHTML=`<div class="name">${esc(f.name)} <span class="muted"></span></div><div class="bar"><div></div></div><div class="res"></div>`;
@@ -288,10 +293,12 @@ async function handleFiles(list){
     if(j.ok){ okCount++; ui.bar.style.width="100%"; msg(ui.res, `Gespeichert (${fmt(f.size/s)}/s).`, true); }
     else msg(ui.res, j.error || "Fehler", false);
   }
-  uploading=false;
+  } finally {
+    uploading=false;
+    pollTimer=setInterval(refresh, 2000);
+  }
   await refresh();
   if(okCount && $("autoProvide").checked) await provide();
-  pollTimer=setInterval(refresh, 2000);
 }
 
 const drop=$("drop");
@@ -313,8 +320,12 @@ $("wifiForm").onsubmit = async e => {
 };
 $("hostWritable").onchange = async e => { await post("/api/settings/host_writable?value="+(e.target.checked?1:0)); refresh(); };
 $("btnLog").onclick = async () => { const p=$("log"); p.hidden=!p.hidden; if(!p.hidden){ p.textContent=await (await fetch("/api/log",{cache:"no-store"})).text(); p.scrollTop=p.scrollHeight; } };
-$("btnReboot").onclick = async () => { if(await ask("Neustart?","Der Dongle startet neu. Ein USB-Host verliert dabei kurz das Laufwerk.",{yes:"Neustart"})) post("/api/reboot?mode=normal"); };
-$("btnFlash").onclick = async () => { if(await ask("Flash-Modus?","Startet den Download-Modus zum Flashen neuer Firmware. Zurück: Dongle aus- und wieder einstecken.",{yes:"Flash-Modus",danger:true})) post("/api/reboot?mode=download"); };
+async function reboot(mode){
+  const j = await post("/api/reboot?mode="+mode);
+  if(!j.ok && j.code!=="OFFLINE") await ask("Neustart nicht möglich", j.error, {yes:"OK"});
+}
+$("btnReboot").onclick = async () => { if(await ask("Neustart?","Der Dongle startet neu. Ein USB-Host verliert dabei kurz das Laufwerk.",{yes:"Neustart"})) reboot("normal"); };
+$("btnFlash").onclick = async () => { if(await ask("Flash-Modus?","Startet den Download-Modus zum Flashen neuer Firmware. Zurück: Dongle aus- und wieder einstecken.",{yes:"Flash-Modus",danger:true})) reboot("download"); };
 $("btnFormat").onclick = async () => {
   const v = await ask("Speicher formatieren?","ALLE Dateien werden gelöscht. Zum Bestätigen FORMAT eingeben.",{input:"FORMAT", yes:"Formatieren", danger:true});
   if(v!=="FORMAT") return;

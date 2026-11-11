@@ -20,6 +20,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "pd_wifi.h"
+#include "sdkconfig.h"
 #include "ui.h"
 
 static const char *TAG = "ui";
@@ -132,7 +133,7 @@ static void handle_button(void)
     } else if (r == DRIVE_ERR_HOST_WRITING) {
         ui_notify("Host schreibt - warten", true);
     } else if (r == DRIVE_ERR_BUSY) {
-        ui_notify("Upload läuft", true);
+        ui_notify("Up-/Download läuft", true);
     } else {
         ui_notify("Umschalten fehlgeschl.", true);
     }
@@ -208,9 +209,9 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w)
             host = "Kein USB-Host";
         } else if (d->owner != DRIVE_OWNER_USB) {
             host = d->host_ejected ? "Host: ausgeworfen" : "Host: kein Medium";
-        } else if (d->host_write_idle_ms < 2000) {
+        } else if (d->host_write_idle_ms < CONFIG_PD_HOST_WRITE_GUARD_MS) {
             host = "Host schreibt...";
-        } else if (d->host_idle_ms < 2000) {
+        } else if (d->host_idle_ms < CONFIG_PD_HOST_WRITE_GUARD_MS) {
             host = "Host liest...";
         } else if (d->usb_suspended) {
             host = "Host: Standby";
