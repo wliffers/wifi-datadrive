@@ -15,7 +15,7 @@ Vertrag zwischen Firmware (`firmware/printdrive/main/web_server.c`), Weboberflä
 
 | HTTP | code | Bedeutung |
 |---|---|---|
-| 400 | `BAD_NAME` | ungültiger Dateiname |
+| 400 | `BAD_NAME` | ungültiger oder fehlender Dateiname (auch fehlendes `size`/`to`) |
 | 400 | `BAD_REQUEST` | Parameter fehlt oder falsch |
 | 400 | `INCOMPLETE` | weniger Daten als angekündigt |
 | 403 | `FORBIDDEN` | Header `X-PrintDrive` fehlt |
@@ -28,7 +28,7 @@ Vertrag zwischen Firmware (`firmware/printdrive/main/web_server.c`), Weboberflä
 | 409 | `EXISTS` | Datei existiert bereits |
 | 413 | `TOO_LARGE` | Datei ≥ 4 GB |
 | 415 | `BAD_TYPE` | Dateityp nicht erlaubt (nur wenn `types` ≠ `"all"`) |
-| 422 | `INVALID_FILE` | Inhalt ungültig (z. B. `.3mf` ist kein ZIP) |
+| 422 | `INVALID_FILE` | Inhalt ungültig (z. B. `.3mf` ist kein ZIP) oder Datei ist leer |
 | 500 | `IO` | Lese-/Schreibfehler |
 | 507 | `NO_SPACE` | nicht genug freier Speicher |
 
