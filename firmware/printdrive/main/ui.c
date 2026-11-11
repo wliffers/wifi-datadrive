@@ -74,7 +74,9 @@ void ui_show_fatal(const char *msg)
 
 static void fmt_size(char *out, size_t len, uint64_t bytes)
 {
-    if (bytes >= 1024 * 1024) {
+    if (bytes >= 1024ULL * 1024 * 1024) {
+        snprintf(out, len, "%.1fGB", bytes / (1024.0 * 1024.0 * 1024.0));
+    } else if (bytes >= 1024 * 1024) {
         snprintf(out, len, "%.1fMB", bytes / (1024.0 * 1024.0));
     } else {
         snprintf(out, len, "%lukB", (unsigned long)(bytes / 1024));
@@ -190,7 +192,7 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w)
     } else if (d->total_bytes) {
         fmt_size(a, sizeof(a), d->free_bytes);
         fmt_size(b, sizeof(b), d->total_bytes);
-        snprintf(line, sizeof(line), "Frei %s / %s", a, b);
+        snprintf(line, sizeof(line), "%s %s / %s", d->on_sd ? "SD" : "Frei", a, b);
         display_text(3, 40, line, DISPLAY_WHITE, DISPLAY_BLACK, 1);
         const int used_w = (int)((DISPLAY_W - 6) * (d->total_bytes - d->free_bytes) / d->total_bytes);
         display_rect(3, 50, DISPLAY_W - 6, 5, DISPLAY_GREY);

@@ -25,6 +25,9 @@
 #include "board.h"
 #include "diskio_impl.h"
 #include "diskio_wl.h"
+#include "diskio_sdmmc.h"
+#include "driver/sdmmc_host.h"
+#include "sdmmc_cmd.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_partition.h"
@@ -55,6 +58,9 @@ static const char *NVS_NS = "pd_drive";
 #define FAT_ALLOC_UNIT     (CONFIG_PD_FAT_CLUSTER_KB * 1024)
 _Static_assert(CONFIG_PD_FAT_CLUSTER_KB == 2 || CONFIG_PD_FAT_CLUSTER_KB == 4, "PD_FAT_CLUSTER_KB must be 2 or 4");
 #define FLASH_SECTOR_SECTORS 8             // 4096 B flash erase sector / 512 B FAT sector
+#define SD_ALIGN_SECTORS   8192             // 4 MiB data-area alignment, like the SD formatter
+#define FMT_REQ_FLASH      1                // NVS fmt_req values: which medium to format
+#define FMT_REQ_SD         2
 
 // Boolean Kconfig options are undefined (not 0) when disabled.
 #ifdef CONFIG_PD_PROVIDE_ON_ATTACH
@@ -87,6 +93,7 @@ typedef enum {
 static SemaphoreHandle_t s_lock;            // guards all state below + file system access
 static QueueHandle_t s_events;
 static wl_handle_t s_wl = WL_INVALID_HANDLE;
+static sdmmc_card_t *s_card;              // non-NULL when the microSD card is the medium
 static tinyusb_msc_storage_handle_t s_storage;
 static drive_status_t s_st;
 static int s_open_downloads;
@@ -143,6 +150,7 @@ const char *drive_result_str(drive_result_t r)
     case DRIVE_ERR_NO_SPACE:     return "Nicht genug freier Speicher";
     case DRIVE_ERR_INVALID_FILE: return "Datei ist beschädigt oder kein gültiges 3MF (ZIP)";
     case DRIVE_ERR_INCOMPLETE:   return "Upload unvollständig";
+    case DRIVE_ERR_TOO_LARGE:    return "Datei zu groß (FAT erlaubt höchstens 4 GB pro Datei)";
     case DRIVE_ERR_IO:           return "Lese-/Schreibfehler";
     default:                     return "Unbekannter Fehler";
     }
@@ -359,7 +367,12 @@ static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
 {
     BYTE pdrv = 0xFF;
     ESP_RETURN_ON_ERROR(ff_diskio_get_drive(&pdrv), TAG, "no free FatFs drive");
-    ESP_RETURN_ON_ERROR(ff_diskio_register_wl_partition(pdrv, s_wl), TAG, "diskio register");
+    if (s_card) {
+        ff_diskio_register_sdmmc(pdrv, s_card);   // returns void
+        ff_sdmmc_set_disk_status_check(pdrv, false);
+    } else {
+        ESP_RETURN_ON_ERROR(ff_diskio_register_wl_partition(pdrv, s_wl), TAG, "diskio register");
+    }
     char drv[3] = {(char)('0' + pdrv), ':', 0};
     FATFS *fs = calloc(1, sizeof(FATFS));
     void *work = malloc(4096);
@@ -370,11 +383,18 @@ static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
     }
     FRESULT fr = FR_OK;
     if (do_format) {
-        ESP_LOGW(TAG, "formatting storage (FAT, %d byte clusters)", (int)FAT_ALLOC_UNIT);
-        // align = 8 sectors (4 KiB): data area starts on a flash erase-sector boundary, so
-        // sequential cluster writes avoid the slow read-modify-erase path of wear levelling.
-        const MKFS_PARM opt = {.fmt = FM_FAT, .n_fat = 2, .align = FLASH_SECTOR_SECTORS, .n_root = 0,
-                               .au_size = FAT_ALLOC_UNIT};
+        MKFS_PARM opt;
+        if (s_card) {
+            // microSD: FAT32 like a normal USB stick, FatFs picks the cluster size.
+            ESP_LOGW(TAG, "formatting microSD card (FAT32)");
+            opt = (MKFS_PARM){.fmt = FM_FAT32, .n_fat = 2, .align = SD_ALIGN_SECTORS, .n_root = 0, .au_size = 0};
+        } else {
+            ESP_LOGW(TAG, "formatting internal flash (FAT, %d byte clusters)", (int)FAT_ALLOC_UNIT);
+            // align = 8 sectors (4 KiB): data area starts on a flash erase-sector boundary, so
+            // sequential cluster writes avoid the slow read-modify-erase path of wear levelling.
+            opt = (MKFS_PARM){.fmt = FM_FAT, .n_fat = 2, .align = FLASH_SECTOR_SECTORS, .n_root = 0,
+                              .au_size = FAT_ALLOC_UNIT};
+        }
         fr = f_mkfs(drv, &opt, work, 4096);
         if (fr != FR_OK) {
             ESP_LOGE(TAG, "f_mkfs failed (%d)", fr);
@@ -399,7 +419,9 @@ static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
     }
 out:
     ff_diskio_unregister(pdrv);
-    ff_diskio_clear_pdrv_wl(s_wl);
+    if (!s_card) {
+        ff_diskio_clear_pdrv_wl(s_wl);
+    }
     free(work);
     free(fs);
     return ret;
@@ -473,6 +495,47 @@ static void drive_task(void *arg)
 
 // ============================================================== public API
 
+/** Try the microSD slot (SDMMC 4-bit, pins from the LILYGO repo). Returns true if a card works. */
+static bool sd_try_init(void)
+{
+#if CONFIG_PD_USE_SDCARD
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+    sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot.width = 4;
+    slot.clk = BOARD_SD_PIN_CLK;
+    slot.cmd = BOARD_SD_PIN_CMD;
+    slot.d0 = BOARD_SD_PIN_D0;
+    slot.d1 = BOARD_SD_PIN_D1;
+    slot.d2 = BOARD_SD_PIN_D2;
+    slot.d3 = BOARD_SD_PIN_D3;
+    slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;   // in addition to any board pull-ups
+
+    if (sdmmc_host_init() != ESP_OK) {
+        return false;
+    }
+    if (sdmmc_host_init_slot(host.slot, &slot) != ESP_OK) {
+        sdmmc_host_deinit();
+        return false;
+    }
+    sdmmc_card_t *card = calloc(1, sizeof(sdmmc_card_t));
+    esp_err_t err = card ? sdmmc_card_init(&host, card) : ESP_ERR_NO_MEM;
+    if (err != ESP_OK) {
+        ESP_LOGI(TAG, "no usable microSD card (%s) - using internal flash", esp_err_to_name(err));
+        free(card);
+        sdmmc_host_deinit();
+        return false;
+    }
+    s_card = card;
+    ESP_LOGI(TAG, "microSD card '%s': %llu MB, %u kHz, %d-bit", card->cid.name,
+             (unsigned long long)card->csd.capacity * card->csd.sector_size / (1024 * 1024),
+             (unsigned)card->real_freq_khz, 1 << card->log_bus_width);
+    return true;
+#else
+    return false;
+#endif
+}
+
 esp_err_t drive_init(void)
 {
     s_lock = xSemaphoreCreateMutex();
@@ -483,26 +546,36 @@ esp_err_t drive_init(void)
     nvs_get_flag("host_wr", &v);
     s_st.host_writable = v != 0;
 
-    const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
-                                                           ESP_PARTITION_SUBTYPE_DATA_FAT, "storage");
-    ESP_RETURN_ON_FALSE(part, ESP_ERR_NOT_FOUND, TAG, "partition 'storage' not found");
-    ESP_RETURN_ON_ERROR(wl_mount(part, &s_wl), TAG, "wl_mount");
-    s_st.sector_size = wl_sector_size(s_wl);
-    ESP_LOGI(TAG, "storage partition @0x%lx, %lu bytes raw, WL sector %lu, WL size %u",
-             (unsigned long)part->address, (unsigned long)part->size,
-             (unsigned long)s_st.sector_size, (unsigned)wl_size(s_wl));
+    // Medium: microSD card if one works, otherwise the internal flash partition.
+    if (sd_try_init()) {
+        s_st.on_sd = true;
+        s_st.sector_size = s_card->csd.sector_size;
+        strlcpy(s_st.medium_name, s_card->cid.name, sizeof(s_st.medium_name));
+    } else {
+        const esp_partition_t *part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                                               ESP_PARTITION_SUBTYPE_DATA_FAT, "storage");
+        ESP_RETURN_ON_FALSE(part, ESP_ERR_NOT_FOUND, TAG, "partition 'storage' not found");
+        ESP_RETURN_ON_ERROR(wl_mount(part, &s_wl), TAG, "wl_mount");
+        s_st.sector_size = wl_sector_size(s_wl);
+        strlcpy(s_st.medium_name, "Flash", sizeof(s_st.medium_name));
+        ESP_LOGI(TAG, "storage partition @0x%lx, %lu bytes raw, WL sector %lu, WL size %u",
+                 (unsigned long)part->address, (unsigned long)part->size,
+                 (unsigned long)s_st.sector_size, (unsigned)wl_size(s_wl));
+    }
 
-    // Format if requested from the web UI, or on the very first boot.
+    // Format only if requested from the web UI for THIS medium, or (internal flash only)
+    // on the very first boot. A microSD card is never formatted automatically.
     uint8_t fmt_req = 0, fmt_done = 0;
     nvs_get_flag("fmt_req", &fmt_req);
     nvs_get_flag("fmt_done", &fmt_done);
+    const uint8_t this_medium = s_card ? FMT_REQ_SD : FMT_REQ_FLASH;
     bool valid = false;
-    ESP_RETURN_ON_ERROR(probe_and_format(fmt_req != 0, &valid), TAG, "probe");
-    if (!valid && !fmt_done) {
+    ESP_RETURN_ON_ERROR(probe_and_format(fmt_req == this_medium, &valid), TAG, "probe");
+    if (!valid && !fmt_done && !s_card) {
         ESP_LOGW(TAG, "first boot: creating file system");
         ESP_RETURN_ON_ERROR(probe_and_format(true, &valid), TAG, "format");
     }
-    if (valid) {
+    if (valid && !s_card) {
         nvs_set_flag("fmt_done", 1);
     }
     if (fmt_req) {
@@ -518,8 +591,7 @@ esp_err_t drive_init(void)
     ESP_RETURN_ON_ERROR(tinyusb_msc_install_driver(&drv_cfg), TAG, "msc driver");
 
     set_host_io(false);
-    const tinyusb_msc_storage_config_t st_cfg = {
-        .medium.wl_handle = s_wl,
+    tinyusb_msc_storage_config_t st_cfg = {
         .fat_fs = {
             .base_path = (char *)DRIVE_BASE_PATH,
             .config.max_files = 4,
@@ -529,7 +601,13 @@ esp_err_t drive_init(void)
         // Start owned by the app if the FS is valid; otherwise keep it unmounted.
         .mount_point = valid ? TINYUSB_MSC_STORAGE_MOUNT_APP : TINYUSB_MSC_STORAGE_MOUNT_USB,
     };
-    ESP_RETURN_ON_ERROR(tinyusb_msc_new_storage_spiflash(&st_cfg, &s_storage), TAG, "msc storage");
+    if (s_card) {
+        st_cfg.medium.card = s_card;
+        ESP_RETURN_ON_ERROR(tinyusb_msc_new_storage_sdmmc(&st_cfg, &s_storage), TAG, "msc storage");
+    } else {
+        st_cfg.medium.wl_handle = s_wl;
+        ESP_RETURN_ON_ERROR(tinyusb_msc_new_storage_spiflash(&st_cfg, &s_storage), TAG, "msc storage");
+    }
 
     lock();
     if (valid) {
@@ -728,7 +806,7 @@ drive_result_t drive_format(void)
         return DRIVE_ERR_BUSY;
     }
     // Formatting happens on the next boot, before USB/MSC is started (one code path).
-    if (nvs_set_flag("fmt_req", 1) != ESP_OK) {
+    if (nvs_set_flag("fmt_req", s_card ? FMT_REQ_SD : FMT_REQ_FLASH) != ESP_OK) {
         unlock();
         return DRIVE_ERR_IO;
     }

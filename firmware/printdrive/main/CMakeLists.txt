@@ -2,7 +2,7 @@ idf_component_register(SRCS "app_main.c" "drive.c" "usb_dev.c" "web_server.c" "u
                        INCLUDE_DIRS "."
                        EMBED_TXTFILES "web/index.html"
                        PRIV_REQUIRES board display pd_wifi applog
-                                     esp_tinyusb fatfs wear_levelling vfs esp_partition
+                                     esp_tinyusb fatfs wear_levelling vfs esp_partition sdmmc esp_driver_sdmmc
                                      nvs_flash esp_http_server esp_timer esp_system app_update)
 
 # Host-I/O gate (see drive.c): route TinyUSB's calls of these MSC callbacks through

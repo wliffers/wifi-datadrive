@@ -77,7 +77,12 @@ def main():
     check("path in name refused (400)", r.status_code == 400, r.text)
     big = st["drive"]["free"] + 1024 * 1024
     r = s.post(f"{base}/api/upload/check?name=big.3mf&size={big}", headers=H, timeout=10)
-    check("too large refused (507)", r.status_code == 507, r.text)
+    if big < 4 * 1024 ** 3:
+        check("larger than free space refused (507)", r.status_code == 507, r.text)
+    else:
+        check("file >= 4 GiB refused (413)", r.status_code == 413 and r.json().get("code") == "TOO_LARGE", r.text)
+    r = s.post(f"{base}/api/upload/check?name=big.3mf&size={5 * 1024 ** 3}", headers=H, timeout=10)
+    check("5 GiB size not wrapped to 32 bit (413)", r.status_code == 413, r.text)
     bad = os.urandom(20000)
     r = s.post(f"{base}/api/upload?name=kaputt.3mf", headers=H, data=bad, timeout=60)
     check("non-ZIP .3mf refused (422)", r.status_code == 422, r.text)
@@ -127,6 +132,9 @@ def main():
     files = s.get(f"{base}/api/files", timeout=10).json()["files"]
     check("aborted upload cleaned up", not st["upload"]["active"] and
           not any(f["name"] == "abbruch.3mf" for f in files), st["upload"])
+
+    # --- remove leftovers of manual speed tests
+    s.post(f"{base}/api/delete?name=pd_speedtest_10mb.bin", headers=H, timeout=10)
 
     # --- provide to USB and verify on the host
     r = s.post(f"{base}/api/mode?target=usb", headers=H, timeout=15)

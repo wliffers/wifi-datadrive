@@ -123,7 +123,7 @@ const $ = id => document.getElementById(id);
 const H = {"X-PrintDrive": "1"};
 let st = null, uploading = false, pollTimer = null;
 
-function fmt(b){ if(b>=1048576) return (b/1048576).toFixed(1)+" MB"; if(b>=1024) return (b/1024).toFixed(0)+" kB"; return b+" B"; }
+function fmt(b){ if(b>=1073741824) return (b/1073741824).toFixed(1)+" GB"; if(b>=1048576) return (b/1048576).toFixed(1)+" MB"; if(b>=1024) return (b/1024).toFixed(0)+" kB"; return b+" B"; }
 function esc(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
 function msg(el, text, ok){ el.innerHTML = text ? `<div class="msg ${ok?"ok":"err"}">${esc(text)}</div>` : ""; }
 
@@ -184,7 +184,7 @@ function render(){
   $("btnApp").hidden = d.owner!=="usb" || uploading;
   $("btnUsb").hidden = d.owner!=="app" || !d.fs_ok || uploading;
 
-  $("space").textContent = d.total ? `${fmt(d.free)} frei von ${fmt(d.total)}` : "";
+  $("space").textContent = d.total ? `${st.medium.sd ? "microSD" : "Interner Flash"}: ${fmt(d.free)} frei von ${fmt(d.total)}` : "";
   $("spaceBar").style.width = d.total ? (100*(d.total-d.free)/d.total).toFixed(1)+"%" : "0";
 
   $("wifiInfo").textContent = w.sta_connected ? `Verbunden mit „${w.ssid}“, IP ${w.ip}, ${w.rssi} dBm, http://${w.hostname}.local` :

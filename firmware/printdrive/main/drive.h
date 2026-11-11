@@ -45,6 +45,8 @@ typedef struct {
     uint64_t total_bytes;             // last known file system size
     uint64_t free_bytes;              // last known free space
     uint32_t sector_size;
+    bool on_sd;                       // medium is the microSD card (else internal flash)
+    char medium_name[12];             // card name from CID, or "Flash"
     uint32_t file_count;              // last known number of files in the root folder
     // Upload in progress
     bool upload_active;
@@ -72,6 +74,7 @@ typedef enum {
     DRIVE_ERR_NO_SPACE,
     DRIVE_ERR_INVALID_FILE,           // content check failed (e.g. not a ZIP/3MF)
     DRIVE_ERR_INCOMPLETE,             // fewer bytes than announced
+    DRIVE_ERR_TOO_LARGE,              // file >= 4 GiB (FAT limit)
     DRIVE_ERR_IO,
 } drive_result_t;
 

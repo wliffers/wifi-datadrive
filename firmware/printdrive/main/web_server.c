@@ -1,6 +1,7 @@
 #include "web_server.h"
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,7 @@ static const char *result_code(drive_result_t r)
     case DRIVE_ERR_NO_SPACE:     return "NO_SPACE";
     case DRIVE_ERR_INVALID_FILE: return "INVALID_FILE";
     case DRIVE_ERR_INCOMPLETE:   return "INCOMPLETE";
+    case DRIVE_ERR_TOO_LARGE:    return "TOO_LARGE";
     default:                     return "IO";
     }
 }
@@ -148,6 +150,7 @@ static const char *result_http_status(drive_result_t r)
     case DRIVE_OK:               return "200 OK";
     case DRIVE_ERR_BAD_NAME:
     case DRIVE_ERR_INCOMPLETE:   return "400 Bad Request";
+    case DRIVE_ERR_TOO_LARGE:    return "413 Payload Too Large";
     case DRIVE_ERR_NOT_FOUND:    return "404 Not Found";
     case DRIVE_ERR_BAD_TYPE:     return "415 Unsupported Media Type";
     case DRIVE_ERR_INVALID_FILE: return "422 Unprocessable Entity";
@@ -221,7 +224,7 @@ static esp_err_t h_status(httpd_req_t *req)
     drive_get_status(&d);
     pd_wifi_get_status(&w);
 
-    char buf[1400] = "";
+    char buf[1600] = "";
     appendf(buf, sizeof(buf), "{\"version\":");
     json_str(buf, sizeof(buf), esp_app_get_description()->version);
     appendf(buf, sizeof(buf), ",\"uptime_s\":%lld,\"heap\":%lu,\"allow_gcode\":%s",
@@ -238,6 +241,9 @@ static esp_err_t h_status(httpd_req_t *req)
             idle_json(d.host_idle_ms), idle_json(d.host_write_idle_ms), CONFIG_PD_HOST_WRITE_GUARD_MS,
             (unsigned long long)d.total_bytes, (unsigned long long)d.free_bytes,
             (unsigned long)d.file_count, (unsigned long)d.sector_size);
+    appendf(buf, sizeof(buf), ",\"medium\":{\"sd\":%s,\"name\":", d.on_sd ? "true" : "false");
+    json_str(buf, sizeof(buf), d.medium_name);
+    appendf(buf, sizeof(buf), "}");
     appendf(buf, sizeof(buf), ",\"upload\":{\"active\":%s,\"name\":", d.upload_active ? "true" : "false");
     json_str(buf, sizeof(buf), d.upload_name);
     appendf(buf, sizeof(buf), ",\"received\":%lu,\"total\":%lu}", (unsigned long)d.upload_received,
@@ -296,7 +302,9 @@ static esp_err_t h_upload_check(httpd_req_t *req)
     drive_result_t r = drive_check_name(name);
     if (r == DRIVE_OK) {
         // Begin + abort performs exactly the checks the real upload will do.
-        r = drive_upload_begin(name, (uint32_t)strtoul(size_s, NULL, 10), query_flag(req, "overwrite"));
+        const unsigned long long size = strtoull(size_s, NULL, 10);
+        r = size > UINT32_MAX ? DRIVE_ERR_TOO_LARGE
+                              : drive_upload_begin(name, (uint32_t)size, query_flag(req, "overwrite"));
         if (r == DRIVE_OK) {
             drive_upload_abort();
         }

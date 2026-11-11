@@ -34,6 +34,13 @@ menu "PrintDrive"
         default 3000
         range 500 60000
 
+    config PD_USE_SDCARD
+        bool "Use a microSD card as storage if one is inserted (else internal flash)"
+        default y
+        help
+            The card is never formatted automatically. Cards with exFAT (typically > 32 GB)
+            must be formatted to FAT32 via the web UI, because ESP-IDF's FatFs has no exFAT.
+
     config PD_FAT_CLUSTER_KB
         int "FAT cluster size in KiB used when formatting (2 or 4)"
         default 4
