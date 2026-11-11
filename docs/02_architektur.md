@@ -1,9 +1,16 @@
 # 02 – Architektur
 
-Beschreibt den Stand des Quellcodes in `firmware/`. Auf echter Hardware verifiziert sind
-USB-Laufwerk, Auswurf/Bereitstellen, Download-Modus, Web-API/Upload (`tools/api_test.py`)
-und microSD unter Windows; offen sind Nur-Lese-Modus und Drucker (siehe
+Beschreibt den Stand des Quellcodes in `firmware/` (WiFi DataDrive, Firmware 0.2.0). Auf
+echter Hardware verifiziert sind USB-Laufwerk, Auswurf/Bereitstellen, Download-Modus,
+Web-API v2/Upload (`tools/api_test.py`) und microSD unter Windows; offen sind
+Nur-Lese-Modus, Browser-Test aller Zustände der Weboberfläche und Drucker (siehe
 [03_umsetzungsplan.md](03_umsetzungsplan.md)).
+
+Das Projekt hieß bis Version 0.1.0 „WiFi PrintDrive“. Interne Namen bleiben: Ordner
+`firmware/printdrive`, Header `X-PrintDrive`, Code-Präfix `pd_`/`PD_`. Die Weboberfläche
+nennt den USB-Host „USB-Gerät“, den Besitzer `USB` „USB-Laufwerk aktiv“ und den Besitzer
+`APP` „Dateiverwaltung aktiv“; Code, Log und dieses Dokument verwenden weiter Host,
+bereitgestellt und Upload-Modus.
 
 ## 1. Module
 
@@ -16,7 +23,7 @@ und microSD unter Windows; offen sind Nur-Lese-Modus und Drucker (siehe
 | `applog` | `components/applog` | hängt sich in `esp_log`, 8-KB-Ringpuffer für `/api/log`, optionaler Sink (CDC) |
 | `drive` | `printdrive/main/drive.c` | Medienwahl (microSD/Flash), **Besitzer-Verwaltung** des Dateisystems, Formatieren, Dateioperationen, Upload-Pipeline |
 | `usb_dev` | `printdrive/main/usb_dev.c` | TinyUSB-Installation, Konfigurationsdeskriptor, CDC-Log-Port, 1200-Baud-Touch, Soft-Re-Plug, Barrier |
-| `web_server` | `printdrive/main/web_server.c` | HTTP-API und eingebettete Weboberfläche (`web/index.html`) |
+| `web_server` | `printdrive/main/web_server.c` | HTTP-API ([07_api.md](07_api.md)) und eingebettete Weboberfläche (`web/index.html`, beim Bauen gzip-komprimiert) |
 | `ui` | `printdrive/main/ui.c` | LCD-Statusbild, LED-Farbe, BOOT-Taste |
 
 Startreihenfolge (`app_main.c`): `applog_init` → NVS (bei veraltetem Format nur NVS
@@ -55,7 +62,8 @@ bzw. `Flash`), das LCD zeigt in der Speicherzeile `SD` statt `Frei`.
 Dateisystem-Stapel: Partition → **Wear Levelling** (512-B-Sektoren, SAFE-Modus,
 `sdkconfig.defaults`) → FAT. Die Firmware formatiert selbst mit MBR, Clustergröße
 `CONFIG_PD_FAT_CLUSTER_KB` (Default **4 KiB → FAT12**; 2 KiB → FAT16, aber langsam),
-Label `PRINTDRIVE`. Der USB-Host sieht dieselben 512-B-Sektoren. `f_mkfs` mit
+Label `DATADRIVE` (vor 0.2.0 formatierte Volumes behalten `PRINTDRIVE`). Der USB-Host sieht
+dieselben 512-B-Sektoren. `f_mkfs` mit
 `MKFS_PARM.align = 8` Sektoren: Die MBR-Partition beginnt zwar bei Sektor 63, der
 Datenbereich liegt aber auf 4-KiB-Grenzen der Flash-Löschsektoren (ohne das: 12 statt
 47 KB/s beim Schreiben über USB, siehe [06_risiken.md](06_risiken.md)).
@@ -70,7 +78,7 @@ Levelling muss jedes Mal lesen, löschen und neu schreiben. Gemessen: Web-Upload
 Die Karte wird direkt (ohne Wear Levelling) per SDMMC an FatFs und esp_tinyusb
 (`tinyusb_msc_new_storage_sdmmc`) gegeben, der Host sieht ihre Sektoren. Formatieren per
 Web erzeugt **FAT32** (FatFs wählt die Clustergröße) mit Datenbereich auf
-4-MiB-Grenzen (`align = 8192` Sektoren, wie der SD-Formatter), Label `PRINTDRIVE`.
+4-MiB-Grenzen (`align = 8192` Sektoren, wie der SD-Formatter), Label `DATADRIVE`.
 ESP-IDF-FatFs kann **kein exFAT**: exFAT-Karten (ab Werk meist > 32 GB) erscheinen als
 „Kein Dateisystem!“ und müssen im Web auf FAT32 formatiert werden.
 
@@ -93,8 +101,10 @@ Das FAT hat immer genau einen Besitzer (`drive_owner_t`):
 
 | Besitzer | Lokal (`/data`) | USB-Host |
 |---|---|---|
-| `APP` („Upload-Modus“) | gemountet; Web darf listen, hochladen, löschen | sieht „kein Medium“ (wie leerer Kartenleser), jedes READ/WRITE wird abgewiesen |
-| `USB` („bereitgestellt“) | nicht gemountet, alle Dateioperationen → `WRONG_OWNER` | exklusiver Sektorzugriff |
+| `APP` („Upload-Modus“, im Web „Dateiverwaltung aktiv“) | gemountet; Web darf listen, hochladen, herunterladen, umbenennen, löschen | sieht „kein Medium“ (wie leerer Kartenleser), jedes READ/WRITE wird abgewiesen |
+| `USB` („bereitgestellt“, im Web „USB-Laufwerk aktiv“) | nicht gemountet, alle Dateioperationen → `WRONG_OWNER` | exklusiver Sektorzugriff |
+
+Besitzer-Automat, Mechanismen und Umschaltregeln sind mit Version 0.2.0 unverändert.
 
 ```mermaid
 stateDiagram-v2
@@ -161,21 +171,25 @@ bereitstellen (wenn nicht beschäftigt). Host getrennt oder Auswurf → APP.
 Die Einstellung „Host darf schreiben“ (NVS `pd_drive/host_wr`, Default aus
 `CONFIG_PD_HOST_WRITABLE_DEFAULT`) wirkt erst beim nächsten Bereitstellen.
 
-## 4. Upload-Pipeline
+## 4. Upload-Pipeline und Dateioperationen
 
 1. Browser fragt `POST /api/upload/check` (Name, Größe, overwrite) – führt dieselben
    Prüfungen wie der echte Upload aus (begin + abort).
-2. `POST /api/upload`: Rohdaten im Body (`application/octet-stream`), Länge = `Content-Length`.
-3. Prüfungen in `drive_upload_begin`: Name (≤ 120 Byte UTF-8, keine Steuerzeichen,
-   kein `/\:*?"<>|`, nicht mit Punkt/Leerzeichen beginnend oder endend), Endung `.3mf`
-   (optional `.gcode`), Größe > 0 und < 4 GiB (FAT-Grenze; die Größe wird 64-bittig
-   gelesen, sonst `413 TOO_LARGE`), Zielname existiert nicht (oder overwrite), freier
-   Platz ≥ Größe + 64 KB Reserve (die alte Datei wird erst nach Erfolg gelöscht).
+2. `POST /api/upload`: Rohdaten im Body (`application/octet-stream`), Länge = `Content-Length`;
+   optional `mtime` und `now` (siehe „Zeitstempel“).
+3. Prüfungen in `drive_upload_begin`: Name (`drive_check_name`: ≤ 120 Byte UTF-8, keine
+   Steuerzeichen, kein `/\:*?"<>|`, nicht mit Punkt/Leerzeichen beginnend oder endend),
+   Dateityp (Default `CONFIG_PD_UPLOAD_ALL_TYPES=y`: jeder; sonst nur `.3mf`, optional
+   `.gcode`, andernfalls `415 BAD_TYPE`), Größe > 0 (sonst `INVALID_FILE`) und < 4 GiB
+   (FAT-Grenze; die Größe wird 64-bittig gelesen, sonst `413 TOO_LARGE`), Zielname existiert
+   nicht (oder overwrite), freier Platz ≥ Größe + 64 KB Reserve (die alte Datei wird erst
+   nach Erfolg gelöscht).
 4. Daten → Temp-Datei `/data/.pd_upload.tmp` (16-KB-Blöcke). Mehr Daten als angekündigt → `INVALID_FILE`.
 5. Abschluss: Größe exakt, `fsync`; bei `.3mf` ZIP-Kopf `PK\3\4` und ZIP-End-of-Central-
    Directory `PK\5\6` in den letzten 1024 Byte; erst dann **umbenennen** (beim Überschreiben
    wird die alte Datei vorher in `/data/.pd_old.tmp` verschoben und erst danach gelöscht).
-   Log `upload ok '<name>'` bzw. `upload failed '<name>': <Text>`.
+   Die ZIP-Prüfung gilt für `.3mf` auch dann, wenn alle Dateitypen erlaubt sind. Danach wird
+   `mtime` gesetzt. Log `upload ok '<name>'` bzw. `upload failed '<name>': <Text>`.
 6. Abbruch (Verbindung weg, 3 Timeouts à 10 s) → Temp-Datei gelöscht
    (`upload aborted '<name>' after <n> bytes`).
 7. Liegengebliebene Temp-Dateien (Stromausfall) werden bei jedem Mounten durch die App
@@ -184,7 +198,26 @@ Die Einstellung „Host darf schreiben“ (NVS `pd_drive/host_wr`, Default aus
    liest der Server den restlichen Body und verwirft ihn (`drain_body`), damit der Client
    die Fehlerantwort erhält statt eines Verbindungsabbruchs (verifiziert: 409 `EXISTS`).
 
-Dateien mit führendem Punkt erscheinen nicht in der Liste. Es gibt nur das Wurzelverzeichnis.
+**Zeitstempel:** Das Gerät hat keine Uhr. Der Browser schickt `mtime` (Änderungsdatum der
+Datei) und `now` (seine aktuelle Zeit), beide als Ortszeit-Sekunden seit 1970. `now` stellt
+die Systemuhr, solange sie seit dem Start noch nicht gestellt wurde; `mtime` wird nach dem
+Umbenennen per `utime()` auf die Datei geschrieben (Werte vor 1981 werden ignoriert). FAT
+kennt keine Zeitzone, gespeichert ist also die Ortszeit des Schreibers.
+
+**Dateiliste (`drive_list`):** nur normale Dateien im Wurzelverzeichnis, ohne Namen mit
+führendem Punkt. Ordner werden nicht gelistet, nur gezählt (`dirs`, ohne
+`System Volume Information`). Die Einträge stehen gepackt in einem 32-KiB-Puffer
+(je 4 Byte Größe + 4 Byte `mtime` + Name + NUL, reicht für ca. 1000 übliche Namen; vorher
+festes Feld mit 64 Einträgen), der pro Anfrage angelegt und wieder freigegeben wird. Passt
+nicht alles hinein, wird gekürzt und `truncated` gemeldet. Die JSON-Antwort geht in
+Stücken (chunked) raus.
+
+**Umbenennen (`drive_rename`):** nur im Wurzelverzeichnis und nur bei Besitzer `APP`. Der
+neue Name muss `drive_check_name` bestehen. `BUSY` während eines Up-/Downloads,
+`NOT_FOUND`, wenn die Quelle keine normale Datei ist, `EXISTS`, wenn das Ziel vorhanden ist
+(FatFs lehnt das selbst ab; reine Änderung der Groß-/Kleinschreibung ist erlaubt).
+
+Ordner werden in der Weboberfläche nicht unterstützt (machbar, zurückgestellt).
 
 Der ESP-IDF-HTTP-Server bearbeitet nur **eine Anfrage gleichzeitig**: Während eines Uploads
 wird auch `/api/status` nicht beantwortet. Die Weboberfläche setzt ihr Status-Polling
@@ -195,54 +228,76 @@ Dongle zeigt das LCD den Fortschritt. Andere Clients warten bis zum Ende des Upl
 
 - **STA**: Zugangsdaten aus NVS (`pd_wifi/ssid`, `pass`, per Web gesetzt), sonst aus
   `firmware/pd_secrets.h` (`PD_WIFI_SSID`/`PD_WIFI_PASS`). NVS hat Vorrang. Energiesparen aus.
-- **Setup-AP** `PrintDrive-XXXX` (XXXX = letzte zwei Bytes der SoftAP-MAC), WPA2, Kanal 1,
+- **Setup-AP** `DataDrive-XXXX` (XXXX = letzte zwei Bytes der SoftAP-MAC), WPA2, Kanal 1,
   max. 3 Clients, `http://192.168.4.1`. Startet sofort, wenn keine Zugangsdaten vorhanden
   sind, sonst nach `CONFIG_PD_WIFI_AP_FALLBACK_S` (20 s) ohne Verbindung. Passwort:
   10 Zeichen, einmalig pro Gerät erzeugt, in NVS (`pd_wifi/ap_pass`), auf dem LCD angezeigt.
 - AP geht `CONFIG_PD_WIFI_AP_LINGER_S` (120 s) nach erfolgreicher STA-Verbindung aus.
-- **mDNS**: `http://printdrive.local` (Hostname `CONFIG_PD_WIFI_HOSTNAME`), Dienst `_http._tcp`.
+- **mDNS**: `http://datadrive.local` (Hostname `CONFIG_PD_WIFI_HOSTNAME`, Default `datadrive`),
+  Instanzname „WiFi DataDrive“, Dienst `_http._tcp`.
 
-## 6. HTTP-API
+## 6. Weboberfläche und HTTP-API
 
-Alle zustandsändernden Anfragen (POST) brauchen den Header **`X-PrintDrive: 1`**
-(CSRF-Schutz), sonst `403 FORBIDDEN`. Keine Authentifizierung.
-Antwortformat: `{"ok":bool,"code":"…","error":"<deutscher Text>"}`.
+### HTTP-API (Version 2)
 
-| Methode | Pfad | Parameter | Antwort |
-|---|---|---|---|
-| GET | `/`, `/index.html` | – | Weboberfläche |
-| GET | `/api/status` | – | JSON: version, uptime_s, heap, allow_gcode, `drive{…}`, `medium{sd,name}`, `upload{…}`, `wifi{…}` |
-| GET | `/api/files` | – | `{"ok":true,"files":[{name,size}],"truncated":bool}` (max. 64) |
-| GET | `/api/download` | `name` | Dateiinhalt (`application/octet-stream`) |
-| GET | `/api/log` | – | letzte 8 KB Log (text/plain) |
-| POST | `/api/upload/check` | `name`, `size`, `overwrite=0/1` | Ergebnis |
-| POST | `/api/upload` | `name`, `overwrite`; Body = Datei | Ergebnis |
-| POST | `/api/delete` | `name` | Ergebnis |
-| POST | `/api/mode` | `target=usb\|app`, `force=1` | Ergebnis |
-| POST | `/api/settings/host_writable` | `value=1\|0` | Ergebnis |
-| POST | `/api/wifi` | Body (form-urlencoded) `ssid`, `pass` | `{"ok":true}`; 400 bei SSID ≠ 1–32 Zeichen oder Passwort ≠ leer/8–63 |
-| POST | `/api/format` | `confirm=FORMAT` | `{"ok":true,"restart":true}`, dann Neustart + Formatieren des aktuellen Mediums |
-| POST | `/api/reboot` | `mode=normal\|download` | `{"ok":true}`, dann Neustart |
+Verbindlich beschrieben in [07_api.md](07_api.md) (Endpunkte, Parameter, Fehlercodes mit
+HTTP-Status, Ablauf eines Uploads). Kurzfassung:
 
-HTTP-Status der Ergebniscodes:
+- Alle zustandsändernden Anfragen sind `POST` und brauchen den Header **`X-PrintDrive: 1`**
+  (CSRF-Schutz), sonst `403 FORBIDDEN`. Keine Authentifizierung.
+- Antwortformat: `{"ok":bool,"code":"…","error":"<deutscher Klartext>"}`; die Texte stammen
+  aus `drive_result_str()`.
+- Lesen: `/api/status`, `/api/files`, `/api/download`, `/api/log`. Ändern: `/api/mode`,
+  `/api/upload/check`, `/api/upload`, `/api/delete`, `/api/rename`,
+  `/api/settings/host_writable`, `/api/wifi`, `/api/format`, `/api/reboot`.
+- Neu gegenüber Version 1: `/api/rename`; Upload-Parameter `mtime`/`now`; `/api/files`
+  liefert `mtime`, `dirs` und `truncated`; `/api/status` meldet `types` (`"all"` oder Liste
+  der Endungen) statt `allow_gcode`; Fehlertexte in einfacher Sprache.
 
-| Code | Status |
+### Weboberfläche (`web/index.html`)
+
+Eine einzige HTML-Datei mit eingebettetem CSS und JavaScript, ohne Framework und ohne
+externe Ressourcen. `main/CMakeLists.txt` komprimiert sie beim Bauen mit
+`web/gzip_file.py` (reproduzierbar, ohne Zeitstempel) zu `index.html.gz` und bettet diese
+ein; `h_index` liefert sie mit `Content-Encoding: gzip` aus. Gemessen: 60 KB roh → 19 KB in
+Flash und Übertragung, Seitenaufruf vom Gerät 241 ms, freier Heap unverändert ca. 142 KB,
+App-Binary 1,06 MB (60 % der App-Partition frei).
+
+| Bereich | Inhalt |
 |---|---|
-| `OK` | 200 |
-| `BAD_NAME`, `INCOMPLETE`, fehlende Parameter (`BAD_REQUEST`) | 400 |
-| `FORBIDDEN` (Header `X-PrintDrive` fehlt) | 403 |
-| `NOT_FOUND` | 404 |
-| `TOO_LARGE` (Datei ≥ 4 GiB) | 413 |
-| `BAD_TYPE` | 415 |
-| `INVALID_FILE` | 422 |
-| `NO_SPACE` | 507 |
-| `IO` | 500 |
-| `BUSY`, `HOST_ACTIVE`, `HOST_WRITING`, `WRONG_OWNER`, `NO_FS`, `EXISTS` | 409 |
+| Hauptansicht „Meine Dateien“ | Statusleiste (Modus mit Umschaltknopf, Speicherbelegung), Dateiliste mit Typ-Symbol, Größe, Änderungsdatum, Suche, Sortierung (Spaltenköpfe am PC, Auswahlfeld am Handy) |
+| Aktionsmenü je Datei | Herunterladen, Umbenennen, Löschen; Kontextmenü am PC, Bottom Sheet am Handy |
+| Hochladen | Knopf oder Drag & Drop, Warteschlange mit Fortschritt und Abbrechen |
+| Zustände | leer, gesperrt (USB-Laufwerk aktiv), Fehler (Speicher nicht lesbar, keine Antwort vom Gerät), Neustart |
+| Einstellungen | Abschnitte Netzwerk, Speicher & USB, Sicherheit, System; getrennt „Gefahrenbereich“ mit Formatieren (getippte Bestätigung `LÖSCHEN`) und Wartungsmodus (Flash-Modus) |
+| Darstellung | hell/dunkel, automatisch oder fest; flaches Symbol (WLAN-Bögen über einem Laufwerk) |
+
+Verhalten:
+
+- Benennungen: „USB-Laufwerk aktiv“ (Besitzer `USB`) und „Dateiverwaltung aktiv“ (`APP`),
+  Aktionen „Dateiverwaltung aktivieren“ und „USB-Laufwerk bereitstellen“, der Host heißt
+  „USB-Gerät“.
+- Bei `HOST_ACTIVE` fragt ein Dialog nach („Laufwerk vom USB-Gerät trennen?“), erst dann
+  folgt `force=1`. `HOST_WRITING` ist nie erzwingbar.
+- Erfolgsmeldungen erscheinen erst, nachdem das Gerät bestätigt hat (Upload: 100 % heißt
+  nur „gesendet“, „Gespeichert“ erst nach `ok:true`).
+- „Nach dem Hochladen wieder bereitstellen“ (Standard an): Nur wenn der Upload selbst dem
+  USB-Gerät das Laufwerk genommen hat, wird es danach zurückgegeben.
+- Je Browser gespeichert (`localStorage`): Darstellung und „Nach dem Hochladen wieder
+  bereitstellen“. Alles andere liegt auf dem Gerät.
+- Status-Polling alle 3 s, ausgesetzt während eigener Uploads und bei verdecktem Tab; die
+  Dateiliste wird nur neu geladen, wenn sich Besitzer, Dateizahl oder freier Platz ändern.
+- Formatieren sendet nach der getippten Bestätigung `confirm=FORMAT` an `/api/format`.
+- Ordner zeigt die Liste nicht an; ein Hinweis nennt ihre Anzahl (`dirs`). Bei `truncated`
+  erscheint ein Hinweis, dass nur ein Teil der Dateien gezeigt wird.
+
+Entwicklung ohne Hardware: `tools/mock_server.py` bildet die API nach, siehe
+[04_build_und_flash.md](04_build_und_flash.md) Abschnitt 11.
 
 ## 7. LCD, LED, BOOT-Taste (`ui`)
 
 Aufbau 160×80: Kopfzeile (Zustand, rechts `WLAN`/`AP`/`----`), Zeile 1 IP oder AP-SSID,
-Zeile 2 `printdrive.local` oder `PW <AP-Passwort>`, Speicherzeile `Frei x / y` (microSD:
+Zeile 2 `datadrive.local` oder `PW <AP-Passwort>`, Speicherzeile `Frei x / y` (microSD:
 `SD x / y`) mit Balken (rot unter 10 % frei), Host-/Uploadzeile, Meldungszeile (6 s) bzw. `<n> Datei(en)`.
 
 | Kopfzeile | Bedingung | Farbe (auch LED, gedimmt) |
@@ -255,14 +310,17 @@ Zeile 2 `printdrive.local` oder `PW <AP-Passwort>`, Speicherzeile `Frei x / y` (
 | `BEREIT` | Upload-Modus, sonst | blau |
 | `FLASH` | BOOT 5 s gehalten, Neustart in Download-Modus | rot |
 
-Host-Zeile: `Kein USB-Host`, `Host: kein Medium`, `Host: ausgeworfen`, `Host schreibt...`
-/`Host liest...` (letzter Zugriff < 2 s), `Host: Standby`, `Host: verbunden`, `Host: nur lesen`.
+Host-Zeile (seit 0.2.0 „Gerät“ statt „Host“): `Kein USB-Gerät`, `Gerät: kein Laufwerk`,
+`Gerät: ausgeworfen`, `Gerät schreibt...`/`Gerät liest...` (letzter Zugriff jünger als
+`CONFIG_PD_HOST_WRITE_GUARD_MS`, Default 3 s), `Gerät: Standby`, `Gerät: verbunden`,
+`Gerät: nur lesen`.
 
 BOOT-Taste (alle 50 ms abgefragt):
 
-- **kurz**: Umschalten USB ↔ Upload-Modus. Hat der Host nicht ausgeworfen →
-  `Host aktiv! Nochmal=OK`; ein zweiter Druck innerhalb von 4 s erzwingt (`force`).
-  Weitere Meldungen: `Host schreibt - warten`, `Upload läuft`, `Umschalten fehlgeschl.`
+- **kurz**: Umschalten USB ↔ Upload-Modus (`USB bereitgestellt` bzw. `Upload-Modus`). Hat der
+  Host nicht ausgeworfen → `Gerät aktiv! Nochmal=OK`; ein zweiter Druck innerhalb von 4 s
+  erzwingt (`force`). Weitere Meldungen: `Gerät schreibt - warten`, `Up-/Download läuft`,
+  `Umschalten fehlgeschl.`
 - **5 s halten**: Neustart in den ROM-Download-Modus (zum Flashen). Zurück: aus- und einstecken.
 
 ## 8. USB-Zusammensetzung
@@ -272,8 +330,8 @@ BOOT-Taste (alle 50 ms abgefragt):
 | Interfaces | CDC-ACM (Log-Port) + MSC; CDC abschaltbar (`CONFIG_TINYUSB_CDC_ENABLED`) |
 | VID/PID | Espressif `303A`, PID automatisch von esp_tinyusb: `4003` mit CDC, `4002` ohne |
 | Konfigurationsdeskriptor | eigener, **500 mA**, kein Remote Wakeup |
-| Strings | Hersteller „WiFi PrintDrive“, Produkt „PrintDrive“, Seriennummer = Chip-MAC (leerer Kconfig-String), CDC „PrintDrive Log“, MSC „PrintDrive Disk“ |
-| SCSI INQUIRY | Vendor `PrintDrv`, Product `WiFi PrintDrive`, Rev `0.1` |
+| Strings | Hersteller „WiFi DataDrive“, Produkt „DataDrive“, Seriennummer = Chip-MAC (leerer Kconfig-String), CDC „DataDrive Log“, MSC „DataDrive Disk“ |
+| SCSI INQUIRY | Vendor `DataDrv`, Product `WiFi DataDrive`, Rev `0.1` (im Code fest, nicht an die Firmware-Version gekoppelt) |
 | Geschwindigkeit | Full Speed (12 Mbit/s brutto) |
 | MSC-Puffer | 8192 B (`CONFIG_TINYUSB_MSC_BUFSIZE`) |
 

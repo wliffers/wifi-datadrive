@@ -3,6 +3,10 @@
 Alle Befehle in **PowerShell**, Arbeitsverzeichnis = Projektordner
 (der Ordner mit dieser Anleitung). Pfade mit Leerzeichen immer in Anführungszeichen.
 
+Das Produkt heißt seit Firmware 0.2.0 „WiFi DataDrive“ (vorher „WiFi PrintDrive“). Der
+Projektordner `firmware\printdrive` und damit der Projektname `printdrive` in allen
+Befehlen bleiben unverändert.
+
 ## 1. ESP-IDF installieren (so durchgeführt)
 
 Voraussetzungen: Git und Python 3 im `PATH`.
@@ -30,6 +34,8 @@ Beim ersten Build lädt der Component Manager `esp_tinyusb`, `tinyusb` und `mdns
 | `tools\monitor.ps1 [COMx] [--seconds N] [--out datei]` | Log-Leser (`monitor.py`), verbindet nach Neustart automatisch neu, setzt den Chip nie zurück |
 | `tools\backup_flash.ps1 -Port COM4` | komplettes 16-MB-Flash nach `backup\` lesen – über USB-Serial/JTAG **unzuverlässig** (Abschnitt 6) |
 | `python tools\api_test.py <ip> [--drive E:] [--size-kb N]` | End-to-End-Test der Web-API gegen den echten Dongle (Abschnitt 10); **verändert den Laufwerksinhalt** |
+| `python tools\mock_server.py [--port N] [--scenario NAME]` | Testserver: bildet die Geräte-API ohne Hardware nach, zum Entwickeln und Testen der Weboberfläche (Abschnitt 11) |
+| `tools\ui_test.py` | Browser-Test der Weboberfläche gegen den Testserver (Playwright, `pip install playwright`); in Arbeit |
 
 ## 3. Smoke-Test bauen und flashen
 
@@ -56,15 +62,21 @@ Start, ohne Handgriff am Dongle; mehrfach verifiziert 2026-11-11):
 .\tools\flash.ps1 -Project printdrive -Build
 ```
 
+Die Weboberfläche wird beim Bauen **automatisch** komprimiert: `main/CMakeLists.txt` ruft
+`main/web/gzip_file.py` auf (gzip Stufe 9, ohne Zeitstempel, also reproduzierbar), erzeugt
+`index.html.gz` im Build-Ordner und bettet sie ein. Der Schritt läuft nur, wenn sich
+`index.html` geändert hat; ein eigener Befehl ist nicht nötig. Gemessen: 60 KB roh → 19 KB
+im Flash, App-Binary 1,06 MB (60 % der App-Partition frei).
+
 **Wichtig:** Sobald `printdrive` läuft, belegt TinyUSB den USB-Anschluss. Die
 USB-Serial/JTAG-Schnittstelle (COM4) ist dann weg; stattdessen erscheint ein
-CDC-Port „PrintDrive Log“ (303A:4003, unter Windows „Serielles USB-Gerät“, bisher **COM5**)
+CDC-Port „DataDrive Log“ (303A:4003, unter Windows „Serielles USB-Gerät“, bisher **COM5**)
 und das Laufwerk. Wege in den Download-Modus:
 
 | Weg | Ablauf |
 |---|---|
 | `tools\flash.ps1` (automatisch) | findet den CDC-Port, öffnet ihn mit 1200 Baud und lässt DTR fallen → Neustart in den Download-Modus → wartet bis 15 s auf 303A:1001 → `esptool write_flash @flash_args` mit `--after hard_reset`. **Verifiziert** 2026-11-11: COM5 → COM4 nach 3,4 s, App startet nach dem Flashen von selbst |
-| Weboberfläche | Einstellungen → „Flash-Modus“ (`POST /api/reboot?mode=download`) |
+| Weboberfläche | Einstellungen → Gefahrenbereich → „Wartungsmodus“ (`POST /api/reboot?mode=download`) |
 | BOOT-Taste | im Betrieb **5 s halten** (LCD zeigt `FLASH`) |
 | manuell (immer möglich) | BOOT gedrückt halten, Dongle einstecken, loslassen |
 
@@ -128,8 +140,10 @@ python -m esptool --chip esp32s3 -p COM4 erase_region 0x510000 0xAF0000   # stor
   NVS entfernt auch die WLAN-Zugangsdaten; das Setup-AP-Passwort wird neu erzeugt.
 
 - Interner Flash im Betrieb neu formatieren: Karte entfernen (Dongle ausgesteckt), dann
-  Weboberfläche → Einstellungen → „Formatieren …“ (`POST /api/format`, Neustart,
-  verifiziert). Eine Karte wird auf dieselbe Weise formatiert, wenn sie beim Start steckt.
+  Weboberfläche → Einstellungen → Gefahrenbereich → „Formatieren …“, zur Bestätigung
+  `LÖSCHEN` eintippen (`POST /api/format`, Neustart; Formatieren per API verifiziert). Eine
+  Karte wird auf dieselbe Weise formatiert, wenn sie beim Start steckt. Das neue Volume
+  heißt `DATADRIVE`.
 
 ## 6. Flash-Backup (unzuverlässig über USB-Serial/JTAG)
 
@@ -169,14 +183,15 @@ copy firmware\pd_secrets.h.example firmware\pd_secrets.h    # SSID/Passwort eint
 `firmware\pd_secrets.h` ist git-ignoriert. Gilt für Smoke-Test und Hauptfirmware.
 
 **Variante B – über den Setup-AP:** Ohne Zugangsdaten startet sofort (sonst nach 20 s
-ohne Verbindung) das WLAN `PrintDrive-XXXX`; Passwort auf dem LCD (`PW …`). Verbinden,
-`http://192.168.4.1` öffnen, unter Einstellungen SSID/Passwort speichern. Die Daten
+ohne Verbindung) das WLAN `DataDrive-XXXX`; Passwort auf dem LCD (`PW …`). Verbinden,
+`http://192.168.4.1` öffnen, unter Einstellungen → Netzwerk WLAN-Name und Passwort speichern. Die Daten
 landen im NVS und haben ab dann Vorrang vor `pd_secrets.h`. **Verifiziert** 2026-11-11 per
-Handy (Dongle danach im Heimnetz unter `192.168.2.152`).
+Handy (Dongle danach im Heimnetz unter `192.168.2.152`; damals mit der alten Weboberfläche
+und dem Namen `PrintDrive-54D5`).
 
 ## 8. Konfiguration (Kconfig)
 
-Menü „PrintDrive“ (`firmware/printdrive/main/Kconfig.projbuild`):
+Menü „PrintDrive“ (`firmware/printdrive/main/Kconfig.projbuild`; der Menüname ist noch der alte):
 
 | Option | Default | Wirkung |
 |---|---|---|
@@ -188,18 +203,19 @@ Menü „PrintDrive“ (`firmware/printdrive/main/Kconfig.projbuild`):
 | `CONFIG_PD_HOST_WRITE_GUARD_MS` | 3000 (500–60000) | Sperrzeit nach dem letzten Host-Schreibzugriff |
 | `CONFIG_PD_USE_SDCARD` | y | microSD-Karte als Speicher nutzen, wenn beim Start eine steckt (sonst interner Flash); Karte wird nie automatisch formatiert |
 | `CONFIG_PD_FAT_CLUSTER_KB` | 4 (2–4) | Clustergröße beim Formatieren des internen Flashs: 4 = FAT12, Web-Upload ca. 46 KB/s; 2 = FAT16, Web-Upload nur ca. 7 KB/s. Wirkt erst beim Neuformatieren |
-| `CONFIG_PD_ALLOW_GCODE` | n | zusätzlich `.gcode` erlauben |
+| `CONFIG_PD_UPLOAD_ALL_TYPES` | y | Uploads jedes Dateityps annehmen (`/api/status` meldet `types: "all"`). Aus: nur `.3mf` (und optional `.gcode`). Die Inhaltsprüfung für `.3mf` (vollständiges ZIP) gilt in beiden Fällen |
+| `CONFIG_PD_ALLOW_GCODE` | n | zusätzlich `.gcode` erlauben; nur wählbar, wenn `CONFIG_PD_UPLOAD_ALL_TYPES=n` |
 
-Menü „PrintDrive Wi-Fi“ (`firmware/components/pd_wifi/Kconfig`):
+Menü „DataDrive Wi-Fi“ (`firmware/components/pd_wifi/Kconfig`):
 
 | Option | Default | Wirkung |
 |---|---|---|
-| `CONFIG_PD_WIFI_HOSTNAME` | `printdrive` | DHCP- und mDNS-Name |
+| `CONFIG_PD_WIFI_HOSTNAME` | `datadrive` | DHCP- und mDNS-Name (`http://datadrive.local`) |
 | `CONFIG_PD_WIFI_AP_FALLBACK_S` | 20 (5–600) | Setup-AP nach so vielen Sekunden ohne Verbindung |
 | `CONFIG_PD_WIFI_AP_LINGER_S` | 120 (10–3600) | Setup-AP bleibt nach STA-Verbindung so lange an |
 
 Weitere relevante Optionen in `firmware/printdrive/sdkconfig.defaults`: TinyUSB
-(`CONFIG_TINYUSB_CDC_ENABLED`, USB-Strings, MSC-Puffer), Wear Levelling
+(`CONFIG_TINYUSB_CDC_ENABLED`, USB-Strings „WiFi DataDrive“/„DataDrive“, MSC-Puffer), Wear Levelling
 (`CONFIG_WL_SECTOR_SIZE_512`, `CONFIG_WL_SECTOR_MODE_SAFE`), FatFs, HTTP, lwIP.
 
 Ändern:
@@ -207,7 +223,9 @@ Weitere relevante Optionen in `firmware/printdrive/sdkconfig.defaults`: TinyUSB
 - **interaktiv:** `.\tools\idf.ps1 printdrive menuconfig` → schreibt `sdkconfig` (lokal, git-ignoriert);
 - **dauerhaft fürs Projekt:** Zeile in `sdkconfig.defaults` eintragen, dann
   `firmware\printdrive\sdkconfig` löschen und neu bauen. Solange `sdkconfig` existiert,
-  werden geänderte Defaults **nicht** übernommen.
+  werden geänderte Defaults **nicht** übernommen. Das gilt auch für die Umbenennung: Ein
+  `sdkconfig` aus der Zeit vor 0.2.0 behält die alten USB-Strings und den Hostnamen
+  `printdrive`, bis es gelöscht wird.
 
 **Achtung:** Änderungen an WL-Sektorgröße/-Modus oder an `partitions.csv` machen den
 vorhandenen Dateispeicher unlesbar. Da der Erststart schon vorbei ist, formatiert die
@@ -252,9 +270,79 @@ Braucht `requests` (in der ESP-IDF-Python-Umgebung vorhanden). Der Dongle steckt
 Test-`.3mf`. Das Skript **legt Testdateien an und löscht sie**, übernimmt das Laufwerk
 vom Host (erst ohne, dann mit Bestätigung) und stellt es am Ende wieder bereit.
 
-Geprüft: CSRF (403), Übernahme `HOST_ACTIVE` → `force`, Dateityp (415), Pfad im Namen (400),
-zu groß (507 bzw. 413 ab 4 GiB), 5 GiB nicht auf 32 Bit gekürzt (413), kein ZIP / abgeschnittenes
-ZIP (422), Upload mit Umlaut-Namen inkl. Rate, Liste, Download identisch, vorhandene Datei
-(409 `EXISTS`), Überschreiben, Upload-Abbruch ohne Rest, Bereitstellen, Dateioperationen bei
-Host-Besitz (409 `WRONG_OWNER`), Datei auf dem Windows-Laufwerk identisch. Ausgabe
-`<n>/<m> checks passed`, Exit-Code 1 bei Fehlern. Ergebnisse: [05](05_testprotokoll.md) T2.11.
+Geprüft (28 Prüfungen, wenn das Laufwerk zu Beginn am Host bereitgestellt ist und `--drive`
+angegeben wird): Status erreichbar, CSRF (403), Übernahme `HOST_ACTIVE` → `force`, Besitzer
+`app`, beliebiger Dateityp angenommen (bei `types = "all"`; sonst 415), Pfad im Namen (400),
+zu groß (507 bzw. 413 ab 4 GiB), 5 GiB nicht auf 32 Bit gekürzt (413), kein ZIP /
+abgeschnittenes ZIP als `.3mf` (422), Vorabprüfung, Upload mit Umlaut-Namen inkl. Rate,
+Liste, Änderungsdatum (`mtime` kommt unverändert zurück, FAT-Auflösung 2 s), Felder `dirs`
+und `truncated`, Umbenennen (Erfolg, ungültiger Zielname 400, fehlende Datei 404,
+vorhandenes Ziel 409 `EXISTS`, zurück), Download identisch, vorhandene Datei (409 `EXISTS`),
+Überschreiben, Upload-Abbruch ohne Rest, Bereitstellen, Dateioperationen bei Host-Besitz
+(409 `WRONG_OWNER`), Datei auf dem Windows-Laufwerk identisch. Ausgabe
+`<n>/<m> checks passed`, Exit-Code 1 bei Fehlern. Ergebnisse: [05](05_testprotokoll.md)
+T2.11 (API v1) und T6.2 (API v2, 28/28). Die API selbst: [07_api.md](07_api.md).
+
+## 11. Weboberfläche entwickeln (`tools/mock_server.py`)
+
+Die Weboberfläche ist eine einzige Datei: `firmware\printdrive\main\web\index.html`
+(HTML, CSS und JavaScript zusammen, keine externen Ressourcen). Zum Entwickeln braucht es
+den Dongle nicht. Der Testserver bildet die API aus [07_api.md](07_api.md) mit einem
+Dateispeicher im Arbeitsspeicher nach (Python 3.10+, nur Standardbibliothek):
+
+```powershell
+python tools\mock_server.py --port 8090 --scenario files    # dann http://127.0.0.1:8090/ öffnen
+```
+
+Ablauf beim Ändern der Oberfläche:
+
+1. `index.html` bearbeiten und speichern.
+2. Seite im Browser neu laden. Der Testserver liest die Datei bei jedem Aufruf neu von der
+   Platte, ein Neustart ist nicht nötig.
+3. Zustände über Szenarien und `/mock/set` durchspielen (siehe unten).
+4. Auf das Gerät bringen: `.\tools\flash.ps1 -Project printdrive -Build` (komprimiert die
+   Datei, baut, flasht, startet).
+
+| Option | Default | Wirkung |
+|---|---|---|
+| `--port` | 8080 | TCP-Port |
+| `--bind` | `127.0.0.1` | `0.0.0.0` macht den Testserver im Netz erreichbar (z. B. für das Handy) |
+| `--html` | `firmware/printdrive/main/web/index.html` | andere UI-Datei, relativ zum Projektordner |
+| `--scenario` | `usb_active` | Startszenario |
+| `--upload-kbps` | 400 | Upload-Bremse in KiB/s, damit Fortschrittsbalken sichtbar sind (0 = aus) |
+
+Szenarien (`--scenario NAME` oder im Betrieb `GET /mock/scenario?name=NAME`):
+
+| Name | Zustand |
+|---|---|
+| `usb_active` | Laufwerk am verbundenen USB-Gerät bereitgestellt, einige Dateien |
+| `usb_no_host` | bereitgestellt, aber kein USB-Gerät verbunden (Übernahme ohne Rückfrage) |
+| `files` | Dateiverwaltung aktiv, 14 unterschiedliche Dateien, 2 ausgeblendete Ordner |
+| `empty` | Dateiverwaltung aktiv, keine Dateien |
+| `full` | fast kein freier Speicher (180 KiB) |
+| `no_fs` | kein lesbares Dateisystem (Formatieren nötig), microSD |
+| `ap_setup` | WLAN nicht eingerichtet, Einrichtungs-WLAN aktiv |
+| `flash_medium` | interner Flash (10,8 MB) statt microSD |
+| `many` | 300 Dateien, Liste nicht gekürzt |
+| `truncated` | 1200 Dateien, Liste gekürzt (32-KiB-Puffer wie in der Firmware) |
+
+Steuerung im Betrieb (nur im Testserver, per `GET`, ohne Header):
+
+```powershell
+curl "http://127.0.0.1:8090/mock/set?host_writing=hold&delay_ms=300"   # USB-Gerät schreibt dauerhaft, 300 ms Latenz
+curl "http://127.0.0.1:8090/mock/set?fail_next=NO_SPACE@/api/upload"   # nächster Upload scheitert
+curl "http://127.0.0.1:8090/mock/state"                                # interner Zustand
+```
+
+`/mock/set` kennt u. a. `owner`, `usb_connected`, `host_ejected`, `host_writable`,
+`host_writing`, `fs_ok`, `needs_format`, `sd`, `total`, `fill`, `types`, `dirs`, `wifi`,
+`upload_kbps`, `delay_ms`, `online`, `fail_next`, `upload_fail_at`, `other_upload` und
+`reset`. Die vollständige Liste steht im Kopfkommentar von `tools/mock_server.py`.
+
+Wie die Firmware bearbeitet der Testserver nur eine Anfrage gleichzeitig, verlangt
+`X-PrintDrive: 1` für jedes `POST` und kennt den Besitzer-Automaten mit `HOST_ACTIVE`,
+`HOST_WRITING` und `BUSY`. Abweichend meldet er die IP `192.0.2.152` und den Hostnamen
+`datadrive-mock`, damit ein Link aus der Oberfläche nie auf einem echten Dongle landet.
+
+Der automatische Browser-Test `tools/ui_test.py` (Playwright, einmalig
+`pip install playwright`) läuft gegen diesen Testserver; er ist in Arbeit.

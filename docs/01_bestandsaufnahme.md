@@ -1,5 +1,7 @@
 # 01 – Hardware-Bestandsaufnahme
 
+> Hinweis: Das Projekt heißt seit Firmware 0.2.0 **WiFi DataDrive** (vorher WiFi PrintDrive). Die Messwerte unten sind so belassen, wie sie am 2026-11-11 mit Firmware 0.1.0 aufgenommen wurden; USB-Namen und Laufwerksbezeichnung lauten inzwischen „DataDrive“ bzw. `DATADRIVE`.
+
 Gerät: **LILYGO T-Dongle-S3, LCD-Variante** (USB-A-Stecker, 0,96"-Farbdisplay,
 microSD-Slot, RGB-LED, BOOT-Taste).
 

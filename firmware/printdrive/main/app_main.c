@@ -1,4 +1,4 @@
-// WiFi PrintDrive - main firmware for the LILYGO T-Dongle-S3 (LCD).
+// WiFi DataDrive - main firmware for the LILYGO T-Dongle-S3 (LCD).
 #include "applog.h"
 #include "board.h"
 #include "drive.h"

@@ -134,23 +134,23 @@ SOCKET_TIMEOUT_S = 20
 
 # code -> (HTTP status, German text). Texts are those of drive_result_str() in drive.c.
 ERRORS = {
-    "BAD_NAME": (400, "Ungültiger Dateiname"),
+    "BAD_NAME": (400, "Ungültiger Dateiname."),
     "BAD_REQUEST": (400, "Parameter fehlt oder ist ungültig"),
-    "INCOMPLETE": (400, "Upload unvollständig"),
-    "FORBIDDEN": (403, "Header X-PrintDrive fehlt"),
-    "NOT_FOUND": (404, "Datei nicht gefunden"),
-    "BUSY": (409, "Upload oder Download läuft gerade"),
-    "HOST_ACTIVE": (409, "Das Laufwerk ist am USB-Host eingebunden. Am Host zuerst auswerfen oder "
+    "INCOMPLETE": (400, "Die Übertragung war unvollständig."),
+    "FORBIDDEN": (403, "Anfrage nicht erlaubt."),
+    "NOT_FOUND": (404, "Die Datei wurde nicht gefunden."),
+    "BUSY": (409, "Es läuft gerade eine Dateiübertragung. Bitte warten, bis sie abgeschlossen ist."),
+    "HOST_ACTIVE": (409, "Das USB-Gerät verwendet das Laufwerk noch. Bitte dort zuerst auswerfen oder das Trennen bestätigen."
                          "Umschalten bestätigen."),
-    "HOST_WRITING": (409, "Der USB-Host schreibt gerade. Bitte warten, bis der Kopiervorgang fertig ist."),
-    "WRONG_OWNER": (409, "Nicht möglich, solange das Laufwerk dem USB-Host bereitgestellt ist"),
-    "NO_FS": (409, "Kein gültiges Dateisystem - bitte formatieren"),
-    "EXISTS": (409, "Datei existiert bereits"),
-    "TOO_LARGE": (413, "Datei zu groß (FAT erlaubt höchstens 4 GB pro Datei)"),
-    "BAD_TYPE": (415, "Dateityp nicht erlaubt"),
-    "INVALID_FILE": (422, "Datei ist beschädigt oder kein gültiges 3MF (ZIP)"),
-    "IO": (500, "Lese-/Schreibfehler"),
-    "NO_SPACE": (507, "Nicht genug freier Speicher"),
+    "HOST_WRITING": (409, "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warten, bis es fertig ist."),
+    "WRONG_OWNER": (409, "Das geht nur, solange die Dateiverwaltung aktiv ist."),
+    "NO_FS": (409, "Der Speicher ist nicht lesbar und muss formatiert werden."),
+    "EXISTS": (409, "Eine Datei mit diesem Namen gibt es bereits."),
+    "TOO_LARGE": (413, "Die Datei ist zu groß – möglich sind höchstens 4 GB pro Datei."),
+    "BAD_TYPE": (415, "Dieser Dateityp ist nicht erlaubt."),
+    "INVALID_FILE": (422, "Die Datei ist unvollständig oder beschädigt (keine gültige 3MF-Datei)."),
+    "IO": (500, "Lese- oder Schreibfehler auf dem Speicher."),
+    "NO_SPACE": (507, "Nicht genug freier Speicher."),
 }
 # With fail_next on /api/upload these are reported after the body was received (like a
 # failed final check on the device), all others right away.

@@ -1,6 +1,6 @@
 // ST7735 esp_lcd panel driver from the LILYGO T-Dongle-S3 repository
 // (examples/lcd/bsp_lcd), MIT license, see LICENSE.LILYGO.
-// Local changes for WiFi PrintDrive:
+// Local changes for WiFi DataDrive:
 //  - use rgb_ele_order / LCD_RGB_ELEMENT_ORDER_* (color_space is deprecated in ESP-IDF 5.x)
 //  - per-command init log lowered from INFO to DEBUG
 

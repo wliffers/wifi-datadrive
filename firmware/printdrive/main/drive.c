@@ -224,7 +224,7 @@ uint32_t tud_msc_inquiry2_cb(uint8_t lun, scsi_inquiry_resp_t *resp, uint32_t bu
     }
     memcpy(resp->vendor_id, "DataDrv ", 8);
     memcpy(resp->product_id, "WiFi DataDrive  ", 16);
-    memcpy(resp->product_rev, "0.1 ", 4);
+    memcpy(resp->product_rev, "0.2 ", 4);
     return sizeof(*resp);
 }
 

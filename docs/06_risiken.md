@@ -1,7 +1,12 @@
 # 06 – Risiken und Annahmen
 
-Stand: 2026-11-11. Bewertung: **hoch** = kann das Projektziel verhindern,
+Stand: 2026-11-11, Firmware 0.2.0. Bewertung: **hoch** = kann das Projektziel verhindern,
 **mittel** = erfordert Nacharbeit, **niedrig** = Komfort/Randfall.
+
+Das Projekt heißt seit Version 0.2.0 „WiFi DataDrive“ (vorher „WiFi PrintDrive“); interne
+Namen wie `firmware/printdrive`, `X-PrintDrive` und `pd_` bleiben. Mit der Umbenennung kamen
+eine neue Weboberfläche und die API Version 2 ([07_api.md](07_api.md)); die Sicherungen des
+Laufwerks sind unverändert. Neue Risiken daraus stehen in den Abschnitten 2, 4 und 5.
 
 ## 1. Drucker-Kompatibilität (Bambu Lab X2D) – nicht verifiziert
 
@@ -14,7 +19,7 @@ Stand: 2026-11-11. Bewertung: **hoch** = kann das Projektziel verhindern,
 | Composite-Gerät mit CDC | mittel | MSC + CDC-Log-Port in einem Gerät könnte einen Drucker-USB-Stack verwirren. | Für den Drucker-Test `CONFIG_TINYUSB_CDC_ENABLED=n` (PID wird 4002, kein 1200-Baud-Touch) |
 | Stromaufnahme | mittel | Deskriptor meldet 500 mA; WLAN-Spitzen beim Senden, dazu die microSD-Karte beim Schreiben (nicht gemessen). Hersteller nennt max. 800 mA. Ob der Drucker-USB-Port genug liefert, ist offen. | Test X1/X10 (Neustart-Zyklen?), ggf. WLAN-Sendeleistung reduzieren |
 | Medienwechsel | mittel | Unklar, ob der Drucker UNIT ATTENTION / Soft-Re-Plug korrekt verarbeitet und neue Dateien sieht. | Test X5; Varianten mit/ohne `CONFIG_PD_REPLUG_ON_PROVIDE` |
-| Druckabbruch durch Übernahme | mittel | „Übernehmen“ (force) entzieht dem Drucker das Medium. Liest der Drucker während des Drucks vom Stick, bricht der Druck ab. | Weboberfläche warnt; am Drucker vor der Übernahme auswerfen. Verhalten beim X2D offen |
+| Druckabbruch durch Übernahme | mittel | „Dateiverwaltung aktivieren“ mit Bestätigung (force) entzieht dem Drucker das Medium – auch ein Upload bei aktivem USB-Laufwerk löst das nach Rückfrage aus. Liest der Drucker während des Drucks vom Stick, bricht der Druck ab. | Weboberfläche warnt im Dialog „Laufwerk vom USB-Gerät trennen?“; am Drucker vor der Übernahme auswerfen. Verhalten beim X2D offen |
 | Full Speed | niedrig | USB 1.1 Full Speed (12 Mbit/s brutto). Gemessen: Lesen 753 KB/s am PC (Flash) – Laden einer 5-MB-Datei dauert ca. 7 s; microSD schreiben über USB 832 KB/s. Beim Schreiben ins interne Flash ist nicht USB, sondern das Flash der Engpass (Abschnitt 4). | Messung T2.10 |
 
 ## 2. Dateiformat
@@ -22,7 +27,14 @@ Stand: 2026-11-11. Bewertung: **hoch** = kann das Projektziel verhindern,
 - Der X2D druckt (Annahme) nur **gesliceste** Dateien (`.gcode.3mf` aus Bambu Studio).
   Ein reines Projekt-`.3mf` ohne G-Code ist am Drucker nicht druckbar, wird von der
   Firmware aber genauso angenommen (Prüfung nur auf ZIP-Struktur, nicht auf Inhalt).
-- `.gcode` ist standardmäßig gesperrt (`CONFIG_PD_ALLOW_GCODE=n`).
+- Seit 0.2.0 werden **alle Dateitypen** angenommen (`CONFIG_PD_UPLOAD_ALL_TYPES=y`,
+  Default). Geprüft wird nur der Name (Zeichen, Länge) und bei `.3mf` die ZIP-Struktur;
+  jeder andere Inhalt wird ungeprüft gespeichert.
+
+| Risiko | Bew. | Details | Gegenmaßnahme |
+|---|---|---|---|
+| Beliebige Dateitypen | mittel | Der Stick nimmt jede Datei an, auch ausführbare. Zusammen mit der fehlenden Anmeldung (Abschnitt 5) kann jeder im selben WLAN Dateien auf ein Laufwerk legen, das an einem PC oder Drucker steckt. Eine Inhalts- oder Schadsoftware-Prüfung gibt es nicht. Namen mit führendem Punkt und Pfade bleiben gesperrt. | Nur in vertrauenswürdigen Netzen betreiben; für reinen Druckbetrieb `CONFIG_PD_UPLOAD_ALL_TYPES=n` (dann nur `.3mf`, optional `.gcode`) |
+| Fremddateien am Drucker | niedrig | Der Drucker sieht alle hochgeladenen Dateien, nicht nur Druckdateien. Verhalten des X2D bei vielen fremden Dateien unbekannt. | Test X2; Laufwerk aufgeräumt halten |
 
 ## 3. Abhängigkeit von esp_tinyusb-Interna
 
@@ -39,7 +51,8 @@ diese Punkte im Quellcode der Komponente prüfen und T1.3, T2.2, T2.4 wiederhole
 ## 4. Firmware-Verhalten und Hardware-Befunde
 
 Stand der Prüfung: Phase 0, 1, 2 und 5 (Grundfunktion) unter Windows 11 am 2026-11-11
-getestet; Nur-Lese-Modus des Hosts noch nicht.
+getestet, ebenso Umbenennung, API v2 (`api_test.py` 28/28) und gzip-Auslieferung (Phase 6);
+Nur-Lese-Modus des Hosts und Browser-Test der neuen Weboberfläche noch nicht.
 
 | Risiko | Bew. | Details |
 |---|---|---|
@@ -57,6 +70,12 @@ getestet; Nur-Lese-Modus des Hosts noch nicht.
 | Strapping-Latch nach BOOT + Einstecken | niedrig | Nach manuellem Download-Modus bleibt jeder weitere Reset über USB-Serial/JTAG (esptool `hard_reset`, RTS) im Download-Modus (`boot:0x0 (DOWNLOAD(USB/UART0))`, `GPIO_STRAP_REG` = 0), obwohl die Taste losgelassen ist (`GPIO_IN` Bit 0 = 1) – bis zum echten Aus-/Einstecken. Wirkt wie „Firmware startet nicht“. Beim 1200-Baud-Touch nicht beobachtet. |
 | Windows bei Medienwechsel | niedrig | Verifiziert: „Auswerfen“ im Explorer kommt als Auswurf an (`host ejected the drive`), Soft-Re-Plug nach BOOT kurz → Laufwerk erscheint neu, Daten lesbar; Übernahme mit `force` und Bereitstellen per Web mit neuer Datei aus dem Web-Upload (Datei auf `E:` identisch, T2.11). |
 | Nur-Lese-Modus des Hosts | mittel | Implementiert (Sense `DATA PROTECT`, `tud_msc_is_writable_cb`), auf Hardware **nicht getestet** (T1.4). Für den Drucker empfohlen, daher vorher am PC prüfen. |
+| Neue Weboberfläche nicht durchgetestet | mittel | Die Oberfläche wurde für 0.2.0 komplett neu geschrieben. Auf dem Gerät geprüft sind Auslieferung und API (T6.2, T6.3); der Browser-Test aller Zustände (leer, gesperrt, Fehler, Upload-Warteschlange, Einstellungen, Handy-Breite, hell/dunkel) läuft noch (T6.4, `tools/ui_test.py`). Fehler in der Oberfläche können die Sicherungen des Laufwerks nicht aushebeln, die liegen in der Firmware. |
+| Ordner in der Weboberfläche ausgeblendet | niedrig | Die Weboberfläche zeigt nur Dateien im Hauptverzeichnis. Ordner, die ein PC angelegt hat, werden gezählt (`dirs`, Hinweis unter der Liste), ihr Inhalt ist im Web aber weder sichtbar noch herunterladbar oder löschbar. Der belegte Speicher enthält sie trotzdem, und Formatieren löscht sie mit. Ordner-Unterstützung ist machbar, aber zurückgestellt. |
+| Änderungsdatum hängt an der Browser-Uhr | niedrig | Das Gerät hat keine Uhr. Beim Upload liefert der Browser das Änderungsdatum der Datei (`mtime`) und seine aktuelle Zeit (`now`); gespeichert wird Ortszeit ohne Zeitzone. Eine falsch gestellte Uhr oder Zeitzone im Browser ergibt falsche Zeitstempel, ein Host in einer anderen Zeitzone zeigt sie verschoben. `now` stellt die Geräteuhr nur einmal je Start; Uploads ohne diese Parameter (eigene API-Clients) bekommen kein verlässliches Datum (Anzeige „–“). Ohne Anmeldung kann jeder Client beliebige Zeitstempel setzen. Sortierung „Neueste zuerst“ ist deshalb nur so gut wie die Uhren der Schreiber. |
+| Sehr viele Dateien | niedrig | Die Dateiliste entsteht aus einem 32-KiB-Puffer (ca. 1000 übliche Namen, bei langen Namen weniger). Darüber wird gekürzt (`truncated`, Hinweis in der Oberfläche); die übrigen Dateien sind im Web nicht erreichbar, am USB-Gerät schon. Kürzung und Ladezeit bei sehr vielen Dateien sind am Gerät nicht geprüft (nur im Testserver, Szenario `truncated`). |
+| Weboberfläche nur gzip | niedrig | `index.html` liegt nur komprimiert im Flash und wird immer mit `Content-Encoding: gzip` gesendet, unabhängig vom `Accept-Encoding` des Clients. Alle üblichen Browser können das; einfache Werkzeuge (z. B. `curl` ohne `--compressed`) erhalten komprimierte Daten. |
+| Einstellungen je Browser | niedrig | „Nach dem Hochladen wieder bereitstellen“ und die Darstellung liegen im Browser (`localStorage`), nicht auf dem Gerät. Ein anderes Gerät oder ein Browser mit gelöschten Daten verhält sich wieder nach dem Standard (bereitstellen: an). |
 | Weboberfläche: `hidden` überschrieben | niedrig (behoben) | CSS-`display` überschrieb das `hidden`-Attribut, beide Modus-Knöpfe waren sichtbar. Fix: `[hidden]{display:none!important}`. Weitere Nuancen in UI und LED-Farben möglich. |
 | Fehlerantwort bei abgewiesenem Upload | niedrig (behoben) | Wurde ein Upload vor dem Lesen des Bodys abgewiesen (z. B. 409 `EXISTS`), setzte der Server die Verbindung zurück. Fix: `drain_body()` verwirft den restlichen Body, dann kommt die Antwort an (verifiziert). Kostet bei großen Dateien die volle Übertragungszeit. |
 | Flash-Backup und serielle Ausgabe über USB-Serial/JTAG | mittel | An diesem PC gehen bei Bursts Daten verloren: `read_flash` mit datenabhängigem Byteverlust (ca. 11 KB/s, Blöcke scheitern wiederholt), Log-Ausgabe mit fehlenden Blöcken. Ein Vollbackup des Werkszustands existiert daher nicht; Rückfall ist das LILYGO-Werksabbild (SHA256 in `backup\SHA256SUMS.txt`, siehe [04](04_build_und_flash.md) Abschnitt 5). |
@@ -70,10 +89,10 @@ getestet; Nur-Lese-Modus des Hosts noch nicht.
 
 | Risiko | Bew. | Details |
 |---|---|---|
-| Keine Authentifizierung | mittel | Jeder im selben (W)LAN kann Dateien hochladen, löschen, formatieren, neu starten und den Flash-Modus auslösen. Nur für vertrauenswürdige Heimnetze gedacht. |
-| CSRF | niedrig | POST-Anfragen brauchen `X-PrintDrive: 1`. Fremde Webseiten können diesen Header ohne CORS-Freigabe nicht setzen; GET-Endpunkte (Status, Liste, Download, Log) sind ungeschützt lesbar. |
+| Keine Authentifizierung | mittel | Jeder im selben (W)LAN kann alle Dateien lesen und herunterladen, beliebige Dateien hochladen, umbenennen, löschen, formatieren, neu starten und den Wartungsmodus (Flash-Modus) auslösen. Die Weboberfläche weist unter Einstellungen → Sicherheit darauf hin. Ein Passwortschutz ist bewusst zurückgestellt: Er braucht ein Konzept für „Passwort vergessen“. Nur für vertrauenswürdige Heimnetze gedacht. |
+| CSRF | niedrig | POST-Anfragen brauchen `X-PrintDrive: 1` (Headername unverändert). Fremde Webseiten können diesen Header ohne CORS-Freigabe nicht setzen; GET-Endpunkte (Status, Liste, Download, Log) sind ungeschützt lesbar. |
 | WLAN-Zugangsdaten | mittel | STA-Passwort und AP-Passwort liegen **unverschlüsselt** im NVS (keine NVS-Verschlüsselung, kein Flash Encryption). Wer den Dongle hat, kann sie per esptool auslesen. Gleiches gilt für Flash-Backups in `backup\`. |
-| Setup-AP | niedrig | WPA2 mit gerätespezifischem 10-Zeichen-Passwort; das Passwort steht jedoch offen auf dem LCD und im Log (`setup access point on: …`). |
+| Setup-AP | niedrig | `DataDrive-XXXX`, WPA2 mit gerätespezifischem 10-Zeichen-Passwort; das Passwort steht offen auf dem LCD. Im Log steht es nach aktuellem Quelltext nicht (`setup access point on: SSID '…' (password on the LCD)`). |
 | Kein HTTPS | niedrig | Übertragung im LAN unverschlüsselt. |
 
 ## 6. Annahmen (Zusammenfassung)
@@ -85,6 +104,8 @@ getestet; Nur-Lese-Modus des Hosts noch nicht.
 5. Der X2D liest FAT32 (microSD) bzw. FAT12/FAT16 (interner Flash) von einem USB-MSC-Gerät mit 512-B-Sektoren.
 6. Der X2D druckt gesliceste `.gcode.3mf` vom USB-Stick.
 7. Der X2D kommt mit dem Composite-Gerät (MSC + CDC) zurecht; sonst Build mit `CONFIG_TINYUSB_CDC_ENABLED=n`.
+8. Die Uhr des hochladenden Browsers stimmt (Quelle aller Zeitstempel, Abschnitt 4).
+9. Der X2D stört sich nicht an fremden Dateitypen auf dem Laufwerk.
 
 ## 7. Verbleibende Hauptrisiken (Kurzfassung)
 
@@ -95,5 +116,9 @@ getestet; Nur-Lese-Modus des Hosts noch nicht.
 | Kartenqualität, Stromaufnahme mit Karte | ungetestet |
 | exFAT | nicht unterstützt, Karte per Web auf FAT32 formatieren |
 | Nur-Lese-Modus des Hosts | ungetestet |
-| Nuancen in LED-Farben und Weboberfläche | offen |
-| Keine Authentifizierung der Weboberfläche | bewusst offen (Abschnitt 5) |
+| Nuancen in LED-Farben | offen |
+| Browser-Test der neuen Weboberfläche | in Arbeit (T6.4) |
+| Keine Authentifizierung der Weboberfläche | bewusst offen, zurückgestellt (Abschnitt 5) |
+| Beliebige Dateitypen ohne Inhaltsprüfung | bewusst so, abschaltbar (Abschnitt 2) |
+| Ordner im Web ausgeblendet | zurückgestellt (Abschnitt 4) |
+| Zeitstempel aus der Browser-Uhr | hingenommen (Abschnitt 4) |

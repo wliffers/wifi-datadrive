@@ -1,10 +1,12 @@
-# WiFi PrintDrive – der Kern in Kurzform
+# WiFi DataDrive – der Kern in Kurzform
 
-Stand: 2026-11-11, Firmware 0.1.0. Alles hier Beschriebene ist auf dem echten Gerät getestet, außer wo „offen“ steht.
+Stand: 2026-11-11, Firmware 0.2.0. Alles hier Beschriebene ist auf dem echten Gerät getestet, außer wo „offen“ steht.
+
+Das Projekt hieß bis Version 0.1.0 „WiFi PrintDrive“. Intern bleibt der alte Name stehen: Ordner `firmware/printdrive`, HTTP-Header `X-PrintDrive`, Code-Präfix `pd_`.
 
 ## Was es ist
 
-Ein **LILYGO T-Dongle-S3** (ESP32-S3, USB-A-Stecker, kleines LCD, microSD-Slot) verhält sich am USB-Host wie ein normaler **USB-Stick**. Gleichzeitig hängt er im WLAN und nimmt über eine Weboberfläche **3MF-Dateien per Drag & Drop** an. Ziel: Druckdateien drahtlos auf den „Stick“ im 3D-Drucker legen (Bambu X2D, Test dort noch offen).
+Ein **LILYGO T-Dongle-S3** (ESP32-S3, USB-A-Stecker, kleines LCD, microSD-Slot) verhält sich am USB-Gerät (PC, Drucker – technisch der USB-Host) wie ein normaler **USB-Stick**. Gleichzeitig hängt er im WLAN und bietet im Browser eine **Dateiverwaltung**: beliebige Dateien hochladen (auch per Drag & Drop), herunterladen, umbenennen, löschen. Ein Ziel bleibt: Druckdateien drahtlos auf den „Stick“ im 3D-Drucker legen (Bambu X2D, Test dort noch offen).
 
 ```text
 Browser (PC/Handy) --WLAN/HTTP--> [ ESP32-S3: Webserver | FAT | USB-MSC ] --USB--> PC / Drucker
@@ -18,19 +20,19 @@ Ein FAT-Dateisystem verträgt **nur einen Schreiber**. Der USB-Host greift roh a
 
 **Lösung: genau ein Besitzer zu jedem Zeitpunkt.**
 
-| Besitzer | Dateisystem | USB-Host sieht | Weboberfläche kann |
-|---|---|---|---|
-| `USB` | lokal nicht eingebunden | Laufwerk mit Dateien | nur Status anzeigen |
-| `APP` | lokal unter `/data` eingebunden | „kein Medium“ (wie leerer Kartenleser) | hochladen, auflisten, löschen, herunterladen |
+| Besitzer | Anzeige im Web | Dateisystem | USB-Host sieht | Weboberfläche kann |
+|---|---|---|---|---|
+| `USB` | „USB-Laufwerk aktiv“ | lokal nicht eingebunden | Laufwerk mit Dateien | nur Status anzeigen |
+| `APP` | „Dateiverwaltung aktiv“ | lokal unter `/data` eingebunden | „kein Medium“ (wie leerer Kartenleser) | hochladen, auflisten, umbenennen, löschen, herunterladen |
 
-Umgeschaltet wird nur an einer Stelle (`drive_set_owner()` in `drive.c`), unter einem Mutex.
+Umgeschaltet wird nur an einer Stelle (`drive_set_owner()` in `drive.c`), unter einem Mutex. Die Weboberfläche nennt den Host „USB-Gerät“ und die beiden Wechsel „Dateiverwaltung aktivieren“ und „USB-Laufwerk bereitstellen“. Die Sicherungen unten sind mit Version 0.2.0 unverändert.
 
 ### Regeln beim Umschalten
 
 - **APP → USB:** nicht während eines Up- oder Downloads. Danach meldet sich das Gerät kurz ab und wieder an (Soft-Replug), damit der Host es wie einen frisch eingesteckten Stick neu einliest.
 - **USB → APP:** sofort erlaubt, wenn der Host ausgeworfen hat oder weg ist. Sonst nur mit ausdrücklicher Bestätigung (Web: Dialog, Taste: zweiter Druck). **Nie** innerhalb von 3 s nach dem letzten Host-Schreibzugriff.
 - **Host wirft aus** (Windows „Auswerfen“): automatisch → APP.
-- **Start:** Meldet sich innerhalb von 3 s ein Host, bekommt er das Laufwerk, sonst bleibt es im Upload-Modus.
+- **Start:** Meldet sich innerhalb von 3 s ein Host, bekommt er das Laufwerk, sonst bleibt die Dateiverwaltung aktiv (im Code und Log „Upload-Modus“).
 
 ### Die fünf Sicherungen (über esp_tinyusb hinaus)
 
@@ -38,7 +40,7 @@ Umgeschaltet wird nur an einer Stelle (`drive_set_owner()` in `drive.c`), unter 
 2. **Host-Sperre auf SCSI-Ebene** – `READ(10)`, `WRITE(10)` und `TEST UNIT READY` laufen per Linker-Wrap durch eigene Funktionen. Gehört das Medium der App, wird jeder Host-Zugriff mit „Medium nicht vorhanden“ abgewiesen. esp_tinyusb prüft das in `read10`/`write10` nicht selbst.
 3. **Barriere** – esp_tinyusb führt Host-Schreibzugriffe verzögert in der TinyUSB-Task aus und wartet beim Umschalten nicht darauf. Vor dem Einbinden für die App werden deshalb zwei Marker durch dieselbe Warteschlange geschickt; erst wenn beide durch sind, ist alles im Speicher.
 4. **Medienwechsel-Signal** – nach der Rückgabe meldet das erste `TEST UNIT READY` einmal `UNIT ATTENTION 0x28` („Medium könnte gewechselt haben“), zusätzlich der Soft-Replug.
-5. **Atomarer Upload** – Daten gehen in `/data/.pd_upload.tmp`. Erst nach Größenprüfung und ZIP-Prüfung (Kopf `PK\3\4` und End-of-Central-Directory) wird umbenannt. Abbruch, Stromausfall oder kaputte Datei hinterlassen nie eine halbe Zieldatei; Reste werden beim nächsten Einbinden gelöscht.
+5. **Atomarer Upload** – Daten gehen in `/data/.pd_upload.tmp`. Erst nach Größenprüfung und – bei `.3mf` – ZIP-Prüfung (Kopf `PK\3\4` und End-of-Central-Directory) wird umbenannt. Abbruch, Stromausfall oder kaputte Datei hinterlassen nie eine halbe Zieldatei; Reste werden beim nächsten Einbinden gelöscht.
 
 ### Kern-Code
 
@@ -122,14 +124,14 @@ void tud_msc_scsi_complete_cb(uint8_t lun, uint8_t const cmd[16])
 | microSD | SDMMC 4-Bit, 40 MHz: CLK 12, CMD 16, D0 14, D1 17, D2 21, D3 18 |
 | Sonstiges | RGB-LED APA102 (DATA 40, CLK 39), BOOT-Taste GPIO 0 |
 | Framework | ESP-IDF v5.5.6, esp_tinyusb 2.4.0, TinyUSB 0.21.0~2, mDNS 1.14.x |
-| USB | Full Speed, Verbundgerät MSC + CDC-Logport (VID 303A, PID 4003), 500 mA, SCSI-Name „PrintDrv WiFi PrintDrive“ |
+| USB | Full Speed, Verbundgerät MSC + CDC-Logport (VID 303A, PID 4003), 500 mA, USB-Namen „WiFi DataDrive“/„DataDrive“, SCSI-Name „DataDrv WiFi DataDrive“ |
 
 Flash-Aufteilung (`firmware/partitions.csv`, für spätere OTA-Updates vorbereitet):
 
 ```text
 nvs      0x009000  0x005000   Einstellungen (WLAN, Flags)
 otadata  0x00e000  0x002000
-ota_0    0x010000  0x280000   Firmware (aktuell ~1,0 MB)
+ota_0    0x010000  0x280000   Firmware (aktuell 1,06 MB, 60 % frei)
 ota_1    0x290000  0x280000
 storage  0x510000  0xAF0000   interner Dateispeicher (Wear-Levelling + FAT)
 ```
@@ -145,46 +147,53 @@ storage  0x510000  0xAF0000   interner Dateispeicher (Wear-Levelling + FAT)
 | Lesen per USB | – | 753 KB/s |
 | Automatisch formatieren | nie | nur beim allerersten Start |
 
-Karte nur im ausgesteckten Zustand wechseln. Dateien dürfen höchstens 4 GB groß sein (FAT).
+Karte nur im ausgesteckten Zustand wechseln. Dateien dürfen höchstens 4 GB groß sein (FAT). Von der Firmware neu formatierte Medien heißen `DATADRIVE`; vorher formatierte behalten ihr Label (z. B. `PRINTDRIVE`).
 
 Warum der interne Flash langsam ist: Jeder 4-KiB-Sektor muss vor dem Schreiben gelöscht werden. Zwei Dinge haben den Durchsatz von 7–12 auf 46–47 KB/s gebracht: Datenbereich auf 4 KiB ausrichten (`MKFS_PARM.align = 8`) und 4-KiB-Cluster, weil FatFs höchstens einen Cluster pro Schreibzugriff durchreicht.
 
 ## Weboberfläche und API
 
-Eine einzelne eingebettete HTML-Datei (`main/web/index.html`), ohne externe Ressourcen. Alle ändernden Anfragen sind `POST` und brauchen den Header `X-PrintDrive: 1` (Schutz vor fremden Webseiten). Eine Anmeldung gibt es noch nicht.
+Eine einzelne HTML-Datei (`main/web/index.html`, reines JavaScript/CSS, keine externen Ressourcen). Sie wird beim Bauen gzip-komprimiert eingebettet und mit `Content-Encoding: gzip` ausgeliefert: 60 KB roh → 19 KB in Flash und Übertragung, Seitenaufruf vom Gerät 241 ms, freier Heap unverändert ca. 142 KB.
 
-| Methode | Pfad | Zweck |
-|---|---|---|
-| GET | `/api/status` | Besitzer, Host-Zustand, Speicher, WLAN, laufender Upload |
-| GET | `/api/files` | Dateiliste (nur im Upload-Modus) |
-| GET | `/api/download?name=` | Datei herunterladen |
-| GET | `/api/log` | letzte 8 KB Log |
-| POST | `/api/upload/check?name=&size=&overwrite=` | Vorabprüfung ohne Daten |
-| POST | `/api/upload?name=&overwrite=` | Datei als roher Body |
-| POST | `/api/delete?name=` | löschen |
-| POST | `/api/mode?target=usb\|app&force=` | Besitzer wechseln |
-| POST | `/api/settings/host_writable?value=` | Host nur lesen / lesen+schreiben |
-| POST | `/api/wifi` (`ssid=&pass=`) | WLAN-Zugangsdaten speichern |
-| POST | `/api/format?confirm=FORMAT` | aktuelles Medium formatieren (Neustart) |
-| POST | `/api/reboot?mode=normal\|download` | Neustart / Flash-Modus |
+| Bereich | Inhalt |
+|---|---|
+| „Meine Dateien“ | Statusleiste (Modus + Speicher), Dateiliste mit Typ-Symbol, Größe, Änderungsdatum; Suche; Sortierung (Spaltenköpfe am PC, Auswahlfeld am Handy) |
+| Aktionen je Datei | Herunterladen, Umbenennen, Löschen (Kontextmenü am PC, Bottom Sheet am Handy) |
+| Hochladen | Knopf oder Drag & Drop, beliebige Dateitypen, Warteschlange mit Fortschritt und Abbrechen; Erfolgsmeldung erst nach Bestätigung durch das Gerät |
+| Zustände | leer, gesperrt (USB-Laufwerk aktiv), Fehler (Speicher nicht lesbar, keine Antwort) |
+| Einstellungen | Netzwerk, Speicher & USB, Sicherheit, System; getrennt der „Gefahrenbereich“ (Formatieren mit getipptem `LÖSCHEN`, Wartungsmodus = Flash-Modus) |
+| Darstellung | hell/dunkel, automatisch oder fest, je Browser gespeichert |
 
-Fehler kommen als JSON `{"ok":false,"code":"…","error":"…"}`, z. B. `HOST_ACTIVE` (409), `HOST_WRITING` (409), `EXISTS` (409), `BAD_TYPE` (415), `INVALID_FILE` (422), `NO_SPACE` (507), `TOO_LARGE` (413).
+„Nach dem Hochladen wieder bereitstellen“ (je Browser, Standard an): Nur wenn der Upload selbst dem USB-Gerät das Laufwerk genommen hat, wird es danach zurückgegeben.
+
+Das Gerät hat keine Uhr. Der Browser schickt beim Upload das Änderungsdatum der Datei und seine aktuelle Zeit mit (`mtime`, `now`, als Ortszeit gespeichert).
+
+Die API (Version 2) ist verbindlich in [07_api.md](07_api.md) beschrieben. Kurzfassung:
+
+- Lesen per `GET`: `/api/status`, `/api/files` (mit `mtime`, Anzahl ausgeblendeter Ordner `dirs`, `truncated`), `/api/download`, `/api/log`.
+- Ändern per `POST` mit Header `X-PrintDrive: 1` (Schutz vor fremden Webseiten): Upload mit Vorabprüfung, Löschen, **Umbenennen** (`/api/rename`), Besitzer wechseln, Einstellungen, WLAN, Formatieren, Neustart.
+- Alle Dateitypen sind erlaubt (`CONFIG_PD_UPLOAD_ALL_TYPES=y`); die ZIP-Prüfung gilt weiter für `.3mf`.
+- Fehler kommen als JSON `{"ok":false,"code":"…","error":"…"}` mit deutschem Klartext.
+- Die Dateiliste entsteht aus einem gepackten 32-KiB-Puffer (ca. 1000 übliche Namen) statt eines festen Felds mit 64 Einträgen.
+
+Nicht vorhanden: Ordner (die Weboberfläche zeigt nur das Hauptverzeichnis und nennt die Zahl ausgeblendeter Ordner) und eine Anmeldung.
 
 ## WLAN, Display, Taste
 
-- **WLAN:** Zugangsdaten liegen im NVS auf dem Dongle. Ohne Verbindung startet nach 20 s ein Einrichtungs-WLAN `PrintDrive-XXXX` (WPA2, Passwort nur auf dem Display), Adresse `http://192.168.4.1`. Im Heimnetz: IP vom Display oder `http://printdrive.local`.
-- **Display:** farbige Kopfzeile `BOOT` / `USB` (grün) / `BEREIT` (blau) / `UPLOAD` (orange) / `WLAN` / `FEHLER` (rot), darunter IP, Speicherbelegung, Host-Zustand, letzte Meldung.
-- **BOOT-Taste:** kurz = zwischen USB- und Upload-Modus wechseln, 5 s halten = Flash-Modus.
+- **WLAN:** Zugangsdaten liegen im NVS auf dem Dongle. Ohne Verbindung startet nach 20 s ein Einrichtungs-WLAN `DataDrive-XXXX` (WPA2, Passwort nur auf dem Display), Adresse `http://192.168.4.1`. Im Heimnetz: IP vom Display oder `http://datadrive.local`.
+- **Display:** farbige Kopfzeile `BOOT` / `USB` (grün) / `BEREIT` (blau) / `UPLOAD` (orange) / `WLAN` / `FEHLER` (rot), darunter IP, Speicherbelegung, Zustand des USB-Geräts (z. B. `Gerät: verbunden`, `Kein USB-Gerät`), letzte Meldung.
+- **BOOT-Taste:** kurz = zwischen USB-Laufwerk und Dateiverwaltung wechseln, 5 s halten = Flash-Modus.
 
 ## Bauen und Flashen (Windows, PowerShell)
 
 ```powershell
 .\tools\flash.ps1 -Project printdrive -Build     # bauen + flashen, ohne Tastendruck
 .\tools\monitor.ps1                              # Log über den CDC-Port
-python tools\api_test.py 192.168.2.152 --drive E:   # End-to-End-Test (21 Prüfungen)
+python tools\api_test.py 192.168.2.152 --drive E:   # End-to-End-Test (28 Prüfungen)
+python tools\mock_server.py --port 8090 --scenario files   # Weboberfläche ohne Hardware
 ```
 
-`flash.ps1` öffnet den Logport mit 1200 Baud; die Firmware startet daraufhin in den Download-Modus, wird geflasht und bootet selbst wieder. WLAN-Daten und Dateien bleiben erhalten.
+`flash.ps1` öffnet den Logport mit 1200 Baud; die Firmware startet daraufhin in den Download-Modus, wird geflasht und bootet selbst wieder. WLAN-Daten und Dateien bleiben erhalten. `index.html` wird beim Bauen automatisch komprimiert (`main/web/gzip_file.py`).
 
 Zwei Stolpersteine auf diesem Chip:
 
@@ -195,18 +204,25 @@ Zwei Stolpersteine auf diesem Chip:
 
 ```text
 firmware/components/   board (Pins), st7735 + display (LCD), pd_wifi, applog
-firmware/printdrive/   main/drive.c      Besitzer-Zustandsmaschine, Host-Sperre, Upload, Formatierung
+firmware/printdrive/   Hauptfirmware (Ordnername historisch)
+                       main/drive.c      Besitzer-Zustandsmaschine, Host-Sperre, Dateioperationen, Upload, Formatierung
                        main/usb_dev.c    TinyUSB, Deskriptoren, Barriere, Logport, 1200-Baud-Touch
                        main/web_server.c HTTP-API        main/web/index.html  Weboberfläche
+                       main/web/gzip_file.py  komprimiert index.html beim Bauen
                        main/ui.c         LCD, LED, Taste
 firmware/smoke_test/   Hardware-Schnelltest (LCD, LED, Taste, WLAN)
-tools/                 idf.ps1, flash.ps1, monitor.ps1, api_test.py
-docs/                  Bestandsaufnahme, Architektur, Plan, Build/Flash, Testprotokoll, Risiken
+tools/                 idf.ps1, flash.ps1, monitor.ps1
+                       api_test.py       End-to-End-Test der API am echten Gerät
+                       mock_server.py    Testserver: Geräte-API ohne Hardware (Szenarien, /mock/set)
+                       ui_test.py        Browser-Test der Weboberfläche gegen den Testserver
+docs/                  Bestandsaufnahme, Architektur, Plan, Build/Flash, Testprotokoll, Risiken, API (07)
 ```
 
 ## Offen
 
 - **Bambu X2D:** nicht getestet. Für den Test: microSD nutzen, Nur-Lese-Modus erwägen, bei Problemen ohne Logport bauen (`CONFIG_TINYUSB_CDC_ENABLED=n`), dann ist es ein reines Massenspeichergerät.
-- **Nur-Lese-Modus für den Host:** eingebaut, am Gerät noch nicht geprüft.
-- **Weboberfläche ohne Anmeldung:** jeder im selben WLAN kann zugreifen.
+- **Nur-Lese-Modus für das USB-Gerät:** eingebaut, am Gerät noch nicht geprüft.
+- **Weboberfläche ohne Anmeldung:** jeder im selben WLAN kann zugreifen. Passwortschutz zurückgestellt (braucht ein Konzept für „Passwort vergessen“).
+- **Ordner:** in der Weboberfläche nicht unterstützt (machbar, zurückgestellt).
+- **Browser-Test der neuen Weboberfläche:** alle Zustände, in Arbeit (`tools/ui_test.py`).
 - **3MF ist nicht automatisch druckbar:** Der Drucker braucht eine geslicete Datei (`.gcode.3mf`); welche Dateien der X2D über USB annimmt, klärt erst der Test.

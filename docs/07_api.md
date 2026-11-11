@@ -30,6 +30,7 @@ Vertrag zwischen Firmware (`firmware/printdrive/main/web_server.c`), Weboberflä
 | 415 | `BAD_TYPE` | Dateityp nicht erlaubt (nur wenn `types` ≠ `"all"`) |
 | 422 | `INVALID_FILE` | Inhalt ungültig (z. B. `.3mf` ist kein ZIP) oder Datei ist leer |
 | 500 | `IO` | Lese-/Schreibfehler |
+| 500 | `NO_MEM` | Gerät hat vorübergehend zu wenig Arbeitsspeicher (Dateiliste, Protokoll) |
 | 507 | `NO_SPACE` | nicht genug freier Speicher |
 
 ## Lesen

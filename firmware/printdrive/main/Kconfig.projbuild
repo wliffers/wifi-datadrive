@@ -1,4 +1,4 @@
-menu "PrintDrive"
+menu "DataDrive"
 
     config PD_HOST_WRITABLE_DEFAULT
         bool "USB host may write to the drive (default; changeable in the web UI)"

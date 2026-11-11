@@ -1,4 +1,4 @@
-"""End-to-end test of the PrintDrive web API (phase 2) against a real dongle.
+"""End-to-end test of the WiFi DataDrive web API against a real dongle.
 
 Usage (ESP-IDF Python env provides 'requests'):
     python tools/api_test.py 192.168.2.152 [--drive E:]
@@ -102,7 +102,7 @@ def main():
     check("upload check ok", r.ok, r.text)
     mtime = 1790000000   # fixed "local" timestamp: must come back unchanged in the listing
     t = time.time()
-    r = s.post(f"{base}/api/upload?name={requests.utils.quote(name)}&mtime={mtime}&now={int(time.time())}",
+    r = s.post(f"{base}/api/upload?name={requests.utils.quote(name)}&mtime={mtime}&now={int(time.time() - time.timezone)}",
                headers=H, data=data, timeout=600)
     dt = time.time() - t
     check("upload ok", r.ok and r.json().get("ok"), f"{len(data) / 1024:.0f} kB in {dt:.1f} s = "

@@ -1,6 +1,8 @@
 # 03 – Umsetzungsplan und Status
 
-Stand: 2026-11-11.
+Stand: 2026-11-11, Firmware 0.2.0 (WiFi DataDrive). Das Projekt hieß bis Version 0.1.0
+„WiFi PrintDrive“; ältere Einträge nennen deshalb noch `PrintDrive-54D5`, `PRINTDRIVE` oder
+`printdrive.local`. Der Ordner `firmware/printdrive` behält seinen Namen.
 
 Statuswerte:
 
@@ -14,7 +16,9 @@ Statuswerte:
 Gesamtbild: Phasen 0–3 und 5 sind implementiert und gebaut. Am 2026-11-11 auf der
 Hardware unter Windows 11 verifiziert: Phase 0, 1 (außer Schreibschutz-Modus) und 2
 (`tools/api_test.py`: Flash 18/18, microSD 21/21), Phase 3 (LCD per Foto, außer Nuancen der
-LED-Farben), Phase 5 microSD (Grundfunktion). Offen ist Phase 4 (Bambu Lab X2D).
+LED-Farben), Phase 5 microSD (Grundfunktion), Phase 6 (Umbenennung, API v2 mit
+`api_test.py` 28/28, gzip-Auslieferung der neuen Weboberfläche). In Arbeit ist der
+Browser-Test aller Zustände der neuen Weboberfläche. Offen ist Phase 4 (Bambu Lab X2D).
 Gefundene und behobene Fehler: FAT-Ausrichtung, USB-PHY beim Download-Modus, beide
 Modus-Knöpfe sichtbar, Verbindungsabbruch statt Fehlerantwort (`drain_body`), langsamer
 Web-Upload (2-KiB-Cluster), 32-Bit-Überlauf der Upload-Größe; siehe [06](06_risiken.md).
@@ -39,7 +43,7 @@ Ziel: Dongle erscheint als normaler USB-Stick, Dateien lassen sich sicher kopier
 
 | Abnahmekriterium | Status |
 |---|---|
-| Laufwerk erscheint im Explorer, Label `PRINTDRIVE`, ca. 10–11 MB | **verifiziert** (11.288.576 Byte, damals FAT16, T1.2; heute FAT12 mit 4-KiB-Clustern) |
+| Laufwerk erscheint im Explorer, Label `PRINTDRIVE` (seit 0.2.0 bei Neuformatierung `DATADRIVE`), ca. 10–11 MB | **verifiziert** (11.288.576 Byte, damals FAT16, T1.2; heute FAT12 mit 4-KiB-Clustern) |
 | Dateien kopieren, lesen, auswerfen, neu einstecken – Inhalt unverändert | **verifiziert** (SHA256, Re-Plug per BOOT, T1.3) |
 | Erststart formatiert automatisch; defektes FS wird nie still formatiert | Erststart **verifiziert** (T1.1); Schutz vor stillem Formatieren **offen** |
 | Schreibschutz-Modus: Host kann nur lesen | implementiert, **offen** (T1.4, Web jetzt verfügbar) |
@@ -54,8 +58,9 @@ Automatisiert geprüft mit `tools/api_test.py` (T2.11).
 
 | Abnahmekriterium | Status |
 |---|---|
-| Weboberfläche unter `http://printdrive.local` bzw. IP erreichbar | **verifiziert** (IP `192.168.2.152`, Handy); Fehler „beide Modus-Knöpfe sichtbar“ behoben |
+| Weboberfläche unter `http://datadrive.local` (bis 0.1.0 `printdrive.local`) bzw. IP erreichbar | **verifiziert** (IP `192.168.2.152`, Handy); Fehler „beide Modus-Knöpfe sichtbar“ behoben |
 | Upload einer `.3mf` (Temp-Datei, Prüfung, Umbenennen) | **verifiziert** (Umlaut-Name, Download identisch, T2.11) |
+| Andere Dateitypen | bis 0.1.0 abgewiesen (415, **verifiziert**); seit 0.2.0 standardmäßig erlaubt (Phase 6) |
 | Upload-Abbruch hinterlässt keine Datei und keinen Temp-Rest | **verifiziert** (kein Temp-Rest, kein Busy-Zustand, T2.5/T2.11) |
 | Ungültige Datei (kein ZIP) wird abgewiesen (422) | **verifiziert** (kein ZIP und abgeschnittenes ZIP, T2.7) |
 | Speicher voll wird vor dem Upload erkannt (507) | **verifiziert** per `upload/check` (T2.6); Datei ≥ 4 GiB → 413 |
@@ -106,18 +111,44 @@ lesen erwägen (vorher T1.4 am PC), bei Problemen mit dem Composite-Gerät mit
 | Web-API auf microSD | **verifiziert** (`api_test.py` 21/21, inkl. 413 bei ≥ 4 GiB) |
 | exFAT-Karten, Kartenqualität, Stromaufnahme | **offen** (exFAT nicht unterstützt, nur per Web auf FAT32 formatierbar) |
 
+## Phase 6 – UI-Redesign / WiFi DataDrive (Firmware 0.2.0)
+
+Ziel: Aus dem Drucker-Stick wird ein allgemeiner WLAN-USB-Stick mit Dateiverwaltung im
+Browser. Neuer Name, neue Weboberfläche, API Version 2 ([07_api.md](07_api.md)). Die
+Sicherungen des Laufwerks (ein Besitzer, Host-I/O-Sperre, Barrier, Bestätigungsregeln,
+Schreib-Schutzfrist) bleiben unverändert. Ergebnisse: [05](05_testprotokoll.md) Phase 6.
+
+| Abnahmekriterium | Status |
+|---|---|
+| Umbenennung: Produkt „WiFi DataDrive“, USB-Strings „WiFi DataDrive“/„DataDrive“, SCSI-Inquiry „DataDrv / WiFi DataDrive“, Hostname `datadrive`, Setup-WLAN `DataDrive-XXXX`, Label `DATADRIVE` bei Neuformatierung; interne Namen (`firmware/printdrive`, `X-PrintDrive`, `pd_`) bleiben | **verifiziert** (2026-11-11, T6.1) |
+| LCD-Texte „Gerät“ statt „Host“ (`Gerät: verbunden`, `Kein USB-Gerät`) | **verifiziert** (T6.1) |
+| API v2: alle Dateitypen (`CONFIG_PD_UPLOAD_ALL_TYPES=y`, ZIP-Prüfung weiter für `.3mf`), `POST /api/rename`, Upload-Parameter `mtime`/`now`, `/api/files` mit `mtime`/`dirs`/`truncated`, Status mit `types`, Fehlertexte in einfacher Sprache | **verifiziert** (`api_test.py` 28/28, microSD, T6.2) |
+| Dateiliste aus gepacktem 32-KiB-Puffer (ca. 1000 übliche Namen) statt 64 Einträgen | implementiert, Felder **verifiziert** (T6.2); Kürzung bei sehr vielen Dateien am Gerät **offen** |
+| Weboberfläche als eine HTML-Datei, gzip-komprimiert eingebettet und ausgeliefert | **verifiziert**: 60 KB → 19 KB, Seitenaufruf 241 ms, Heap unverändert ca. 142 KB, App-Binary 1,06 MB (60 % der Partition frei, T6.3) |
+| Hauptansicht „Meine Dateien“: Statusleiste, Dateiliste (Typ-Symbol, Größe, Änderungsdatum), Suche, Sortierung, Aktionsmenü (Herunterladen, Umbenennen, Löschen), Upload-Warteschlange mit Fortschritt/Abbrechen, Drag & Drop, Zustände leer/gesperrt/Fehler | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
+| Einstellungen: Netzwerk, Speicher & USB, Sicherheit, System, „Gefahrenbereich“ (Formatieren mit getipptem `LÖSCHEN`, Wartungsmodus) | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
+| Hell-/Dunkel-Darstellung (automatisch oder fest, je Browser), neues Symbol | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
+| „Nach dem Hochladen wieder bereitstellen“ gibt das Laufwerk nur zurück, wenn der Upload es selbst genommen hat | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
+| Erfolgsmeldungen erst nach Bestätigung durch das Gerät | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
+| Testserver `tools/mock_server.py` (API-Nachbildung mit Szenarien und `/mock/set`) | vorhanden |
+| Browser-Test `tools/ui_test.py` (Playwright, gegen den Testserver) | **in Arbeit** |
+| Ordner in der Weboberfläche | nicht umgesetzt (machbar, zurückgestellt) |
+| Passwortschutz der Weboberfläche | nicht umgesetzt (zurückgestellt, braucht ein Konzept für „Passwort vergessen“) |
+
 ## Nächste Schritte
 
-1. Nur-Lese-Modus des Hosts am PC prüfen (T1.4).
-2. Drucker-Test (Phase 4) mit microSD-Karte.
-3. Restpunkte: `HOST_WRITING`/`BUSY` (T2.2, T2.3), Stromausfall (T2.8), Flash-Modus per Web,
+1. Browser-Test aller Zustände der neuen Weboberfläche abschließen (T6.4, Testserver und Gerät).
+2. Nur-Lese-Modus des Hosts am PC prüfen (T1.4).
+3. Drucker-Test (Phase 4) mit microSD-Karte.
+4. Restpunkte: `HOST_WRITING`/`BUSY` (T2.2, T2.3), Stromausfall (T2.8), Flash-Modus per Web,
    BOOT-Bestätigung, LED-Farbnuancen.
 
 ## Backlog nach dem MVP
 
 | Thema | Notiz |
 |---|---|
-| Authentifizierung | Zugriffsschutz für die Weboberfläche (bisher nur LAN + CSRF-Header) |
+| Authentifizierung | Zugriffsschutz für die Weboberfläche (bisher nur LAN + CSRF-Header); zurückgestellt, braucht ein Konzept für „Passwort vergessen“ |
+| Ordner | Unterordner in der Weboberfläche anzeigen und anlegen; machbar, zurückgestellt. Bisher nur Hauptverzeichnis, vorhandene Ordner werden gezählt |
 | Captive Portal | Setup-AP öffnet die Einrichtungsseite automatisch |
 | OTA-Update | Partitionen sind vorbereitet (`ota_0`/`ota_1`), Update-Weg fehlt |
 | microSD-Komfort | Hot-Swap nicht möglich (Slot am Stecker); ggf. Anzeige der Karte in der Weboberfläche ausbauen, exFAT nur mit anderer FatFs-Konfiguration |

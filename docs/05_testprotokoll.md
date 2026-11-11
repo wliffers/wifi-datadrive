@@ -6,16 +6,23 @@ tatsächlichen `ESP_LOG`-Texte aus dem Quellcode; im Log stehen sie mit Präfix,
 
 **Log-Quellen der Hauptfirmware:** `.\tools\monitor.ps1` (CDC-Port; beim Öffnen wird zuerst
 der Log-Ringpuffer mit den letzten 8 KB inkl. Start nachgeliefert, danach live – verifiziert),
-`http://<ip>/api/log` bzw. Weboberfläche → Einstellungen → „Log anzeigen“ (letzte 8 KB),
-UART0. Smoke-Test: `.\tools\idf.ps1 smoke_test -p COM4 monitor` (USB-Serial/JTAG verliert an
+`http://<ip>/api/log` bzw. Weboberfläche → Einstellungen → System → Protokoll „Anzeigen“
+(letzte 8 KB), UART0. Smoke-Test: `.\tools\idf.ps1 smoke_test -p COM4 monitor` (USB-Serial/JTAG verliert an
 diesem PC bei Bursts Blöcke, siehe [04](04_build_und_flash.md) Abschnitt 9).
 
 Ergebnis eintragen als **bestanden**, **Befund** (Abweichung oder Erkenntnis, mit Bemerkung),
 **FEHLER** (mit Bemerkung), **offen** oder **n/a**.
 
+Das Projekt heißt seit Firmware 0.2.0 „WiFi DataDrive“ (vorher „WiFi PrintDrive“). Die
+Prozeduren und erwarteten Texte unten beschreiben den Stand 0.2.0; Ergebniszeilen bleiben,
+wie sie am Testtag eingetragen wurden, und nennen deshalb zum Teil die alten Namen
+(`PrintDrive-54D5`, `PRINTDRIVE`, „Host …“ auf dem LCD) und die alte Weboberfläche.
+
 Übersicht Stand 2026-11-11: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
 `tools/api_test.py` weitgehend bestanden (T2.11: Flash 18/18, microSD 21/21), offen T2.2 (3),
-T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 4 offen.
+T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 6
+(Umbenennung, API v2 28/28, gzip-Auslieferung) bestanden, Browser-Test der neuen
+Weboberfläche (T6.4) in Arbeit; Phase 4 offen.
 
 ## Phase 0 – Smoke-Test
 
@@ -74,10 +81,10 @@ Grünanteil; im 5-s-Log `button=1`.
 1. Mit `firmware\pd_secrets.h` (gültige Daten) bauen und flashen.
 2. Ohne gültige Daten (Datei entfernen oder falsches Passwort, `fullclean`) bauen und flashen.
 
-Erwartet (1): `pd_wifi: connected to '<ssid>', IP <ip>`, `pd_wifi: mDNS: http://printdrive.local`;
-LCD `WLAN verbunden`, IP, `RSSI <n> dBm`; `ping printdrive.local` antwortet.
+Erwartet (1): `pd_wifi: connected to '<ssid>', IP <ip>`, `pd_wifi: mDNS: http://datadrive.local`;
+LCD `WLAN verbunden`, IP, `RSSI <n> dBm`; `ping datadrive.local` antwortet.
 Erwartet (2): sofort (ohne Daten) bzw. nach ca. 20 s
-`pd_wifi: setup access point on: SSID 'PrintDrive-XXXX', password '<pw>', http://192.168.4.1`;
+`pd_wifi: setup access point on: SSID 'DataDrive-XXXX' (password on the LCD), http://192.168.4.1`;
 LCD zeigt SSID, `PW <pw>`, `192.168.4.1`; Handy/PC kann sich mit dem Passwort verbinden.
 
 | Ergebnis | Datum | Bemerkung |
@@ -92,13 +99,13 @@ LCD zeigt SSID, `PW <pw>`, `192.168.4.1`; Handy/PC kann sich mit dem Passwort ve
 1. Keine microSD-Karte eingelegt. `.\tools\flash.ps1 -Project printdrive` (ggf. BOOT halten + einstecken). Dongle am PC lassen.
 2. Log über die Weboberfläche bzw. `/api/log` ansehen.
 
-Erwartet (aktueller Stand, `CONFIG_PD_FAT_CLUSTER_KB=4`): `main: WiFi PrintDrive 0.1.0`,
+Erwartet (aktueller Stand, `CONFIG_PD_FAT_CLUSTER_KB=4`): `main: WiFi DataDrive 0.2.0`,
 `board: board init done, flash size 16777216 bytes`,
 `drive: no usable microSD card (<err>) - using internal flash`,
 `drive: storage partition @0x510000, 11468800 bytes raw, WL sector 512, WL size <n>`,
 `drive: no valid FAT found (<code>)`, `drive: first boot: creating file system`,
 `drive: formatting internal flash (FAT, 4096 byte clusters)`,
-`drive: FAT ok (type 1: 1=FAT12 2=FAT16 3=FAT32, label 'PRINTDRIVE')`,
+`drive: FAT ok (type 1: 1=FAT12 2=FAT16 3=FAT32, label 'DATADRIVE')`,
 `usb_dev: TinyUSB installed (MSC + CDC log)`, `drive: host present at boot -> providing drive`,
 `drive: owner: USB host (read/write)`, `main: start-up complete`. LCD: `BOOT`, dann `USB` (grün).
 Zweiter Start: kein `first boot`, `FAT ok (type 1 …)`. Mit 2-KiB-Clustern: `type 2` (FAT16).
@@ -113,8 +120,9 @@ Zweiter Start: kein `first boot`, `FAT ok (type 1 …)`. Mit 2-KiB-Clustern: `ty
 1. Explorer öffnen, Eigenschaften des neuen Laufwerks.
 2. Geräte-Manager: Anschlüsse (COM & LPT).
 
-Erwartet: Laufwerk `PRINTDRIVE`, Dateisystem FAT, Kapazität ca. 10–11 MB, leer.
-Zusätzlicher COM-Port (USB-Serial, 303A:4003). LCD-Host-Zeile `Host: verbunden`.
+Erwartet: Laufwerk `DATADRIVE` (vor 0.2.0 formatiert: `PRINTDRIVE`), Dateisystem FAT,
+Kapazität ca. 10–11 MB, leer. Datenträger „DataDrv WiFi DataDrive“. Zusätzlicher COM-Port
+(USB-Serial, 303A:4003). LCD-Host-Zeile `Gerät: verbunden`.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
@@ -127,9 +135,9 @@ Zusätzlicher COM-Port (USB-Serial, 303A:4003). LCD-Host-Zeile `Host: verbunden`
 2. Im Explorer „Auswerfen“.
 3. Dongle abziehen, wieder einstecken, Datei erneut vergleichen.
 
-Erwartet: (1) LCD `Host schreibt...`, Vergleich ohne Unterschiede.
+Erwartet: (1) LCD `Gerät schreibt...`, Vergleich ohne Unterschiede.
 (2) `drive: host ejected the drive`, `drive: owner: APP (web upload possible), <frei> of <gesamt> bytes free`;
-LCD `BEREIT` (bzw. `WLAN`), `Host: ausgeworfen`; Datei in der Weboberfläche sichtbar.
+LCD `BEREIT` (bzw. `WLAN`), `Gerät: ausgeworfen`; Datei in der Weboberfläche sichtbar.
 (3) Laufwerk wieder da, Datei identisch.
 
 | Ergebnis | Datum | Bemerkung |
@@ -152,11 +160,12 @@ Monitor zeigt zuerst das nachgelieferte Start-Log.
 
 ### T1.4 Nur-Lese-Modus des Hosts
 
-1. Web → Einstellungen → „Host darf auf das Laufwerk schreiben“ abwählen.
-2. „Am USB bereitstellen“ (bzw. aus-/einstecken). Datei auf das Laufwerk kopieren.
+1. Web → Einstellungen → Speicher & USB → „USB-Gerät darf Dateien ändern“ ausschalten.
+2. „USB-Laufwerk bereitstellen“ (bzw. aus-/einstecken). Datei auf das Laufwerk kopieren.
 
-Erwartet: `drive: owner: USB host (read-only)`; LCD `Host: nur lesen`; Windows meldet
-Schreibschutz, Lesen funktioniert. Danach Einstellung wieder aktivieren.
+Erwartet: `drive: owner: USB host (read-only)`; LCD `Gerät: nur lesen`; Web-Statusleiste
+„Das angeschlossene USB-Gerät kann die Dateien lesen.“; Windows meldet Schreibschutz, Lesen
+funktioniert. Danach Einstellung wieder aktivieren.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
@@ -166,14 +175,19 @@ Schreibschutz, Lesen funktioniert. Danach Einstellung wieder aktivieren.
 
 ### T2.1 Upload einer kleinen .3mf
 
-1. `http://printdrive.local` (oder IP vom LCD) öffnen, Laufwerk ist am Host ausgeworfen.
-2. Eine gültige `.3mf` (< 1 MB) per Drag & Drop hochladen; „Nach dem Upload automatisch
-   am USB bereitstellen“ angehakt lassen.
+1. `http://datadrive.local` (oder IP vom LCD) öffnen; das Laufwerk ist am Host
+   bereitgestellt („USB-Laufwerk aktiv“).
+2. Eine gültige `.3mf` (< 1 MB) per Drag & Drop hochladen, die Rückfrage „Laufwerk vom
+   USB-Gerät trennen?“ bestätigen (entfällt nach Auswerfen am Host). Einstellung „Nach dem
+   Hochladen wieder bereitstellen“ eingeschaltet lassen.
 
-Erwartet: LCD `UPLOAD` mit Prozent; `drive: upload start '<name>' (<n> bytes)`,
-`drive: upload ok '<name>'`, `web: upload '<name>' <n> bytes in <t> ms (<x> KB/s): OK`;
-danach `drive: owner: USB host (read/write)`, `usb_dev: soft re-plug`; Laufwerk erscheint
-in Windows neu und enthält die Datei.
+Erwartet: `drive: taking the drive from the host (confirmed by user)`; LCD `UPLOAD` mit
+Prozent; `drive: upload start '<name>' (<n> bytes)`, `drive: upload ok '<name>'`,
+`web: upload '<name>' <n> bytes in <t> ms (<x> KB/s): OK`; Meldung „1 Datei gespeichert.
+Das USB-Laufwerk ist wieder bereitgestellt.“; `drive: owner: USB host (read/write)`,
+`usb_dev: soft re-plug`; Laufwerk erscheint in Windows neu und enthält die Datei.
+War die Dateiverwaltung schon vor dem Upload aktiv (z. B. nach Auswerfen), bleibt sie es:
+Zurückgegeben wird nur, wenn der Upload selbst das Laufwerk genommen hat.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
@@ -182,16 +196,16 @@ in Windows neu und enthält die Datei.
 
 ### T2.2 Umschalten ohne Auswurf / während der Host schreibt
 
-1. Laufwerk am Host (nicht ausgeworfen). Web → „Für Upload übernehmen“ → Dialog abbrechen.
-2. Erneut, Dialog „Übernehmen“ bestätigen.
+1. Laufwerk am Host (nicht ausgeworfen). Web → „Dateiverwaltung aktivieren“ → Dialog abbrechen.
+2. Erneut, Dialog mit „Trennen und fortfahren“ bestätigen.
 3. Bereitstellen, große Datei (ca. 8 MB) per Explorer kopieren und währenddessen
-   „Für Upload übernehmen“ bzw. BOOT kurz drücken.
+   „Dateiverwaltung aktivieren“ bzw. BOOT kurz drücken.
 
-Erwartet: (1) Dialog „Laufwerk vom Host übernehmen?“, nichts passiert.
+Erwartet: (1) Dialog „Laufwerk vom USB-Gerät trennen?“, nichts passiert.
 (2) `drive: taking the drive from the host (confirmed by user)`, `owner: APP …`.
-(3) Fehlertext „Der USB-Host schreibt gerade. …“ (409 `HOST_WRITING`), LCD
-`Host schreibt - warten`; Kopiervorgang läuft ungestört weiter.
-BOOT-Taste ohne Auswurf: `Host aktiv! Nochmal=OK`, zweiter Druck < 4 s übernimmt.
+(3) Meldung „Das USB-Gerät schreibt gerade auf das Laufwerk. …“ (409 `HOST_WRITING`), LCD
+`Gerät schreibt - warten`; Kopiervorgang läuft ungestört weiter.
+BOOT-Taste ohne Auswurf: `Gerät aktiv! Nochmal=OK`, zweiter Druck < 4 s übernimmt.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
@@ -202,7 +216,7 @@ BOOT-Taste ohne Auswurf: `Host aktiv! Nochmal=OK`, zweiter Druck < 4 s übernimm
 
 1. Größere `.3mf` hochladen, währenddessen BOOT kurz drücken (oder in zweitem Tab bereitstellen).
 
-Erwartet: LCD `Upload läuft` bzw. 409 `BUSY` „Upload oder Download läuft gerade“; Upload läuft fertig.
+Erwartet: LCD `Up-/Download läuft` bzw. 409 `BUSY` „Es läuft gerade eine Dateiübertragung. …“; Upload läuft fertig.
 Hinweis: Der HTTP-Server bearbeitet nur eine Anfrage gleichzeitig; eine Anfrage aus einem
 zweiten Tab wird erst nach dem Upload beantwortet. Aussagekräftig ist daher die BOOT-Taste.
 
@@ -215,7 +229,7 @@ zweiten Tab wird erst nach dem Upload beantwortet. Aussagekräftig ist daher die
 1. Laufwerk bereitstellen, im Explorer auswerfen.
 
 Erwartet: `drive: host ejected the drive`, `drive: owner: APP (web upload possible), …`; LCD `BEREIT`/`WLAN`.
-Danach „Am USB bereitstellen“: `usb_dev: soft re-plug`, Laufwerk erscheint wieder.
+Danach „USB-Laufwerk bereitstellen“: `usb_dev: soft re-plug`, Laufwerk erscheint wieder.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
@@ -226,7 +240,8 @@ Danach „Am USB bereitstellen“: `usb_dev: soft re-plug`, Laufwerk erscheint w
 1. Große `.3mf` hochladen, bei ca. 50 % den Browser-Tab schließen.
 
 Erwartet: `web: upload connection lost (<n>)`, `drive: upload aborted '<name>' after <n> bytes`;
-Datei nicht in der Liste, freier Speicher wie vorher; LCD verlässt `UPLOAD`.
+Datei nicht in der Liste, freier Speicher wie vorher; LCD verlässt `UPLOAD`. Abbrechen
+über das Kreuz in der Upload-Warteschlange hat dieselbe Wirkung.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
@@ -236,7 +251,7 @@ Datei nicht in der Liste, freier Speicher wie vorher; LCD verlässt `UPLOAD`.
 
 1. Laufwerk über den Host fast füllen, dann eine `.3mf` hochladen, die nicht mehr passt.
 
-Erwartet: Meldung „Nicht genug freier Speicher“ (507 `NO_SPACE`) vor dem Senden der Daten;
+Erwartet: Meldung „Nicht genug freier Speicher.“ (507 `NO_SPACE`) vor dem Senden der Daten;
 keine Temp-Datei; Speicherbalken rot bei < 10 % frei.
 
 | Ergebnis | Datum | Bemerkung |
@@ -247,12 +262,15 @@ keine Temp-Datei; Speicherbalken rot bei < 10 % frei.
 
 1. Eine Textdatei in `test.3mf` umbenennen und hochladen. 2. Eine `.txt` hochladen.
 
-Erwartet: (1) `drive: upload failed 'test.3mf': Datei ist beschädigt oder kein gültiges 3MF (ZIP)`
-(422 `INVALID_FILE`), Datei nicht in der Liste. (2) Browser lehnt ab: „Dateityp nicht erlaubt“.
+Erwartet: (1) `drive: upload failed 'test.3mf': Die Datei ist unvollständig oder beschädigt (keine gültige 3MF-Datei).`
+(422 `INVALID_FILE`), Datei nicht in der Liste. (2) Seit 0.2.0 (Default
+`CONFIG_PD_UPLOAD_ALL_TYPES=y`): Die `.txt` wird gespeichert. Nur mit `=n`: Ablehnung
+„Dieser Dateityp ist nicht erlaubt …“ (415 `BAD_TYPE`).
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| **bestanden** | 2026-11-11 | Per `api_test.py`: (1) Zufallsdaten als `.3mf` und abgeschnittenes ZIP → je 422. (2) `.txt` serverseitig → 415 `BAD_TYPE`; Name mit Pfad (`../x.3mf`) → 400. Ablehnung im Browser-Dialog nicht einzeln protokolliert |
+| **bestanden** | 2026-11-11 | Firmware 0.1.0, per `api_test.py`: (1) Zufallsdaten als `.3mf` und abgeschnittenes ZIP → je 422. (2) `.txt` serverseitig → 415 `BAD_TYPE`; Name mit Pfad (`../x.3mf`) → 400. Ablehnung im Browser-Dialog nicht einzeln protokolliert |
+| **bestanden** | 2026-11-11 | Firmware 0.2.0, per `api_test.py` (T6.2): (1) unverändert je 422. (2) `.txt` wird angenommen (`types = "all"`). Variante mit `CONFIG_PD_UPLOAD_ALL_TYPES=n` nicht geprüft |
 
 ### T2.8 Stromausfall während des Uploads
 
@@ -268,9 +286,10 @@ Verzeichniseintrag schon geschrieben war); Datei nicht in der Liste; Dateisystem
 
 ### T2.9 WLAN-Einrichtung per Web, Flash-Modus, Formatieren
 
-1. Über den Setup-AP `http://192.168.4.1` → Einstellungen → WLAN speichern.
-2. Einstellungen → „Flash-Modus“; danach aus-/einstecken.
-3. Einstellungen → „Formatieren …“, `FORMAT` eingeben.
+1. Über den Setup-AP `http://192.168.4.1` → Einstellungen → Netzwerk → „Speichern und verbinden“.
+2. Einstellungen → Gefahrenbereich → Wartungsmodus „Starten …“; danach aus-/einstecken.
+3. Einstellungen → Gefahrenbereich → „Formatieren …“, `LÖSCHEN` eintippen (die Oberfläche
+   sendet daraufhin `confirm=FORMAT`).
 
 Erwartet: (1) `pd_wifi: new credentials stored for '<ssid>'`, dann `connected to …`; AP geht
 nach ca. 120 s aus (`setup access point off`). (2) `board: restarting into ROM download mode`; Laufwerk und
@@ -376,7 +395,7 @@ Dateien des internen Flashs unverändert; Karte wird zu keinem Zeitpunkt formati
 
 1. `upload/check` mit Größe > 4 GiB (im API-Test: frei + 1 MB sowie 5 GiB).
 
-Erwartet: 413 `TOO_LARGE` „Datei zu groß (FAT erlaubt höchstens 4 GB pro Datei)“.
+Erwartet: 413 `TOO_LARGE` „Die Datei ist zu groß – möglich sind höchstens 4 GB pro Datei.“
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
@@ -386,12 +405,88 @@ Erwartet: 413 `TOO_LARGE` „Datei zu groß (FAT erlaubt höchstens 4 GB pro Dat
 ### T5.5 exFAT-Karte, Formatieren der Karte
 
 1. exFAT-Karte (typisch > 32 GB ab Werk) einlegen und einstecken.
-2. Weboberfläche → Einstellungen → „Formatieren …“, `FORMAT`.
+2. Weboberfläche → Einstellungen → Gefahrenbereich → „Formatieren …“, `LÖSCHEN`.
 
 Erwartet: (1) `no valid FAT found`, LCD „Kein Dateisystem! / Im Web formatieren“, Laufwerk
-nicht am Host. (2) `drive: formatting microSD card (FAT32)`, danach `FAT ok (type 3 …)`, Label
-`PRINTDRIVE`. Die Format-Anforderung gilt nur für das Medium, auf dem sie gestellt wurde.
+nicht am Host; Weboberfläche „Speicher nicht lesbar“. (2) `drive: formatting microSD card (FAT32)`,
+danach `FAT ok (type 3 …)`, Label `DATADRIVE`. Die Format-Anforderung gilt nur für das Medium, auf dem sie gestellt wurde.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
 | **offen** | – | Testkarte war bereits FAT32 |
+
+## Phase 6 – UI-Redesign / WiFi DataDrive (Firmware 0.2.0)
+
+Umbenennung, neue Weboberfläche und API Version 2 ([07_api.md](07_api.md)). Die Sicherungen
+des Laufwerks (ein Besitzer, Host-I/O-Sperre, Barrier, Bestätigungsregeln, Schreib-Schutzfrist)
+sind unverändert; ihre Prozeduren stehen in Phase 1 und 2.
+
+### T6.1 Umbenennung
+
+1. Firmware 0.2.0 flashen (`.\tools\flash.ps1 -Project printdrive -Build`), Dongle am PC.
+2. Log, Geräte-Manager/Datenträgerverwaltung, LCD und `/api/status` ansehen.
+
+Erwartet: `main: WiFi DataDrive 0.2.0`; `/api/status` → `version "0.2.0"`,
+`wifi.hostname "datadrive"`, `wifi.ap_ssid "DataDrive-XXXX"`; Weboberfläche unter
+`http://datadrive.local`; USB-Strings Hersteller „WiFi DataDrive“, Produkt „DataDrive“;
+Datenträger „DataDrv WiFi DataDrive“; LCD-Startbild „WiFi DataDrive“, Host-Zeile mit „Gerät“
+(`Gerät: verbunden`, `Kein USB-Gerät`). Neu formatierte Medien heißen `DATADRIVE`, vorhandene
+behalten ihr Label. Unverändert: Ordner `firmware/printdrive`, Header `X-PrintDrive`.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-11 | Am Gerät geprüft: Produktname, USB-Strings, SCSI-Inquiry, Hostname `datadrive` (`http://datadrive.local`), Setup-WLAN `DataDrive-XXXX`, Label `DATADRIVE` nach Neuformatierung des internen Flashs, LCD-Texte mit „Gerät“. Einzelwerte nicht protokolliert |
+
+### T6.2 API v2 (`tools/api_test.py`)
+
+1. Dongle mit microSD-Karte am PC, Laufwerk bereitgestellt.
+2. `python tools\api_test.py <ip> --drive E:` (Details: [04](04_build_und_flash.md) Abschnitt 10).
+
+Erwartet: `28/28 checks passed`. Gegenüber T2.11 neu: beliebiger Dateityp wird angenommen
+(`types = "all"`), `mtime` kommt in der Liste unverändert zurück (FAT-Auflösung 2 s),
+`/api/files` enthält `dirs` und `truncated`, Umbenennen (Erfolg, ungültiger Zielname 400,
+fehlende Datei 404, vorhandenes Ziel 409 `EXISTS`, zurück).
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-11 | microSD 64 GB: 28/28, Web-Upload 1,5 MB/s. Übernahme mit Bestätigung, Bereitstellen und identische Datei auf `E:` wie in T2.11 – die Sicherungen des Laufwerks verhalten sich unverändert. Interner Flash mit API v2 nicht gesondert protokolliert |
+
+### T6.3 Auslieferung der Weboberfläche (gzip)
+
+1. Firmware bauen; Größe von `index.html` und `index.html.gz` (Build-Ordner) vergleichen.
+2. `http://<ip>/` laden, Ladezeit und Antwort-Header ansehen; `/api/status` → `heap`.
+
+Erwartet: Antwort mit `Content-Encoding: gzip`, die Seite erscheint vollständig ohne weitere
+Anfragen an fremde Server. Messwerte, keine Sollwerte.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-11 | `index.html` 60 KB roh → 19 KB in Flash und Übertragung; Seitenaufruf vom Gerät 241 ms; freier Heap unverändert ca. 142 KB; App-Binary 1,06 MB (60 % der App-Partition frei) |
+
+### T6.4 Browser-Test der Weboberfläche (in Arbeit)
+
+Vorgehen: Zustände am Testserver durchspielen (`python tools\mock_server.py --port 8090
+--scenario <name>`, Steuerung über `/mock/set`, siehe [04](04_build_und_flash.md)
+Abschnitt 11), automatisiert mit `tools/ui_test.py` (Playwright); danach Stichprobe am
+echten Gerät. Jeweils am PC und in Handy-Breite, hell und dunkel.
+
+| Nr. | Prüfpunkt | Ergebnis | Datum |
+|---|---|---|---|
+| B1 | Hauptansicht „Meine Dateien“ lädt; Statusleiste zeigt Modus („USB-Laufwerk aktiv“ / „Dateiverwaltung aktiv“) und Speicherbelegung (Szenarien `usb_active`, `usb_no_host`, `files`, `flash_medium`) | | |
+| B2 | Dateiliste: Typ-Symbol, Größe, Änderungsdatum; Suche; Sortierung über Spaltenköpfe (PC) und Auswahlfeld (Handy) | | |
+| B3 | Aktionsmenü je Datei: Herunterladen, Umbenennen (auch ungültiger und schon vorhandener Name), Löschen mit Rückfrage; Kontextmenü am PC, Bottom Sheet am Handy | | |
+| B4 | Hochladen per Knopf und Drag & Drop, mehrere Dateien: Warteschlange mit Fortschritt, Abbrechen; „Gespeichert“ erst nach Antwort des Geräts | | |
+| B5 | Vorhandene Datei: Rückfrage „Vorhandene Datei ersetzen?“ mit Ersetzen/Überspringen | | |
+| B6 | Upload bei „USB-Laufwerk aktiv“: Rückfrage „Laufwerk vom USB-Gerät trennen?“, danach wieder bereitgestellt; mit ausgeschaltetem „Nach dem Hochladen wieder bereitstellen“ bleibt die Dateiverwaltung aktiv; war sie schon vorher aktiv, wird nicht bereitgestellt | | |
+| B7 | USB-Gerät schreibt (`host_writing=hold`): Meldung, kein Erzwingen möglich | | |
+| B8 | Zustände: leer (`empty`), gesperrt (`usb_active`), Speicher nicht lesbar (`no_fs`), fast voll (`full`), keine Antwort vom Laufwerk (`online=0`) | | |
+| B9 | Fehlerfälle: Upload scheitert (`fail_next`, `upload_fail_at`), Upload eines anderen Clients (`other_upload=1`) | | |
+| B10 | Hinweise: ausgeblendete Ordner (`dirs`), gekürzte Liste (`truncated`); 300 Dateien flüssig (`many`) | | |
+| B11 | Einstellungen: Netzwerk (WLAN speichern, Einrichtungs-WLAN im Szenario `ap_setup`), Speicher & USB (beide Schalter), Sicherheit, System (Protokoll, Neu starten) | | |
+| B12 | Gefahrenbereich: Formatieren nur mit getipptem `LÖSCHEN`; Wartungsmodus mit Rückfrage und Hinweis zum Aus-/Einstecken | | |
+| B13 | Darstellung Automatisch/Hell/Dunkel; Auswahl bleibt nach Neuladen im selben Browser erhalten | | |
+| B14 | Echter Dongle: Stichprobe B1–B6 und B12 (Wartungsmodus = T2.9 (2)) | | |
+
+Weiter offen (nicht Teil des Browser-Tests): Test am Bambu Lab X2D (Phase 4), Nur-Lese-Modus
+des Hosts auf der Hardware (T1.4), Ordner in der Weboberfläche und Passwortschutz (beides
+nicht umgesetzt, siehe [06](06_risiken.md)).

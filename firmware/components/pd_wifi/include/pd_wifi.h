@@ -1,10 +1,10 @@
-// Wi-Fi for WiFi PrintDrive.
+// Wi-Fi for WiFi DataDrive.
 //
 // Behaviour:
 //  - Station mode with credentials from NVS (set via web UI) or, as a fallback,
 //    from firmware/pd_secrets.h (optional, git-ignored).
 //  - If there are no credentials or no connection after PD_WIFI_AP_FALLBACK_S seconds,
-//    a WPA2 access point "PrintDrive-XXXX" is started for setup. Its password is
+//    a WPA2 access point "DataDrive-XXXX" is started for setup. Its password is
 //    generated once per device, stored in NVS and shown on the LCD.
 //  - Once the station is connected, the access point is switched off again after a delay.
 //  - mDNS: http://<hostname>.local
