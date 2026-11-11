@@ -140,8 +140,7 @@ ERRORS = {
     "FORBIDDEN": (403, "Anfrage nicht erlaubt."),
     "NOT_FOUND": (404, "Die Datei wurde nicht gefunden."),
     "BUSY": (409, "Es läuft gerade eine Dateiübertragung. Bitte warten, bis sie abgeschlossen ist."),
-    "HOST_ACTIVE": (409, "Das USB-Gerät verwendet das Laufwerk noch. Bitte dort zuerst auswerfen oder das Trennen bestätigen."
-                         "Umschalten bestätigen."),
+    "HOST_ACTIVE": (409, "Das USB-Gerät verwendet das Laufwerk noch. Bitte dort zuerst auswerfen oder das Trennen bestätigen."),
     "HOST_WRITING": (409, "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warten, bis es fertig ist."),
     "WRONG_OWNER": (409, "Das geht nur, solange die Dateiverwaltung aktiv ist."),
     "NO_FS": (409, "Der Speicher ist nicht lesbar und muss formatiert werden."),

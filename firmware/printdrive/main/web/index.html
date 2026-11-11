@@ -12,10 +12,10 @@
 /* ---------- Design tokens ---------- */
 :root{
   --bg:#f7f7f5;--surface:#fff;--text:#1b1d21;--muted:#666b74;--line:#e5e6e2;--hover:#efefec;
-  --accent:#0b7a75;--on-accent:#fff;--accent-soft:#e2f1ef;
+  --accent:#09706b;--on-accent:#fff;--accent-soft:#e2f1ef;
   --usb:#5252cc;--usb-soft:#ebebfa;
   --warn:#9a5a05;--warn-soft:#fcf0da;
-  --danger:#bd3328;--danger-soft:#fbe8e6;
+  --danger:#bd3328;--danger-soft:#fbe8e6;--on-danger:#fff;
   --shadow:0 8px 30px rgba(20,24,28,.16);
   --r:10px;--r-lg:16px;
   color-scheme:light;
@@ -25,7 +25,7 @@
   --accent:#3dbfb6;--on-accent:#04211f;--accent-soft:#15302e;
   --usb:#a3a3f7;--usb-soft:#25254d;
   --warn:#efb45c;--warn-soft:#3a2c13;
-  --danger:#f0766c;--danger-soft:#3e1d1a;
+  --danger:#f0766c;--danger-soft:#3e1d1a;--on-danger:#2b0c09;
   --shadow:0 8px 30px rgba(0,0,0,.5);
   color-scheme:dark;
 }}
@@ -34,7 +34,7 @@
   --accent:#3dbfb6;--on-accent:#04211f;--accent-soft:#15302e;
   --usb:#a3a3f7;--usb-soft:#25254d;
   --warn:#efb45c;--warn-soft:#3a2c13;
-  --danger:#f0766c;--danger-soft:#3e1d1a;
+  --danger:#f0766c;--danger-soft:#3e1d1a;--on-danger:#2b0c09;
   --shadow:0 8px 30px rgba(0,0,0,.5);
   color-scheme:dark;
 }
@@ -57,7 +57,7 @@ button,input,select{font:inherit;color:inherit}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 18px;border:0;border-radius:var(--r);background:var(--hover);font-weight:600;cursor:pointer;white-space:nowrap;text-decoration:none;color:var(--text);transition:filter .12s}
 .btn:hover{filter:brightness(.96)}
 .btn.primary{background:var(--accent);color:var(--on-accent)}
-.btn.danger{background:var(--danger);color:#fff}
+.btn.danger{background:var(--danger);color:var(--on-danger)}
 .btn.outline-danger{background:none;color:var(--danger);box-shadow:inset 0 0 0 1.5px var(--danger)}
 .btn:disabled{opacity:.55;cursor:default;filter:none}
 .icon-btn{width:44px;height:44px;display:inline-grid;place-items:center;border:0;border-radius:50%;background:none;cursor:pointer;color:var(--muted)}
@@ -75,7 +75,8 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:16px;color:inherit;text-decoration:none;margin-right:auto;letter-spacing:-.01em}
 .brand svg{width:30px;height:30px}
 .notice{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:var(--r);background:var(--warn-soft);color:var(--warn);margin:4px 0 12px;font-size:14px}
-.notice.info{background:var(--accent-soft);color:var(--accent)}
+.notice.info{background:var(--accent-soft);color:var(--text)}
+.notice.info svg,.notice.info .spin{color:var(--accent)}
 .notice .spin{margin-top:3px}
 
 /* ---------- Status strip ---------- */
@@ -106,17 +107,21 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 .cols{padding:8px 8px 8px 10px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--line)}
 .cols button{background:none;border:0;padding:4px 0;cursor:pointer;color:inherit;font-weight:600;display:inline-flex;gap:4px;align-items:center;text-align:left}
 .cols button svg{width:14px;height:14px}
-.cols button[aria-sort]{color:var(--text)}
+.cols button.on{color:var(--text)}
 .cols .num,.row .num{text-align:right;justify-content:flex-end}
 .row{padding:8px 8px 8px 10px;border-radius:var(--r);cursor:pointer;min-height:60px}
 .row:hover,.row.open{background:var(--surface)}
-.row .name{display:block;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row .name{display:flex;font-weight:550;min-width:0}
+.name .nb{overflow:hidden;text-overflow:ellipsis;white-space:pre}
+.name .ne{flex:none;white-space:pre}
 .row .meta{display:none;font-size:13px;color:var(--muted)}
 .row .num,.row .date{font-size:14px;color:var(--muted);white-space:nowrap}
 .ficon{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:10px;font-weight:750;letter-spacing:.02em;background:var(--hover);color:var(--muted)}
+.ficon.long{font-size:8.5px}
+.ficon svg{width:18px;height:18px}
 .ficon.model{color:var(--accent);background:var(--accent-soft)}
-.ficon.image{color:#b0367f;background:color-mix(in srgb,#b0367f 14%,transparent)}
-.ficon.doc{color:#2f66c4;background:color-mix(in srgb,#2f66c4 14%,transparent)}
+.ficon.image{color:#9c2a6e;background:color-mix(in srgb,#9c2a6e 13%,transparent)}
+.ficon.doc{color:#2857ab;background:color-mix(in srgb,#2857ab 13%,transparent)}
 .ficon.archive{color:var(--warn);background:var(--warn-soft)}
 .ficon.media{color:var(--usb);background:var(--usb-soft)}
 :root[data-theme=dark] .ficon.image{color:#f08cc4}:root[data-theme=dark] .ficon.doc{color:#8db4f5}
@@ -131,6 +136,7 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 .skel{height:60px;border-radius:var(--r);background:linear-gradient(90deg,var(--surface),var(--hover),var(--surface));background-size:200% 100%;animation:sk 1.4s infinite;margin-bottom:6px}
 @keyframes sk{to{background-position:-200% 0}}
 .fab{display:none}
+.list{padding-bottom:calc(var(--ph,0px) + 48px)}
 
 /* ---------- Menu / sheet ---------- */
 .scrim{position:fixed;inset:0;z-index:40}
@@ -155,20 +161,22 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 .uploads .bar{margin-top:4px}
 
 /* ---------- Toasts ---------- */
-.toasts{position:fixed;left:0;right:0;top:calc(68px + env(safe-area-inset-top));z-index:60;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;padding:0 16px}
+.toasts{position:fixed;left:24px;bottom:24px;z-index:60;display:flex;flex-direction:column;align-items:flex-start;gap:8px;pointer-events:none;max-width:min(440px,calc(100vw - 444px))}
 .toast{pointer-events:auto;max-width:520px;padding:12px 16px;border-radius:12px;background:var(--text);color:var(--bg);box-shadow:var(--shadow);font-size:14px;animation:tin .18s ease-out}
-.toast.err{background:var(--danger);color:#fff}
-@keyframes tin{from{opacity:0;transform:translateY(-8px)}}
+.toast.err{background:var(--danger);color:var(--on-danger)}
+@keyframes tin{from{opacity:0;transform:translateY(8px)}}
 
 /* ---------- Drop overlay ---------- */
 .drop{position:fixed;inset:12px;z-index:50;border:2.5px dashed var(--accent);border-radius:24px;background:var(--accent-soft);opacity:.96;display:grid;place-items:center;color:var(--accent);font-size:20px;font-weight:650;pointer-events:none;text-align:center;padding:24px}
 
 /* ---------- Dialog ---------- */
-dialog{border:0;border-radius:var(--r-lg);background:var(--surface);color:var(--text);padding:24px;width:min(440px,calc(100vw - 32px));box-shadow:var(--shadow)}
+dialog{border:0;border-radius:var(--r-lg);background:var(--surface);color:var(--text);padding:0;width:min(440px,calc(100vw - 32px));box-shadow:var(--shadow)}
+dialog form{padding:24px}
 dialog::backdrop{background:rgba(10,12,14,.5)}
 dialog h2{font-size:18px;margin-bottom:8px}
 dialog p{color:var(--muted);margin-bottom:10px;overflow-wrap:anywhere}
-dialog .derr{color:var(--danger);font-size:13px;min-height:20px;margin-top:6px}
+dialog .derr{color:var(--danger);font-size:13px;margin-top:8px}
+.derr:empty,.formmsg:empty{display:none}
 dialog .dacts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
 
 /* ---------- Settings ---------- */
@@ -190,10 +198,10 @@ dialog .dacts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;fle
 .kv span:last-child{color:var(--muted);text-align:right;overflow-wrap:anywhere}
 .form{display:grid;gap:14px;grid-template-columns:1fr 1fr;align-items:end}
 .form .full{grid-column:1/-1}
-.formmsg{font-size:13px;min-height:20px}
+.formmsg{font-size:13px}
 .formmsg.ok{color:var(--accent)}.formmsg.err{color:var(--danger)}
 .switch{position:relative;width:50px;height:30px;flex:none}
-.switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer;width:100%;height:100%}
+.switch input{position:absolute;inset:-7px;opacity:0;margin:0;cursor:pointer;width:calc(100% + 14px);height:calc(100% + 14px)}
 .switch i{position:absolute;inset:0;border-radius:15px;background:var(--line);transition:background .15s;pointer-events:none}
 .switch i::after{content:"";position:absolute;left:3px;top:3px;width:24px;height:24px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
 .switch input:checked + i{background:var(--accent)}
@@ -228,9 +236,17 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom));font-size:13px;co
   .menu .mhead{display:block;padding:10px 12px 8px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .menu button{min-height:52px}
   .form{grid-template-columns:1fr}
-  .list{padding-bottom:84px}
-  .item{padding:14px 16px}
+  .list{padding-bottom:calc(var(--ph,0px) + 96px)}
+  .item{padding:14px 16px;flex-wrap:wrap}
+  .toasts{left:16px;right:16px;max-width:none;align-items:stretch;bottom:calc(86px + env(safe-area-inset-bottom))}
+  .has-panel .toasts{bottom:calc(var(--ph,0px) + 12px)}
+  .has-panel .fab{display:none}
+  .seg button{min-height:40px}
+  .tabs a{padding:10px 14px}
+  .back{padding:10px 10px 10px 4px}
+  .uploads .x{width:40px;height:40px}
 }
+@media (max-width:359px){.fab .fl{display:none}.fab{padding:0;width:54px}}
 </style>
 </head>
 <body>
@@ -251,6 +267,7 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom));font-size:13px;co
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V6M7 11l5-5 5 5"/></symbol>
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v13M7 13l5 5 5-5"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3h7l4 4v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v4h4"/></symbol>
 </svg>
 
 <header class="top"><div class="wrap">
@@ -280,7 +297,7 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom));font-size:13px;co
     </section>
 
     <div class="toolbar">
-      <h1>Meine Dateien<span class="count" id="count"></span></h1>
+      <h1>Meine Dateien <span class="count" id="count"></span></h1>
       <label class="search" id="searchBox" hidden><svg class="i"><use href="#i-search"/></svg>
         <input class="field" id="search" type="search" placeholder="Dateien suchen" aria-label="Dateien suchen" autocomplete="off"></label>
       <select class="field sort-m" id="sortM" aria-label="Sortierung" hidden>
@@ -365,11 +382,11 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom));font-size:13px;co
   </main>
 </div>
 
-<button class="btn primary fab" id="fab" hidden><svg class="i"><use href="#i-upload"/></svg>Hochladen</button>
+<button class="btn primary fab" id="fab" aria-label="Hochladen" hidden><svg class="i"><use href="#i-upload"/></svg><span class="fl">Hochladen</span></button>
 <input type="file" id="picker" multiple hidden>
 
 <aside class="uploads" id="uploads" aria-label="Uploads" hidden>
-  <header><strong id="upHead">Uploads</strong><button class="icon-btn" id="upClose" aria-label="Schließen" title="Schließen"><svg class="i"><use href="#i-x"/></svg></button></header>
+  <header><strong id="upHead">Uploads</strong><button class="icon-btn" id="upMore" aria-label="Weitere Dateien hochladen" title="Weitere Dateien hochladen"><svg class="i"><use href="#i-upload"/></svg></button><button class="icon-btn" id="upClose" aria-label="Schließen" title="Schließen"><svg class="i"><use href="#i-x"/></svg></button></header>
   <ul id="upList"></ul>
 </aside>
 
@@ -398,6 +415,7 @@ const GIB4 = 4294967296;
 const S = {
   st: null,            // last status from the device
   files: null,         // null = not loaded, [] = empty
+  filesVer: 0,         // incremented whenever the list was reloaded
   dirs: 0, trunc: false,
   listKey: "",         // change detector for reloading the file list
   q: "", sort: {k: "name", d: 1},
@@ -420,14 +438,15 @@ applyTheme();
 const nf = new Intl.NumberFormat("de-DE", {maximumFractionDigits: 1});
 function fsize(b){ const u = ["B","kB","MB","GB","TB"]; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return nf.format(b) + " " + u[i]; }
 // mtime is local wall-clock time stored as if it were UTC (the file system has no time zone).
+const TF = new Intl.DateTimeFormat("de-DE", {hour: "2-digit", minute: "2-digit", timeZone: "UTC"});
+const DF = new Intl.DateTimeFormat("de-DE", {day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC"});
 function fdate(t){
   if (!t) return "–";
   const d = new Date(t * 1000), now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
   const day = x => Math.floor(x.getTime() / 864e5), diff = day(now) - day(d);
-  const tm = d.toLocaleTimeString("de-DE", {hour: "2-digit", minute: "2-digit", timeZone: "UTC"});
-  if (diff === 0) return "Heute, " + tm;
-  if (diff === 1) return "Gestern, " + tm;
-  return d.toLocaleDateString("de-DE", {day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC"});
+  if (diff === 0) return "Heute, " + TF.format(d);
+  if (diff === 1) return "Gestern, " + TF.format(d);
+  return DF.format(d);
 }
 function fdur(s){ if (s < 90) return "gerade eben"; if (s < 5400) return Math.round(s / 60) + " Minuten"; if (s < 129600) return Math.round(s / 3600) + " Stunden"; return Math.round(s / 86400) + " Tagen"; }
 const localSecs = ms => Math.floor(ms / 1000) - new Date(ms).getTimezoneOffset() * 60;
@@ -435,7 +454,7 @@ const CATS = {model: "3mf stl obj step stp gcode amf", image: "jpg jpeg png gif 
 function ftype(name){
   const m = /\.([^.]+)$/.exec(name), ext = m ? m[1].toLowerCase() : "";
   const cat = Object.keys(CATS).find(c => CATS[c].split(" ").includes(ext)) || "";
-  return {cat, label: ext ? ext.slice(0, 4).toUpperCase() : "?"};
+  return {cat, label: ext.slice(0, 5).toUpperCase()};
 }
 
 /* ---------- server ---------- */
@@ -464,7 +483,13 @@ function toast(text, err){
 }
 /* ask({title, text|html, yes, no, danger, input:{label,value,placeholder,select}, run})
    run(value) may return an error string: the dialog then stays open and shows it. */
-function ask(o){
+let dlgQueue = Promise.resolve();
+function ask(o){            // dialogs share one element: show them strictly one after another
+  const p = dlgQueue.then(() => askNow(o));
+  dlgQueue = p.catch(() => {});
+  return p;
+}
+function askNow(o){
   return new Promise(resolve => {
     const d = $("#dlg"), yes = $("#dYes"), no = $("#dNo"), inp = $("#dInput");
     $("#dTitle").textContent = o.title;
@@ -473,16 +498,17 @@ function ask(o){
     $("#dInputWrap").hidden = !o.input;
     if (o.input) { $("#dLabel").textContent = o.input.label; inp.value = o.input.value || ""; inp.placeholder = o.input.placeholder || ""; }
     yes.textContent = o.yes || "OK"; yes.className = "btn " + (o.danger ? "danger" : "primary"); yes.disabled = false;
-    no.textContent = o.no || "Abbrechen";
-    let done = false;
-    const finish = v => { if (done) return; done = true; d.close(); resolve(v); };
+    no.textContent = o.no || "Abbrechen"; no.disabled = false;
+    let done = false, running = false;
+    const finish = v => { if (done || running) return; done = true; d.close(); resolve(v); };
     $("#dForm").onsubmit = async e => {
       e.preventDefault();
       const val = o.input ? inp.value.trim() : true;
+      if (running) return;
       if (o.run) {
-        yes.disabled = true; $("#dErr").textContent = "";
+        running = true; yes.disabled = no.disabled = true; $("#dErr").textContent = "";
         const err = await o.run(val);
-        yes.disabled = false;
+        running = false; yes.disabled = no.disabled = false;
         if (err) { $("#dErr").textContent = err; return; }
       }
       finish(val);
@@ -525,7 +551,7 @@ async function refresh(forceList){
 }
 async function loadFiles(){
   const j = await api("/api/files");
-  if (j.ok) { S.files = j.files; S.dirs = j.dirs || 0; S.trunc = !!j.truncated; }
+  if (j.ok) { S.files = j.files; S.dirs = j.dirs || 0; S.trunc = !!j.truncated; S.filesVer++; }
   else if (j.code !== "OFFLINE") S.files = null;
 }
 
@@ -538,6 +564,7 @@ function renderNotice(){
   if (S.restart === "download") { cls += " info"; html = icon("alert") + "<span>Der Wartungsmodus ist aktiv. Zum Beenden das Laufwerk aus- und wieder einstecken.</span>"; }
   else if (S.restart) { cls += " info"; html = '<span class="spin"></span><span>Das Laufwerk startet neu …</span>'; }
   else if (S.fails >= 2) html = icon("alert") + "<span>Keine Antwort vom Laufwerk. Wird gerade eine große Datei übertragen, ist das normal – sonst bitte die WLAN-Verbindung prüfen. Neuer Versuch läuft …</span>";
+  else if (S.st && S.st.upload.active && !S.working) { cls += " info"; html = '<span class="spin"></span><span>Ein anderes Gerät lädt gerade eine Datei hoch. Bis das abgeschlossen ist, sind hier keine Änderungen möglich.</span>'; }
   n.className = cls; n.innerHTML = html; n.hidden = !html;
 }
 
@@ -589,20 +616,28 @@ function visibleFiles(){
   return list.sort((a, b) => (k === "name" ? byName(a, b) : (a[k] - b[k]) || byName(a, b)) * d);
 }
 const inSettings = () => !$("#vSettings").hidden;
+let listSig = "";
 
 function renderList(){
   const st = S.st, box = $("#list"); if (!st) return;
   const d = st.drive, fileMode = d.owner === "app" && !broken(d);
   const has = fileMode && S.files && S.files.length > 0;
   $("#searchBox").hidden = $("#sortM").hidden = !has;
-  $("#upBtn").hidden = !fileMode; $("#fab").hidden = !fileMode || inSettings();
+  $("#upBtn").hidden = !fileMode; $("#fab").hidden = !has || inSettings();
   $("#upBtn").disabled = $("#fab").disabled = !!S.switching;
-  $("#count").textContent = has ? (S.q ? `${visibleFiles().length} von ${S.files.length}` : `${S.files.length}`) : "";
+
+  // Rebuild the list only when something visible changed (keeps focus, scroll and open menus).
+  const sig = [d.owner, broken(d), d.files, S.filesVer, S.files === null, S.q, S.sort.k, S.sort.d, !!S.switching, S.working, S.dirs, S.trunc].join("|");
+  if (sig === listSig) return;
+  listSig = sig;
+  const cnt = $("#count");
+  cnt.textContent = has ? (S.q ? `${visibleFiles().length} von ${S.files.length}` : `${S.files.length}`) : "";
+  if (has) cnt.setAttribute("aria-label", S.files.length === 1 ? "1 Datei" : S.files.length + " Dateien"); else cnt.removeAttribute("aria-label");
 
   if (broken(d)) {
     box.innerHTML = `<div class="state"><div class="big">${icon("alert")}</div><h2>Der Speicher muss eingerichtet werden</h2>
       <p>Das Laufwerk kann den Speicher nicht lesen. In den Einstellungen lässt er sich neu formatieren – dabei gehen alle vorhandenen Daten verloren.</p>
-      <div class="acts"><a class="btn primary" href="#einstellungen">Zu den Einstellungen</a></div></div>`;
+      <div class="acts"><a class="btn primary" href="#s-danger">Zum Formatieren</a></div></div>`;
     return;
   }
   if (!fileMode) {
@@ -622,16 +657,21 @@ function renderList(){
     return;
   }
   const list = visibleFiles(), {k, d: dir} = S.sort;
-  const col = (key, label, cls) => `<button data-sort="${key}" ${k === key ? `aria-sort="${dir > 0 ? "ascending" : "descending"}"` : ""} class="${cls || ""}">${label}${k === key ? icon(dir > 0 ? "up" : "down") : ""}</button>`;
+  const col = (key, label, cls) => {
+    const on = k === key;
+    return `<button data-sort="${key}" class="${cls || ""}${on ? " on" : ""}" ${on ? `data-dir="${dir > 0 ? "asc" : "desc"}"` : ""} aria-label="${label}, ${on ? (dir > 0 ? "aufsteigend sortiert" : "absteigend sortiert") : "sortieren"}">${label}${on ? icon(dir > 0 ? "up" : "down") : ""}</button>`;
+  };
   let html = `<div class="cols"><span></span>${col("name", "Name")}${col("size", "Größe", "num")}${col("mtime", "Geändert")}<span></span></div>`;
   if (!list.length) html += `<div class="state"><h2>Keine Treffer</h2><p>Keine Datei enthält „${esc(S.q)}“.</p></div>`;
   for (const f of list) {
-    const t = ftype(f.name);
-    html += `<div class="row" role="button" tabindex="0" data-name="${esc(f.name)}" title="${esc(f.name)}">
-      <span class="ficon ${t.cat}">${esc(t.label)}</span>
-      <span><span class="name">${esc(f.name)}</span><span class="meta">${fsize(f.size)}${f.mtime ? " · " + fdate(f.mtime) : ""}</span></span>
-      <span class="num">${fsize(f.size)}</span><span class="date">${fdate(f.mtime)}</span>
-      <button class="icon-btn" data-more aria-label="Aktionen für ${esc(f.name)}">${icon("more")}</button></div>`;
+    const t = ftype(f.name), when = fdate(f.mtime), sz = fsize(f.size);
+    // Keep the extension visible when a long name is shortened.
+    const dot = f.name.lastIndexOf("."), split = dot > 0 && f.name.length - dot <= 8;
+    html += `<div class="row" data-name="${esc(f.name)}" title="${esc(f.name)}">
+      <span class="ficon ${t.cat}${t.label.length > 4 ? " long" : ""}">${t.label ? esc(t.label) : icon("file")}</span>
+      <span><span class="name"><span class="nb">${esc(split ? f.name.slice(0, dot) : f.name)}</span>${split ? `<span class="ne">${esc(f.name.slice(dot))}</span>` : ""}</span><span class="meta">${sz}${f.mtime ? " · " + when : ""}</span></span>
+      <span class="num">${sz}</span><span class="date">${when}</span>
+      <button class="icon-btn" data-more aria-haspopup="menu" aria-label="Aktionen für ${esc(f.name)}">${icon("more")}</button></div>`;
   }
   box.innerHTML = html + notes();
 }
@@ -655,14 +695,20 @@ $("#list").addEventListener("click", e => {
   if (row) openMenu(row, e.target.closest("[data-more]") ? null : e);
 });
 $("#list").addEventListener("contextmenu", e => { const row = e.target.closest(".row"); if (row) { e.preventDefault(); openMenu(row, e); } });
-$("#list").addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("row")) { e.preventDefault(); openMenu(e.target, null); } });
 $("#search").addEventListener("input", e => { S.q = e.target.value.trim(); renderList(); });
 $("#sortM").addEventListener("change", e => { const [k, d] = e.target.value.split(","); S.sort = {k, d: +d}; renderList(); });
 
-function closeMenu(){ $("#menu").hidden = $("#scrim").hidden = true; document.querySelectorAll(".row.open").forEach(r => r.classList.remove("open")); }
+let menuFrom = null;
+const rowButton = name => { const r = Array.from(document.querySelectorAll(".row")).find(x => x.dataset.name === name); return r ? r.querySelector("[data-more]") : null; };
+function closeMenu(refocus){
+  const was = !$("#menu").hidden;
+  $("#menu").hidden = $("#scrim").hidden = true;
+  document.querySelectorAll(".row.open").forEach(r => r.classList.remove("open"));
+  if (refocus && was && menuFrom && menuFrom.isConnected) menuFrom.focus();
+}
 function openMenu(row, ev){
   const name = row.dataset.name, m = $("#menu");
-  closeMenu(); row.classList.add("open");
+  closeMenu(); row.classList.add("open"); menuFrom = row.querySelector("[data-more]");
   m.innerHTML = `<div class="mhead">${esc(name)}</div>
     <button role="menuitem" data-act="dl">${icon("download")}Herunterladen</button>
     <button role="menuitem" data-act="ren">${icon("edit")}Umbenennen</button>
@@ -671,25 +717,36 @@ function openMenu(row, ev){
   const r = ev && ev.clientX ? {left: ev.clientX, bottom: ev.clientY} : row.querySelector("[data-more]").getBoundingClientRect();
   m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + "px";
   m.style.top = Math.max(8, Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8)) + "px";
-  m.onclick = e => {
+  m.onclick = async e => {
     const b = e.target.closest("[data-act]"); if (!b) return;
     closeMenu();
-    ({dl: download, ren: renameFile, del: deleteFile})[b.dataset.act](name);
+    await ({dl: download, ren: renameFile, del: deleteFile})[b.dataset.act](name);
+    const back = rowButton(name);            // return the focus to the file if it still exists
+    if (back) back.focus();
+  };
+  m.onkeydown = e => {
+    const items = Array.from(m.querySelectorAll("button")), i = items.indexOf(document.activeElement);
+    const to = {ArrowDown: (i + 1) % items.length, ArrowUp: (i + items.length - 1) % items.length, Home: 0, End: items.length - 1}[e.key];
+    if (to !== undefined) { e.preventDefault(); items[to].focus(); }
   };
   m.querySelector("button").focus();
 }
-$("#scrim").onclick = closeMenu;
-addEventListener("keydown", e => { if (e.key === "Escape") closeMenu(); });
-addEventListener("resize", closeMenu);
+$("#scrim").onclick = () => closeMenu(true);
+addEventListener("keydown", e => { if (e.key === "Escape") closeMenu(true); });
+addEventListener("resize", () => closeMenu());
 
 /* ---------- file actions ---------- */
+// The device handles one request at a time: during an upload nothing else can be answered.
+function uploading(){ if (!S.working) return false; toast("Bitte warte, bis der Upload abgeschlossen ist."); return true; }
 function download(name){
+  if (uploading()) return;
   const a = document.createElement("a");
   a.href = "/api/download?name=" + enc(name); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
 }
 const BAD_CHARS = /[\/\\:*?"<>|\x00-\x1f]/;
 async function renameFile(name){
+  if (uploading()) return;
   const dot = name.lastIndexOf(".");
   const to = await ask({
     title: "Datei umbenennen", yes: "Umbenennen",
@@ -697,6 +754,7 @@ async function renameFile(name){
     run: async v => {
       if (!v) return "Bitte einen Namen eingeben.";
       if (v === name) return "";
+      if (new TextEncoder().encode(v).length > 120) return "Der Name ist zu lang – möglich sind höchstens 120 Zeichen.";
       if (BAD_CHARS.test(v) || /^[. ]|[. ]$/.test(v)) return 'Der Name darf nicht mit Punkt oder Leerzeichen beginnen oder enden und keines dieser Zeichen enthalten: / \\ : * ? " < > |';
       const r = await post(`/api/rename?name=${enc(name)}&to=${enc(v)}`);
       if (r.ok) return "";
@@ -706,6 +764,7 @@ async function renameFile(name){
   if (to && to !== name) { await refresh(true); toast("Umbenannt in „" + to + "“."); }
 }
 async function deleteFile(name){
+  if (uploading()) return;
   const ok = await ask({title: "Datei löschen?", text: `„${name}“ wird endgültig vom Laufwerk gelöscht.`, yes: "Löschen", danger: true,
     run: async () => { const r = await post("/api/delete?name=" + enc(name)); return r.ok ? "" : r.error; }});
   if (ok) { await refresh(true); toast("Gelöscht."); }
@@ -749,7 +808,7 @@ async function provide(quiet){
 
 /* ---------- uploads ---------- */
 function pick(){ $("#picker").click(); }
-$("#upBtn").onclick = $("#fab").onclick = pick;
+$("#upBtn").onclick = $("#fab").onclick = $("#upMore").onclick = pick;
 $("#picker").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
 
 function addFiles(list){
@@ -785,6 +844,8 @@ async function work(){
     else toast(what);
   }
   render();
+  // A finished queue without problems needs no attention: close the panel after a moment.
+  setTimeout(() => { if (!S.working && S.ups.length && !S.ups.some(u => u.state === "err")) { S.ups = []; renderUploads(); } }, 6000);
 }
 
 async function uploadOne(u){
@@ -857,6 +918,7 @@ function renderUploads(){
     }).join("");
   }
   document.body.style.setProperty("--ph", (box.hidden ? 0 : box.offsetHeight) + "px");
+  document.body.classList.toggle("has-panel", !box.hidden);
 }
 $("#upList").onclick = e => {
   const b = e.target.closest("[data-cancel]"); if (!b) return;
@@ -903,6 +965,7 @@ function renderSettings(){
 $("#theme").onclick = e => { const b = e.target.closest("button"); if (!b) return; pref.set("theme", b.dataset.t); applyTheme(); renderSettings(); };
 $("#swAuto").onchange = e => pref.set("auto", e.target.checked ? "1" : "0");
 $("#swWrite").onchange = async e => {
+  if (uploading()) { e.target.checked = !e.target.checked; return; }
   const want = e.target.checked, r = await post("/api/settings/host_writable?value=" + (want ? 1 : 0));
   if (!r.ok) { e.target.checked = !want; return toast(r.error, true); }
   await refresh();
@@ -910,6 +973,7 @@ $("#swWrite").onchange = async e => {
 };
 $("#wifiForm").onsubmit = async e => {
   e.preventDefault();
+  if (uploading()) return;
   const ssid = $("#ssid").value, pass = $("#pass").value, msg = $("#wifiMsg"), btn = $("#wifiBtn");
   const fail = t => { msg.className = "formmsg full err"; msg.textContent = t; };
   if (!ssid.trim()) return fail("Bitte den WLAN-Namen eingeben.");
@@ -923,6 +987,7 @@ $("#wifiForm").onsubmit = async e => {
   msg.textContent = `Gespeichert. Das Laufwerk verbindet sich jetzt mit „${ssid}“ – ob es geklappt hat, zeigt sein Display.`;
 };
 $("#logBtn").onclick = async () => {
+  if (uploading()) return;
   const pre = $("#log"), btn = $("#logBtn");
   btn.disabled = true;
   const t = await api("/api/log", {text: true});
@@ -933,19 +998,22 @@ $("#logBtn").onclick = async () => {
 function restartError(r){ return r.code === "HOST_WRITING" ? "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warte, bis es fertig ist." : r.code === "BUSY" ? "Es läuft gerade eine Dateiübertragung. Bitte warte, bis sie abgeschlossen ist." : r.error; }
 function awaitRestart(kind){ S.restart = kind; S.sawDown = false; S.files = null; renderNotice(); schedule(2500); }
 $("#rebootBtn").onclick = async () => {
+  if (uploading()) return;
   const ok = await ask({title: "Laufwerk neu starten?", text: "Das dauert etwa 10 Sekunden. Ein angeschlossenes USB-Gerät verliert das Laufwerk kurz.", yes: "Neu starten",
     run: async () => { const r = await post("/api/reboot?mode=normal"); return r.ok ? "" : restartError(r); }});
   if (ok) awaitRestart("normal");
 };
 $("#flashBtn").onclick = async () => {
+  if (uploading()) return;
   const ok = await ask({title: "Wartungsmodus starten?", yes: "Wartungsmodus starten", danger: true,
     text: "Nur nötig, um neue Gerätesoftware aufzuspielen. Das Laufwerk und diese Oberfläche sind danach nicht erreichbar, bis es aus- und wieder eingesteckt wird.",
     run: async () => { const r = await post("/api/reboot?mode=download"); return r.ok ? "" : restartError(r); }});
   if (ok) awaitRestart("download");
 };
 $("#fmtBtn").onclick = async () => {
-  if (!S.st) return;
-  if (S.st.drive.owner === "usb" && !await activate()) return;
+  if (!S.st || uploading()) return;
+  const took = S.st.drive.owner === "usb";   // formatting needs the file management to own the drive
+  if (took && !await activate()) return;
   const where = S.st.medium.sd ? "der microSD-Karte" : "dem internen Speicher";
   const ok = await ask({title: "Speicher formatieren?", yes: "Alles löschen", danger: true,
     text: `Alle Dateien auf ${where} werden unwiderruflich gelöscht. Tippe zur Bestätigung das Wort LÖSCHEN ein.`,
@@ -956,6 +1024,7 @@ $("#fmtBtn").onclick = async () => {
       return r.ok ? "" : r.code === "WRONG_OWNER" ? "Bitte zuerst die Dateiverwaltung aktivieren." : restartError(r);
     }});
   if (ok) awaitRestart("format");
+  else if (took) await provide();            // cancelled: give the drive back to the USB device
 };
 
 /* ---------- routing: "#einstellungen" shows the settings, "#s-…" jumps to a section ---------- */
@@ -969,6 +1038,12 @@ function route(){
   if (sec) sec.scrollIntoView({behavior: "smooth"}); else scrollTo(0, 0);
 }
 addEventListener("hashchange", route);
+// Section chips only scroll; they must not add browser history entries.
+document.querySelector(".tabs").onclick = e => {
+  const a = e.target.closest("a"); if (!a) return;
+  e.preventDefault();
+  document.querySelector(a.getAttribute("href")).scrollIntoView({behavior: "smooth"});
+};
 document.addEventListener("visibilitychange", () => { if (!document.hidden) schedule(0); });
 
 route();
