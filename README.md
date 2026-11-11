@@ -5,27 +5,36 @@ USB-Stick mit WLAN-Zugang verwandelt: Der Dongle steckt am 3D-Drucker (Ziel: Bam
 Lab X2D) und erscheint dort als normales USB-Laufwerk. Neue `.3mf`-Dateien werden
 per Browser über WLAN hochgeladen, ohne den Stick abzuziehen.
 
-Grundprinzip: Das FAT-Dateisystem im internen 16-MB-Flash hat zu jedem Zeitpunkt
-genau **einen** Besitzer – entweder den USB-Host (Drucker/PC) oder die Firmware
-(Web-Upload). Umgeschaltet wird nur kontrolliert (Details: [docs/02_architektur.md](docs/02_architektur.md)).
+Grundprinzip: Das FAT-Dateisystem – auf einer eingesteckten **microSD-Karte**, sonst im
+internen 16-MB-Flash – hat zu jedem Zeitpunkt genau **einen** Besitzer – entweder den
+USB-Host (Drucker/PC) oder die Firmware (Web-Upload). Umgeschaltet wird nur kontrolliert
+(Details: [docs/02_architektur.md](docs/02_architektur.md)).
 
 ## Stand (2026-11-11)
 
 | Bereich | Stand |
 |---|---|
 | Hardware-Bestandsaufnahme (Chip, Flash, USB-ID) | **verifiziert** per esptool am echten Gerät |
-| Smoke-Test (LCD, LED, Taste, Flash, Setup-AP) | **verifiziert**; WLAN STA noch offen |
-| USB-Laufwerk unter Windows 11 (FAT16, 10,8 MB, Kopieren, Auswerfen, Re-Plug) | **verifiziert** |
-| Flashen per 1200-Baud-Touch, Dateien überleben Updates | **verifiziert** |
-| LCD-Statusbild | teilweise verifiziert (Zustand `USB`) |
-| Web-Upload, Moduswechsel per Web, Fehlerfälle | implementiert, **nicht getestet** (WLAN-Einrichtung steht aus) |
+| Smoke-Test (LCD, LED, Taste, Flash, Setup-AP), WLAN STA | **verifiziert** |
+| USB-Laufwerk unter Windows 11 (Kopieren, Auswerfen, Re-Plug) | **verifiziert** |
+| Flashen per 1200-Baud-Touch, Dateien überleben Updates | **verifiziert**, Update-Schleife vollautomatisch |
+| Web-Upload, Moduswechsel per Web, Fehlerfälle (`tools/api_test.py`) | **verifiziert** (Flash 18/18, microSD 21/21) |
+| LCD-Statusbild | **verifiziert** (Foto), außer Nuancen der LED-Farben |
+| microSD (Phase 5) | **verifiziert** (Grundfunktion, 64-GB-Karte FAT32) |
+| Nur-Lese-Modus des Hosts | implementiert, **nicht getestet** |
 | Test am Bambu Lab X2D | offen, **Kompatibilität nicht verifiziert** |
-| microSD | nicht implementiert (optionale Phase 5) |
 
-Gemessen über USB: schreiben 47 KB/s, lesen 753 KB/s. Schreiben ist durch das interne
-Flash begrenzt (grob 90 KB/s theoretisch); eine 5-MB-`.3mf` braucht ca. 1,5–2 min, auch
-per Web. Ergebnisse in [docs/05_testprotokoll.md](docs/05_testprotokoll.md), Befunde und
-offene Risiken in [docs/06_risiken.md](docs/06_risiken.md).
+Gemessene Schreibraten:
+
+| Medium | USB schreiben | Web-Upload |
+|---|---|---|
+| interner Flash (FAT12, 4-KiB-Cluster) | 47 KB/s | 46 KB/s |
+| microSD 64 GB (FAT32) | 832 KB/s | 1335–1578 KB/s |
+
+Ohne Karte arbeitet der Dongle mit dem internen Flash (ca. 11 MB, eine 5-MB-`.3mf` braucht
+ca. 2 min). Für den Drucker wird die microSD-Karte empfohlen (FAT32, groß, schnell). Karte
+nur im ausgesteckten Zustand wechseln. Ergebnisse in [docs/05_testprotokoll.md](docs/05_testprotokoll.md),
+Befunde und offene Risiken in [docs/06_risiken.md](docs/06_risiken.md).
 
 ## Schnellstart
 
@@ -68,12 +77,23 @@ Ohne diese Datei startet der Dongle einen Setup-Access-Point `PrintDrive-XXXX`
 Dongle einstecken, loslassen, Befehl wiederholen – danach einmal aus- und einstecken,
 sonst bleibt der Dongle im Download-Modus.
 
+Danach genügt für jedes Software-Update `.\tools\flash.ps1 -Project printdrive -Build`
+(1200-Baud-Touch → Flashen → Start, ohne Handgriff am Dongle).
+
 **4. Benutzen**
 
-- Am PC/Drucker einstecken → Laufwerk `PRINTDRIVE` erscheint (LCD: `USB`).
+- Optional microSD-Karte einlegen (nur bei ausgestecktem Dongle). Ohne Karte wird der
+  interne Flash genutzt. exFAT-Karten (meist > 32 GB) einmal im Web auf FAT32 formatieren.
+- Am PC/Drucker einstecken → Laufwerk erscheint (LCD: `USB`).
 - Im Browser `http://printdrive.local` oder die IP vom LCD öffnen.
 - Datei hochladen: Die Weboberfläche holt sich das Laufwerk (ggf. mit Rückfrage),
   speichert die Datei und stellt es danach wieder am USB bereit.
+
+**5. API-Test (optional, verändert den Laufwerksinhalt)**
+
+```powershell
+python tools\api_test.py 192.168.2.152 --drive E:
+```
 
 ## Ordnerstruktur
 
@@ -96,6 +116,7 @@ tools/
   flash.ps1                  Flashen mit automatischer Port-/Download-Modus-Erkennung
   monitor.ps1 / monitor.py   Log-Leser (TinyUSB-CDC oder USB-Serial/JTAG)
   backup_flash.ps1 / .py     vollständiges Flash-Backup nach backup/ (über USB-Serial/JTAG unzuverlässig)
+  api_test.py                End-to-End-Test der Web-API gegen den echten Dongle
 backup/                      LILYGO-Werksabbild, Flash-Abbilder (*.bin git-ignoriert) + SHA256SUMS.txt
 ```
 

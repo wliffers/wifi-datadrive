@@ -13,8 +13,9 @@ diesem PC bei Bursts Blöcke, siehe [04](04_build_und_flash.md) Abschnitt 9).
 Ergebnis eintragen als **bestanden**, **Befund** (Abweichung oder Erkenntnis, mit Bemerkung),
 **FEHLER** (mit Bemerkung), **offen** oder **n/a**.
 
-Übersicht Stand 2026-11-11: Phase 0 bestanden außer WLAN STA; Phase 1 bestanden außer T1.4;
-Phase 2 offen (braucht WLAN-Einrichtung), Teilergebnisse in T2.4, T2.9, T2.10; Phase 4 offen.
+Übersicht Stand 2026-11-11: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
+`tools/api_test.py` weitgehend bestanden (T2.11: Flash 18/18, microSD 21/21), offen T2.2 (3),
+T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 4 offen.
 
 ## Phase 0 – Smoke-Test
 
@@ -81,28 +82,31 @@ LCD zeigt SSID, `PW <pw>`, `192.168.4.1`; Handy/PC kann sich mit dem Passwort ve
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| (1) **offen** | – | STA-Verbindung noch nicht getestet; WLAN wird per Handy über den Setup-AP eingerichtet |
-| (2) **bestanden** | 2026-11-11 | Setup-AP `PrintDrive-54D5` gestartet, SSID und Passwort auf dem LCD. Verbindung eines Clients noch nicht protokolliert |
+| (1) **bestanden** | 2026-11-11 | Variante: Hauptfirmware, Zugangsdaten nicht per `pd_secrets.h`, sondern per Handy über Setup-AP + Weboberfläche (T2.9). Dongle im Heimnetz unter `192.168.2.152`, Weboberfläche am Handy erreichbar. RSSI und `ping printdrive.local` nicht protokolliert |
+| (2) **bestanden** | 2026-11-11 | Setup-AP `PrintDrive-54D5` gestartet, SSID und Passwort auf dem LCD; Handy verbindet sich (T2.9) |
 
 ## Phase 1 – USB-Laufwerk unter Windows
 
 ### T1.1 Erststart der Hauptfirmware
 
-1. `.\tools\flash.ps1 -Project printdrive` (ggf. BOOT halten + einstecken). Dongle am PC lassen.
+1. Keine microSD-Karte eingelegt. `.\tools\flash.ps1 -Project printdrive` (ggf. BOOT halten + einstecken). Dongle am PC lassen.
 2. Log über die Weboberfläche bzw. `/api/log` ansehen.
 
-Erwartet: `main: WiFi PrintDrive 0.1.0`, `board: board init done, flash size 16777216 bytes`,
+Erwartet (aktueller Stand, `CONFIG_PD_FAT_CLUSTER_KB=4`): `main: WiFi PrintDrive 0.1.0`,
+`board: board init done, flash size 16777216 bytes`,
+`drive: no usable microSD card (<err>) - using internal flash`,
 `drive: storage partition @0x510000, 11468800 bytes raw, WL sector 512, WL size <n>`,
 `drive: no valid FAT found (<code>)`, `drive: first boot: creating file system`,
-`drive: formatting storage (FAT, 2048 byte clusters)`,
-`drive: FAT ok (type 2: 1=FAT12 2=FAT16 3=FAT32, label 'PRINTDRIVE')`,
+`drive: formatting internal flash (FAT, 4096 byte clusters)`,
+`drive: FAT ok (type 1: 1=FAT12 2=FAT16 3=FAT32, label 'PRINTDRIVE')`,
 `usb_dev: TinyUSB installed (MSC + CDC log)`, `drive: host present at boot -> providing drive`,
 `drive: owner: USB host (read/write)`, `main: start-up complete`. LCD: `BOOT`, dann `USB` (grün).
-Zweiter Start: kein `first boot`, `FAT ok (type 2 …)`.
+Zweiter Start: kein `first boot`, `FAT ok (type 1 …)`. Mit 2-KiB-Clustern: `type 2` (FAT16).
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| **bestanden** | 2026-11-11 | Erststart formatiert automatisch (`first boot: creating file system`, ca. 1,4 s), `FAT ok (type 2 …)` = FAT16. Dateien überleben spätere Firmware-Updates (kein erneutes Formatieren). LCD-Statusbild siehe T1.2 |
+| **bestanden** | 2026-11-11 | Damaliger Stand (2-KiB-Cluster): Erststart formatiert automatisch (`first boot: creating file system`, ca. 1,4 s), `FAT ok (type 2 …)` = FAT16. Dateien überleben spätere Firmware-Updates (kein erneutes Formatieren). LCD-Statusbild siehe T1.2 |
+| **Befund** | 2026-11-11 | Umstellung auf 4-KiB-Cluster (FAT12) per Web-Formatieren (T2.9), Grund: Web-Upload-Rate (T2.10) |
 
 ### T1.2 Laufwerk im Explorer
 
@@ -156,7 +160,7 @@ Schreibschutz, Lesen funktioniert. Danach Einstellung wieder aktivieren.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| **offen** | – | braucht Weboberfläche (WLAN) |
+| **offen** | – | Weboberfläche ist inzwischen verfügbar; vor dem Drucker-Test durchführen (Empfehlung Phase 4) |
 
 ## Phase 2 – Web und Umschalten
 
@@ -173,7 +177,8 @@ in Windows neu und enthält die Datei.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| teilweise **bestanden** | 2026-11-11 | Per `api_test.py` (T2.11): Upload, Bereitstellen per `/api/mode`, Datei auf `E:` identisch – auf Flash und microSD. Drag & Drop mit Haken „automatisch bereitstellen“ in der Weboberfläche nicht einzeln protokolliert |
+| **FEHLER** (behoben) | 2026-11-11 | Weboberfläche zeigte beide Modus-Knöpfe gleichzeitig: CSS-`display` überschrieb das `hidden`-Attribut. Fix: `[hidden]{display:none!important}` |
 
 ### T2.2 Umschalten ohne Auswurf / während der Host schreibt
 
@@ -190,17 +195,20 @@ BOOT-Taste ohne Auswurf: `Host aktiv! Nochmal=OK`, zweiter Druck < 4 s übernimm
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| (1)(2) **bestanden** | 2026-11-11 | Per API (T2.11): ohne `force` 409 `HOST_ACTIVE`, mit `force` übernommen (`owner: app`). Dialog in der Weboberfläche nicht einzeln protokolliert |
+| (3) **offen** | – | `HOST_WRITING` während eines Explorer-Kopiervorgangs und BOOT-Bestätigung per zweitem Druck noch nicht geprüft |
 
 ### T2.3 Umschalten während eines Uploads
 
 1. Größere `.3mf` hochladen, währenddessen BOOT kurz drücken (oder in zweitem Tab bereitstellen).
 
 Erwartet: LCD `Upload läuft` bzw. 409 `BUSY` „Upload oder Download läuft gerade“; Upload läuft fertig.
+Hinweis: Der HTTP-Server bearbeitet nur eine Anfrage gleichzeitig; eine Anfrage aus einem
+zweiten Tab wird erst nach dem Upload beantwortet. Aussagekräftig ist daher die BOOT-Taste.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **offen** | – | |
 
 ### T2.4 Auswurf am Host → Upload-Modus
 
@@ -211,7 +219,7 @@ Danach „Am USB bereitstellen“: `usb_dev: soft re-plug`, Laufwerk erscheint w
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| teilweise **bestanden** | 2026-11-11 | Auswurf → APP automatisch und Bereitstellen per BOOT kurz mit Re-Plug verifiziert (T1.3); LCD `BEREIT`/`WLAN` und Bereitstellen per Web offen |
+| **bestanden** | 2026-11-11 | Auswurf → APP automatisch und Bereitstellen per BOOT kurz mit Re-Plug verifiziert (T1.3); Bereitstellen per Web (`/api/mode?target=usb`) mit anschließend sichtbarer Datei auf `E:` verifiziert (T2.11). LCD-Zustände per Foto (Phase 3) |
 
 ### T2.5 Upload-Abbruch
 
@@ -222,7 +230,7 @@ Datei nicht in der Liste, freier Speicher wie vorher; LCD verlässt `UPLOAD`.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | Variante per `api_test.py`: 100 von 300 KB gesendet, Socket geschlossen. Danach kein Busy-Zustand (`upload.active = false`), keine Datei, keine Temp-Datei – auf Flash und microSD |
 
 ### T2.6 Speicher voll
 
@@ -233,7 +241,7 @@ keine Temp-Datei; Speicherbalken rot bei < 10 % frei.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | Variante per `api_test.py`: `upload/check` mit Größe = frei + 1 MB → 507 `NO_SPACE` (Flash). Auf der 64-GB-Karte liegt diese Größe über 4 GiB → 413 `TOO_LARGE` (T5.4). Roter Speicherbalken nicht geprüft |
 
 ### T2.7 Ungültige Datei
 
@@ -244,7 +252,7 @@ Erwartet: (1) `drive: upload failed 'test.3mf': Datei ist beschädigt oder kein 
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **bestanden** | 2026-11-11 | Per `api_test.py`: (1) Zufallsdaten als `.3mf` und abgeschnittenes ZIP → je 422. (2) `.txt` serverseitig → 415 `BAD_TYPE`; Name mit Pfad (`../x.3mf`) → 400. Ablehnung im Browser-Dialog nicht einzeln protokolliert |
 
 ### T2.8 Stromausfall während des Uploads
 
@@ -256,7 +264,7 @@ Verzeichniseintrag schon geschrieben war); Datei nicht in der Liste; Dateisystem
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| | | |
+| **offen** | – | |
 
 ### T2.9 WLAN-Einrichtung per Web, Flash-Modus, Formatieren
 
@@ -268,30 +276,56 @@ Erwartet: (1) `pd_wifi: new credentials stored for '<ssid>'`, dann `connected to
 nach ca. 120 s aus (`setup access point off`). (2) `board: restarting into ROM download mode`; Laufwerk und
 CDC-Port verschwinden, 303A:1001 erscheint (dieselbe Funktion wie beim 1200-Baud-Touch, T1.5); nach
 Aus-/Einstecken normaler Start. (3) `drive: format requested - restarting`, nach Neustart
-`drive: formatting storage (FAT, 2048 byte clusters)`, Laufwerk leer.
+`drive: formatting internal flash (FAT, 4096 byte clusters)` bzw. mit Karte
+`drive: formatting microSD card (FAT32)`, Laufwerk leer.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| **offen** | – | (2) Software-Neustart in den Download-Modus per 1200-Baud-Touch verifiziert (T1.5), Auslösung per Web noch nicht |
+| (1) **bestanden** | 2026-11-11 | Per Handy: Setup-AP → Weboberfläche → WLAN gespeichert; Dongle verbindet sich mit dem Heimnetz (`192.168.2.152`), Weboberfläche am Handy bedienbar |
+| (2) **offen** | – | Software-Neustart in den Download-Modus per 1200-Baud-Touch verifiziert (T1.5), Auslösung per Web noch nicht |
+| (3) **bestanden** | 2026-11-11 | Formatieren des internen Flashs per `/api/format` mit Neustart; danach FAT12 mit 4-KiB-Clustern. Formatieren einer microSD-Karte noch nicht geprüft (T5.5) |
 
 ### T2.10 Geschwindigkeit
 
 1. Web-Upload einer ca. 8-MB-Datei; Wert aus `web: upload … (<x> KB/s)` notieren.
 2. Kopieren derselben Datei per Explorer auf das Laufwerk; Dauer stoppen.
 
-Erwartet: Messwerte, keine Sollwerte. Schreiben ist durch das Löschen der 4-KiB-Flash-Sektoren
-begrenzt (Obergrenze grob 90 KB/s, siehe [06](06_risiken.md) Abschnitt 4); Web-Uploads stoßen an
-dieselbe Grenze. USB Full Speed ist beim Schreiben nicht der Engpass.
+Erwartet: Messwerte, keine Sollwerte. Schreiben ins interne Flash ist durch das Löschen der
+4-KiB-Flash-Sektoren begrenzt (Obergrenze grob 90 KB/s, siehe [06](06_risiken.md) Abschnitt 4);
+Web-Uploads stoßen an dieselbe Grenze. USB Full Speed ist beim Schreiben ins Flash nicht der Engpass.
 
-| Web KB/s | USB schreiben KB/s | USB lesen KB/s | Datum |
-|---|---|---|---|
-| offen | 12 (vor FAT-Ausrichtungs-Fix) | – | 2026-11-11 |
-| offen | 47 (1-MiB-Zufallsdatei, nach Fix) | 753 (ungecacht) | 2026-11-11 |
+| Medium | Web KB/s | USB schreiben KB/s | USB lesen KB/s | Datum |
+|---|---|---|---|---|
+| Flash, FAT16 2 KiB, vor FAT-Ausrichtungs-Fix | – | 12 | – | 2026-11-11 |
+| Flash, FAT16 2 KiB, nach Fix | 7 | 47 (1-MiB-Zufallsdatei) | 753 (ungecacht) | 2026-11-11 |
+| Flash, FAT12 4 KiB | 46 | – | – | 2026-11-11 |
+| microSD 64 GB, FAT32 | 1335–1578 (4 MB) | 832 (10 MB) | – | 2026-11-11 |
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **Befund** | 2026-11-11 | Web-Upload auf Flash anfangs nur 7 KB/s: FatFs schreibt höchstens einen Cluster pro Disk-Schreibzugriff, ein 2-KiB-Cluster ist immer ein halber 4-KiB-Flash-Sektor → langsamer Lesen-Löschen-Schreiben-Pfad im Wear Levelling. Mit 4-KiB-Clustern (`CONFIG_PD_FAT_CLUSTER_KB=4`, Volume wird FAT12) 46 KB/s |
+
+### T2.11 Automatischer API-Test (`tools/api_test.py`)
+
+1. Dongle am PC, Laufwerk bereitgestellt (Laufwerksbuchstabe z. B. `E:`).
+2. `python tools\api_test.py <ip> --drive E:` (Details: [04](04_build_und_flash.md) Abschnitt 10).
+
+Erwartet: alle Prüfungen `[OK ]`, Abschluss `<n>/<n> checks passed`. Testdateien werden
+angelegt und wieder gelöscht, die hochgeladene Testdatei bleibt auf dem Laufwerk.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-11 | Flash: 18/18 – CSRF 403; Übernahme ohne Bestätigung 409 `HOST_ACTIVE`, mit `force` ok; Endung 415; Pfad im Namen 400; zu groß 507; kein ZIP 422; abgeschnittenes ZIP 422; Upload mit Umlaut-Namen; Liste; Download identisch; vorhandene Datei 409 `EXISTS`; Überschreiben; Abbruch ohne Rest; Bereitstellen; Dateioperation bei Host-Besitz 409 `WRONG_OWNER`; Datei auf `E:` identisch |
+| **bestanden** | 2026-11-11 | microSD: 21/21 (zusätzlich u. a. 413 `TOO_LARGE` für ≥ 4 GiB, siehe T5.4) |
+| **FEHLER** (behoben) | 2026-11-11 | Bei 409 `EXISTS` (Abweisung vor dem Lesen der Daten) setzte der Server die Verbindung zurück, der Client bekam keine Antwort. Fix: `drain_body()` liest den restlichen Body und verwirft ihn, danach kommt die Fehlerantwort an |
+| **Befund** | 2026-11-11 | Der ESP-IDF-HTTP-Server bearbeitet nur eine Anfrage gleichzeitig: Während eines Uploads wird `/api/status` nicht beantwortet. Die Weboberfläche setzt das Polling während des Uploads aus, das LCD zeigt den Fortschritt |
 
 ## Phase 4 – Bambu Lab X2D (nicht verifiziert)
 
-Vorbereitung: zuerst ohne Änderungen testen; bei Problemen nacheinander
-`CONFIG_TINYUSB_CDC_ENABLED=n`, Host nur lesen, `CONFIG_PD_REPLUG_ON_PROVIDE` umschalten.
+Vorbereitung: zuerst T1.4 (Host nur lesen) am PC prüfen. Empfohlen für den Drucker:
+microSD-Karte (FAT32, groß, schnell), Host nur lesen erwägen. Bei Problemen nacheinander
+`CONFIG_TINYUSB_CDC_ENABLED=n` (Composite-Gerät vermeiden), Host nur lesen,
+`CONFIG_PD_REPLUG_ON_PROVIDE` umschalten.
 
 | Nr. | Prüfpunkt | Ergebnis | Datum |
 |---|---|---|---|
@@ -304,3 +338,60 @@ Vorbereitung: zuerst ohne Änderungen testen; bei Problemen nacheinander
 | X7 | Variante ohne CDC (PID 4002) – Unterschied? | | |
 | X8 | Variante Host nur lesen – Drucker akzeptiert schreibgeschütztes Medium? | | |
 | X9 | WLAN-Upload-Rate am Drucker-Standort | | |
+| X10 | Mit microSD: stabile Versorgung, Drucker liest FAT32-Karte (Kapazität notieren) | | |
+
+## Phase 5 – microSD
+
+Testkarte des Nutzers: 64 GB, CID-Name „SDABC“, 59.645 MB, ab Werk bzw. vorher schon FAT32
+mit Label `DATA`; enthielt bereits `autorun.inf`/`autorun.ico` (nicht von der Firmware).
+
+### T5.1 Karte erkannt, Laufwerk unter Windows
+
+1. Dongle ausgesteckt, Karte einlegen, einstecken. Log ansehen, Explorer öffnen.
+
+Erwartet: `drive: microSD card '<name>': <n> MB, <f> kHz, 4-bit`, `FAT ok (type 3 …)`;
+Laufwerk mit Kartengröße; LCD-Speicherzeile `SD x / y`; `/api/status` → `medium.sd = true`.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-11 | SDMMC 4 Bit mit 40 MHz an CLK 12, CMD 16, D0 14, D1 17, D2 21, D3 18 → Slot auf dieser Board-Revision bestätigt. Windows: `E:` FAT32, 62,5 GB |
+
+### T5.2 Geschwindigkeit
+
+Siehe T2.10: USB schreiben 832 KB/s (10 MB), Web-Upload 1335–1578 KB/s (4 MB) – gegenüber
+47 bzw. 46 KB/s auf dem internen Flash.
+
+### T5.3 Rückfall ohne Karte
+
+1. Dongle ausgesteckt, Karte entnehmen, einstecken.
+
+Erwartet: `drive: no usable microSD card (<err>) - using internal flash`, Laufwerk mit ca. 11 MB,
+Dateien des internen Flashs unverändert; Karte wird zu keinem Zeitpunkt formatiert.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **offen** | – | Verhalten implementiert, nicht einzeln protokolliert |
+
+### T5.4 Dateien ≥ 4 GiB
+
+1. `upload/check` mit Größe > 4 GiB (im API-Test: frei + 1 MB sowie 5 GiB).
+
+Erwartet: 413 `TOO_LARGE` „Datei zu groß (FAT erlaubt höchstens 4 GB pro Datei)“.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **FEHLER** (behoben) | 2026-11-11 | Größe wurde als 32-Bit-Zahl gelesen: 62 GB + 1 MB liefen über und wurden angenommen. Fix: 64-Bit-Auswertung, ≥ 4 GiB → 413 |
+| **bestanden** | 2026-11-11 | nach Fix im API-Test (21/21) |
+
+### T5.5 exFAT-Karte, Formatieren der Karte
+
+1. exFAT-Karte (typisch > 32 GB ab Werk) einlegen und einstecken.
+2. Weboberfläche → Einstellungen → „Formatieren …“, `FORMAT`.
+
+Erwartet: (1) `no valid FAT found`, LCD „Kein Dateisystem! / Im Web formatieren“, Laufwerk
+nicht am Host. (2) `drive: formatting microSD card (FAT32)`, danach `FAT ok (type 3 …)`, Label
+`PRINTDRIVE`. Die Format-Anforderung gilt nur für das Medium, auf dem sie gestellt wurde.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **offen** | – | Testkarte war bereits FAT32 |

@@ -29,6 +29,7 @@ Beim ersten Build lädt der Component Manager `esp_tinyusb`, `tinyusb` und `mdns
 | `tools\flash.ps1 -Project <…> [-Port COMx] [-Build] [-Monitor]` | Flashen mit automatischer Port-Suche und Download-Modus per 1200-Baud-Touch |
 | `tools\monitor.ps1 [COMx] [--seconds N] [--out datei]` | Log-Leser (`monitor.py`), verbindet nach Neustart automatisch neu, setzt den Chip nie zurück |
 | `tools\backup_flash.ps1 -Port COM4` | komplettes 16-MB-Flash nach `backup\` lesen – über USB-Serial/JTAG **unzuverlässig** (Abschnitt 6) |
+| `python tools\api_test.py <ip> [--drive E:] [--size-kb N]` | End-to-End-Test der Web-API gegen den echten Dongle (Abschnitt 10); **verändert den Laufwerksinhalt** |
 
 ## 3. Smoke-Test bauen und flashen
 
@@ -46,6 +47,13 @@ Erwartetes Bild und Log: [05_testprotokoll.md](05_testprotokoll.md) Phase 0 (bes
 ```powershell
 .\tools\idf.ps1 printdrive build
 .\tools\flash.ps1 -Project printdrive            # oder in einem Schritt: -Build -Monitor
+```
+
+Übliche Update-Schleife während der Entwicklung (bauen → 1200-Baud-Touch → flashen →
+Start, ohne Handgriff am Dongle; mehrfach verifiziert 2026-11-11):
+
+```powershell
+.\tools\flash.ps1 -Project printdrive -Build
 ```
 
 **Wichtig:** Sobald `printdrive` läuft, belegt TinyUSB den USB-Anschluss. Die
@@ -83,7 +91,8 @@ Mit deaktiviertem CDC (`CONFIG_TINYUSB_CDC_ENABLED=n`, z. B. für den Drucker-Te
 es keinen 1200-Baud-Touch mehr – dann Web, BOOT 5 s oder manuell.
 
 Flashen schreibt Bootloader, Partitionstabelle, `otadata` und App. **NVS und Dateispeicher
-bleiben erhalten** (verifiziert 2026-11-11). `idf.py erase-flash` löscht dagegen alles inklusive Dateien.
+bleiben erhalten** (verifiziert 2026-11-11), eine microSD-Karte wird ohnehin nicht berührt.
+`idf.py erase-flash` löscht dagegen alles im internen Flash inklusive Dateien.
 
 Logs der Hauptfirmware: `.\tools\monitor.ps1` (CDC-Port; beim Öffnen wird zuerst das Start-Log
 aus dem 8-KB-Ringpuffer nachgeliefert, verifiziert), `http://<ip>/api/log` oder
@@ -115,8 +124,12 @@ python -m esptool --chip esp32s3 -p COM4 erase_region 0x9000 0x5000       # NVS:
 python -m esptool --chip esp32s3 -p COM4 erase_region 0x510000 0xAF0000   # storage, ca. 44 s
 ```
 
-  Der nächste Start formatiert automatisch (Erststart). Das Löschen des NVS entfernt auch
-  die WLAN-Zugangsdaten; das Setup-AP-Passwort wird neu erzeugt.
+  Der nächste Start ohne microSD-Karte formatiert automatisch (Erststart). Das Löschen des
+  NVS entfernt auch die WLAN-Zugangsdaten; das Setup-AP-Passwort wird neu erzeugt.
+
+- Interner Flash im Betrieb neu formatieren: Karte entfernen (Dongle ausgesteckt), dann
+  Weboberfläche → Einstellungen → „Formatieren …“ (`POST /api/format`, Neustart,
+  verifiziert). Eine Karte wird auf dieselbe Weise formatiert, wenn sie beim Start steckt.
 
 ## 6. Flash-Backup (unzuverlässig über USB-Serial/JTAG)
 
@@ -158,7 +171,8 @@ copy firmware\pd_secrets.h.example firmware\pd_secrets.h    # SSID/Passwort eint
 **Variante B – über den Setup-AP:** Ohne Zugangsdaten startet sofort (sonst nach 20 s
 ohne Verbindung) das WLAN `PrintDrive-XXXX`; Passwort auf dem LCD (`PW …`). Verbinden,
 `http://192.168.4.1` öffnen, unter Einstellungen SSID/Passwort speichern. Die Daten
-landen im NVS und haben ab dann Vorrang vor `pd_secrets.h`.
+landen im NVS und haben ab dann Vorrang vor `pd_secrets.h`. **Verifiziert** 2026-11-11 per
+Handy (Dongle danach im Heimnetz unter `192.168.2.152`).
 
 ## 8. Konfiguration (Kconfig)
 
@@ -172,6 +186,8 @@ Menü „PrintDrive“ (`firmware/printdrive/main/Kconfig.projbuild`):
 | `CONFIG_PD_EJECT_TO_APP` | y | nach Auswurf am Host automatisch Upload-Modus |
 | `CONFIG_PD_REPLUG_ON_PROVIDE` | y | beim Bereitstellen immer Soft-Re-Plug |
 | `CONFIG_PD_HOST_WRITE_GUARD_MS` | 3000 (500–60000) | Sperrzeit nach dem letzten Host-Schreibzugriff |
+| `CONFIG_PD_USE_SDCARD` | y | microSD-Karte als Speicher nutzen, wenn beim Start eine steckt (sonst interner Flash); Karte wird nie automatisch formatiert |
+| `CONFIG_PD_FAT_CLUSTER_KB` | 4 (2–4) | Clustergröße beim Formatieren des internen Flashs: 4 = FAT12, Web-Upload ca. 46 KB/s; 2 = FAT16, Web-Upload nur ca. 7 KB/s. Wirkt erst beim Neuformatieren |
 | `CONFIG_PD_ALLOW_GCODE` | n | zusätzlich `.gcode` erlauben |
 
 Menü „PrintDrive Wi-Fi“ (`firmware/components/pd_wifi/Kconfig`):
@@ -200,7 +216,8 @@ Weboberfläche. Dateien vorher sichern.
 
 Ein Dateisystem, das eine Firmware vor dem FAT-Ausrichtungs-Fix (2026-11-11) erzeugt hat,
 bleibt langsam (ca. 12 statt 47 KB/s schreiben), bis es neu formatiert wird (Web oder
-Abschnitt 5). Details: [06_risiken.md](06_risiken.md) Abschnitt 4.
+Abschnitt 5). Gleiches gilt für ein FAT16 mit 2-KiB-Clustern aus älteren Firmware-Ständen
+(Web-Upload ca. 7 statt 46 KB/s). Details: [06_risiken.md](06_risiken.md) Abschnitt 4.
 
 ## 9. Diagnose-Build (Konsole über USB-Serial/JTAG)
 
@@ -223,3 +240,21 @@ idf.py -B build_diag "-DSDKCONFIG=build_diag/sdkconfig" "-DSDKCONFIG_DEFAULTS=sd
 Hinweis: Auch die serielle Ausgabe über USB-Serial/JTAG verliert an diesem PC bei Bursts
 ganze Blöcke (ähnlich wie beim Flash-Backup, Ursache nicht geklärt). Fehlende Zeilen im Log sind
 daher kein sicheres Zeichen für einen Firmware-Fehler.
+
+## 10. API-Test (`tools/api_test.py`)
+
+```powershell
+python tools\api_test.py 192.168.2.152 --drive E:
+```
+
+Braucht `requests` (in der ESP-IDF-Python-Umgebung vorhanden). Der Dongle steckt am PC,
+`--drive` ist sein Laufwerksbuchstabe; `--size-kb` (Default 512) bestimmt die Größe der
+Test-`.3mf`. Das Skript **legt Testdateien an und löscht sie**, übernimmt das Laufwerk
+vom Host (erst ohne, dann mit Bestätigung) und stellt es am Ende wieder bereit.
+
+Geprüft: CSRF (403), Übernahme `HOST_ACTIVE` → `force`, Dateityp (415), Pfad im Namen (400),
+zu groß (507 bzw. 413 ab 4 GiB), 5 GiB nicht auf 32 Bit gekürzt (413), kein ZIP / abgeschnittenes
+ZIP (422), Upload mit Umlaut-Namen inkl. Rate, Liste, Download identisch, vorhandene Datei
+(409 `EXISTS`), Überschreiben, Upload-Abbruch ohne Rest, Bereitstellen, Dateioperationen bei
+Host-Besitz (409 `WRONG_OWNER`), Datei auf dem Windows-Laufwerk identisch. Ausgabe
+`<n>/<m> checks passed`, Exit-Code 1 bei Fehlern. Ergebnisse: [05](05_testprotokoll.md) T2.11.

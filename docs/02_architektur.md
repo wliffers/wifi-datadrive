@@ -1,8 +1,9 @@
 # 02 – Architektur
 
 Beschreibt den Stand des Quellcodes in `firmware/`. Auf echter Hardware verifiziert sind
-bisher USB-Laufwerk, Auswurf/Bereitstellen und Download-Modus unter Windows; Web und
-Upload noch nicht (siehe [03_umsetzungsplan.md](03_umsetzungsplan.md)).
+USB-Laufwerk, Auswurf/Bereitstellen, Download-Modus, Web-API/Upload (`tools/api_test.py`)
+und microSD unter Windows; offen sind Nur-Lese-Modus und Drucker (siehe
+[03_umsetzungsplan.md](03_umsetzungsplan.md)).
 
 ## 1. Module
 
@@ -13,7 +14,7 @@ Upload noch nicht (siehe [03_umsetzungsplan.md](03_umsetzungsplan.md)).
 | `display` | `components/display` | RAM-Framebuffer 160×80 RGB565, 5×7-Font (ASCII + Umlaute), `display_flush()` per DMA |
 | `pd_wifi` | `components/pd_wifi` | STA, Setup-AP, Reconnect mit Backoff (2–30 s), mDNS |
 | `applog` | `components/applog` | hängt sich in `esp_log`, 8-KB-Ringpuffer für `/api/log`, optionaler Sink (CDC) |
-| `drive` | `printdrive/main/drive.c` | **Besitzer-Verwaltung** des Dateisystems, Formatieren, Dateioperationen, Upload-Pipeline |
+| `drive` | `printdrive/main/drive.c` | Medienwahl (microSD/Flash), **Besitzer-Verwaltung** des Dateisystems, Formatieren, Dateioperationen, Upload-Pipeline |
 | `usb_dev` | `printdrive/main/usb_dev.c` | TinyUSB-Installation, Konfigurationsdeskriptor, CDC-Log-Port, 1200-Baud-Touch, Soft-Re-Plug, Barrier |
 | `web_server` | `printdrive/main/web_server.c` | HTTP-API und eingebettete Weboberfläche (`web/index.html`) |
 | `ui` | `printdrive/main/ui.c` | LCD-Statusbild, LED-Farbe, BOOT-Taste |
@@ -38,18 +39,51 @@ Fehler: LCD `FEHLER` „Speicher/USB Init“, Abbruch ohne WLAN/Web) → `pd_wif
 Das Layout ist von Anfang an OTA-fähig, damit ein späteres OTA keine
 Neupartitionierung (= Verlust der Dateien) erfordert.
 
+### Medienwahl (`drive_init`)
+
+Beim Start probiert `sd_try_init()` den microSD-Slot (SDMMC 4 Bit, bis 40 MHz
+`SDMMC_FREQ_HIGHSPEED`, Pins aus `board.h`, interne Pull-ups zusätzlich). Antwortet eine
+Karte, ist sie das Medium (`microSD card '<name>': <n> MB, <f> kHz, <b>-bit`); sonst
+`no usable microSD card (<err>) - using internal flash` und die Partition `storage` wird
+genutzt. Abschaltbar mit `CONFIG_PD_USE_SDCARD=n`. Das Medium gilt bis zum nächsten
+Neustart: **kein Hot-Swap**, der Slot sitzt am USB-Stecker, Karte nur bei ausgestecktem
+Dongle wechseln. `/api/status` meldet das Medium in `medium{sd,name}` (Name aus der CID
+bzw. `Flash`), das LCD zeigt in der Speicherzeile `SD` statt `Frei`.
+
+### Interner Flash
+
 Dateisystem-Stapel: Partition → **Wear Levelling** (512-B-Sektoren, SAFE-Modus,
-`sdkconfig.defaults`) → FAT. Die Firmware formatiert selbst mit **MBR + FAT16**,
-Clustergröße 2048 B, Label `PRINTDRIVE` (esp_tinyusbs eigener Formatierer würde hier
-FAT12 erzeugen). Der USB-Host sieht dieselben 512-B-Sektoren. `f_mkfs` mit
+`sdkconfig.defaults`) → FAT. Die Firmware formatiert selbst mit MBR, Clustergröße
+`CONFIG_PD_FAT_CLUSTER_KB` (Default **4 KiB → FAT12**; 2 KiB → FAT16, aber langsam),
+Label `PRINTDRIVE`. Der USB-Host sieht dieselben 512-B-Sektoren. `f_mkfs` mit
 `MKFS_PARM.align = 8` Sektoren: Die MBR-Partition beginnt zwar bei Sektor 63, der
 Datenbereich liegt aber auf 4-KiB-Grenzen der Flash-Löschsektoren (ohne das: 12 statt
-47 KB/s beim Schreiben, siehe [06_risiken.md](06_risiken.md)).
+47 KB/s beim Schreiben über USB, siehe [06_risiken.md](06_risiken.md)).
 
-Formatieren (`probe_and_format()` in `drive_init`, immer **vor** dem Start von USB):
+Warum 4-KiB-Cluster: FatFs schreibt bei Web-Uploads höchstens einen Cluster pro
+Disk-Schreibzugriff. Ein 2-KiB-Cluster ist immer ein halber 4-KiB-Flash-Sektor, das Wear
+Levelling muss jedes Mal lesen, löschen und neu schreiben. Gemessen: Web-Upload 7 KB/s mit
+2-KiB-, **46 KB/s** mit 4-KiB-Clustern. Die Einstellung wirkt nur beim (Neu-)Formatieren.
 
-- automatisch nur beim **ersten Start**: kein gültiges FAT und NVS-Flag `fmt_done` fehlt;
-- sonst nur auf Anforderung über die Weboberfläche: NVS-Flag `fmt_req` setzen → Neustart → Formatieren;
+### microSD
+
+Die Karte wird direkt (ohne Wear Levelling) per SDMMC an FatFs und esp_tinyusb
+(`tinyusb_msc_new_storage_sdmmc`) gegeben, der Host sieht ihre Sektoren. Formatieren per
+Web erzeugt **FAT32** (FatFs wählt die Clustergröße) mit Datenbereich auf
+4-MiB-Grenzen (`align = 8192` Sektoren, wie der SD-Formatter), Label `PRINTDRIVE`.
+ESP-IDF-FatFs kann **kein exFAT**: exFAT-Karten (ab Werk meist > 32 GB) erscheinen als
+„Kein Dateisystem!“ und müssen im Web auf FAT32 formatiert werden.
+
+### Formatieren
+
+`probe_and_format()` in `drive_init`, immer **vor** dem Start von USB:
+
+- automatisch nur beim **ersten Start mit internem Flash**: kein gültiges FAT und NVS-Flag
+  `fmt_done` fehlt; eine microSD-Karte wird **nie automatisch** formatiert;
+- sonst nur auf Anforderung über die Weboberfläche: NVS-Flag `fmt_req` = Medium
+  (1 = Flash, 2 = microSD) setzen → Neustart → Formatieren nur, wenn das beim Start
+  gefundene Medium dazu passt. Danach wird `fmt_req` immer gelöscht – eine Anforderung
+  für den Flash trifft also nie eine inzwischen eingelegte Karte und umgekehrt;
 - ein vorhandenes, aber defektes Dateisystem wird **nie still neu formatiert**: LCD zeigt
   „Kein Dateisystem! / Im Web formatieren“, das Laufwerk wird auch dem Host nicht angeboten.
 
@@ -134,18 +168,28 @@ Die Einstellung „Host darf schreiben“ (NVS `pd_drive/host_wr`, Default aus
 2. `POST /api/upload`: Rohdaten im Body (`application/octet-stream`), Länge = `Content-Length`.
 3. Prüfungen in `drive_upload_begin`: Name (≤ 120 Byte UTF-8, keine Steuerzeichen,
    kein `/\:*?"<>|`, nicht mit Punkt/Leerzeichen beginnend oder endend), Endung `.3mf`
-   (optional `.gcode`), Größe > 0, Zielname existiert nicht (oder overwrite), freier
+   (optional `.gcode`), Größe > 0 und < 4 GiB (FAT-Grenze; die Größe wird 64-bittig
+   gelesen, sonst `413 TOO_LARGE`), Zielname existiert nicht (oder overwrite), freier
    Platz ≥ Größe + 64 KB Reserve (die alte Datei wird erst nach Erfolg gelöscht).
 4. Daten → Temp-Datei `/data/.pd_upload.tmp` (16-KB-Blöcke). Mehr Daten als angekündigt → `INVALID_FILE`.
 5. Abschluss: Größe exakt, `fsync`; bei `.3mf` ZIP-Kopf `PK\3\4` und ZIP-End-of-Central-
-   Directory `PK\5\6` in den letzten 1024 Byte; erst dann ggf. alte Datei löschen und
-   **umbenennen**. Log `upload ok '<name>'` bzw. `upload failed '<name>': <Text>`.
+   Directory `PK\5\6` in den letzten 1024 Byte; erst dann **umbenennen** (beim Überschreiben
+   wird die alte Datei vorher in `/data/.pd_old.tmp` verschoben und erst danach gelöscht).
+   Log `upload ok '<name>'` bzw. `upload failed '<name>': <Text>`.
 6. Abbruch (Verbindung weg, 3 Timeouts à 10 s) → Temp-Datei gelöscht
    (`upload aborted '<name>' after <n> bytes`).
 7. Liegengebliebene Temp-Dateien (Stromausfall) werden bei jedem Mounten durch die App
-   gelöscht (`removing stale upload temp file (<n> bytes)`).
+   gelöscht (`removing stale upload temp file (<n> bytes)`, `removing stale previous-version file …`).
+8. Wird ein Upload schon vor oder während der Daten abgewiesen (z. B. `EXISTS`, `NO_SPACE`),
+   liest der Server den restlichen Body und verwirft ihn (`drain_body`), damit der Client
+   die Fehlerantwort erhält statt eines Verbindungsabbruchs (verifiziert: 409 `EXISTS`).
 
 Dateien mit führendem Punkt erscheinen nicht in der Liste. Es gibt nur das Wurzelverzeichnis.
+
+Der ESP-IDF-HTTP-Server bearbeitet nur **eine Anfrage gleichzeitig**: Während eines Uploads
+wird auch `/api/status` nicht beantwortet. Die Weboberfläche setzt ihr Status-Polling
+während des Uploads aus (Fortschritt im Browser aus dem gesendeten Anteil); auf dem
+Dongle zeigt das LCD den Fortschritt. Andere Clients warten bis zum Ende des Uploads.
 
 ## 5. WLAN (`pd_wifi`)
 
@@ -167,7 +211,7 @@ Antwortformat: `{"ok":bool,"code":"…","error":"<deutscher Text>"}`.
 | Methode | Pfad | Parameter | Antwort |
 |---|---|---|---|
 | GET | `/`, `/index.html` | – | Weboberfläche |
-| GET | `/api/status` | – | JSON: version, uptime_s, heap, allow_gcode, `drive{…}`, `upload{…}`, `wifi{…}` |
+| GET | `/api/status` | – | JSON: version, uptime_s, heap, allow_gcode, `drive{…}`, `medium{sd,name}`, `upload{…}`, `wifi{…}` |
 | GET | `/api/files` | – | `{"ok":true,"files":[{name,size}],"truncated":bool}` (max. 64) |
 | GET | `/api/download` | `name` | Dateiinhalt (`application/octet-stream`) |
 | GET | `/api/log` | – | letzte 8 KB Log (text/plain) |
@@ -177,7 +221,7 @@ Antwortformat: `{"ok":bool,"code":"…","error":"<deutscher Text>"}`.
 | POST | `/api/mode` | `target=usb\|app`, `force=1` | Ergebnis |
 | POST | `/api/settings/host_writable` | `value=1\|0` | Ergebnis |
 | POST | `/api/wifi` | Body (form-urlencoded) `ssid`, `pass` | `{"ok":true}`; 400 bei SSID ≠ 1–32 Zeichen oder Passwort ≠ leer/8–63 |
-| POST | `/api/format` | `confirm=FORMAT` | `{"ok":true,"restart":true}`, dann Neustart + Formatieren |
+| POST | `/api/format` | `confirm=FORMAT` | `{"ok":true,"restart":true}`, dann Neustart + Formatieren des aktuellen Mediums |
 | POST | `/api/reboot` | `mode=normal\|download` | `{"ok":true}`, dann Neustart |
 
 HTTP-Status der Ergebniscodes:
@@ -186,7 +230,9 @@ HTTP-Status der Ergebniscodes:
 |---|---|
 | `OK` | 200 |
 | `BAD_NAME`, `INCOMPLETE`, fehlende Parameter (`BAD_REQUEST`) | 400 |
+| `FORBIDDEN` (Header `X-PrintDrive` fehlt) | 403 |
 | `NOT_FOUND` | 404 |
+| `TOO_LARGE` (Datei ≥ 4 GiB) | 413 |
 | `BAD_TYPE` | 415 |
 | `INVALID_FILE` | 422 |
 | `NO_SPACE` | 507 |
@@ -196,8 +242,8 @@ HTTP-Status der Ergebniscodes:
 ## 7. LCD, LED, BOOT-Taste (`ui`)
 
 Aufbau 160×80: Kopfzeile (Zustand, rechts `WLAN`/`AP`/`----`), Zeile 1 IP oder AP-SSID,
-Zeile 2 `printdrive.local` oder `PW <AP-Passwort>`, Speicherzeile `Frei x / y` mit Balken
-(rot unter 10 % frei), Host-/Uploadzeile, Meldungszeile (6 s) bzw. `<n> Datei(en)`.
+Zeile 2 `printdrive.local` oder `PW <AP-Passwort>`, Speicherzeile `Frei x / y` (microSD:
+`SD x / y`) mit Balken (rot unter 10 % frei), Host-/Uploadzeile, Meldungszeile (6 s) bzw. `<n> Datei(en)`.
 
 | Kopfzeile | Bedingung | Farbe (auch LED, gedimmt) |
 |---|---|---|
