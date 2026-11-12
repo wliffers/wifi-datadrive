@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Browser test of the WiFi DataDrive web UI (index.html, API v3 + v4) against tools/mock_server.py.
+"""Browser test of the WiFi DataDrive web UI (index.html, API v3, v4 and v5 / 0.5.0) against tools/mock_server.py.
 
 Drives the single-file UI in a real browser engine (Playwright + the installed Edge or
 Chrome) and prints one `[OK ]` / `[FAIL]` line per check plus a summary. Exit code 1 if a
@@ -44,7 +44,14 @@ scrolling. API v4 (docs/12_api_v4.md): the encrypted drive (unlock view with wro
 lock-out countdown and recovery key, 423 DRIVE_LOCKED during use, "lock now", settings: set up with
 the recovery-key dialog, change the drive password, turn off, role `user`), the Wi-Fi scan list in the
 "add network" dialog (loading, secured / open / saved networks, search again, BUSY, odd SSIDs, manual
-entry), the new lock-out wording and the 503 AUTH_UNAVAILABLE notice.
+entry), the new lock-out wording and the 503 AUTH_UNAVAILABLE notice. API v5 (docs/15_api_v5.md, version 0.5.0):
+device clock and time zone (synced / set by the browser / not set), true UTC dates in the list and sorting by date,
+resumable uploads (automatic retries, "Fortsetzen" after three failures, RESUME_MISMATCH, the hint for an unfinished
+upload), folder upload through the folder picker (existing folders, summary), folder ZIP download (single folder, mixed
+selection, refusals WRONG_OWNER / TOO_MANY_FILES), automatic lock settings, the display language, the network drive
+card (WebDAV), the captive portal mode (/?captive=1), the HTTPS section with and without the HTTPS fields, English
+texts and narrow windows (390 / 320 px). Where the mock cannot produce a state (status without `webdav` or without the
+HTTPS fields) the test rewrites the /api/status answer inside the browser (page.route).
 
 The page is instrumented only by an init script that records toasts and dialog openings;
 index.html itself is not modified. "Failed to load resource" lines of the browser console for
@@ -66,6 +73,8 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:
@@ -274,6 +283,24 @@ class Mock:
         except urllib.error.HTTPError as e:
             return json.loads(e.read().decode("utf-8"))
 
+    def post(self, path: str, auth=ADMIN) -> dict:
+        """POST through the real API (HTTP Basic, CSRF header), parameters in the URL."""
+        req = urllib.request.Request(self.base + path, data=b"", method="POST", headers={**basic(*auth), "X-PrintDrive": "1"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            return json.loads(e.read().decode("utf-8"))
+
+    def raw(self, path: str, auth=ADMIN, method="GET", headers: dict | None = None) -> tuple:
+        """(HTTP status, body bytes) of any request (downloads, /dav/)."""
+        req = urllib.request.Request(self.base + path, method=method, headers={**basic(*auth), **(headers or {})})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+
 
 class Run:
     def __init__(self, base: str, shots: Path | None, headed: bool):
@@ -298,11 +325,28 @@ class Run:
         put("fw_bad", "falsch.bin", b"\x00" + os.urandom(80 * 1024))
         put("fw_small", "klein.bin", b"\xe9" + os.urandom(2000))
         put("fw_txt", "firmware.txt", b"\xe9" + os.urandom(80 * 1024))
+        # API v5: files for the resumable upload (256 KiB each, content differs) and folders for the folder picker
+        for key, name in (("big", "Großer Upload.txt"), ("big2", "Fortsetzen Test.txt"), ("big3", "Mismatch Test.txt"), ("big4", "Teil wieder.txt")):
+            put(key, name, os.urandom(256 * 1024))
+
+        def tree(key, top, files):
+            root = self.tmp / ("tree_" + key)
+            for rel, data in files.items():
+                p = root / top / rel
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(data)
+            self.f[key] = root / top
+        txt = lambda n: ("Inhalt %s äöü\n" % n * 900).encode("utf-8")           # about 15 KB
+        tree("tree_new", "Neuer Upload Ordner", {"a.txt": txt("a"), "Unter/b.txt": txt("b"), "Unter/Tief/c.txt": txt("c"),
+                                                 ".DS_Store": b"\0" * 64, ".versteckt/geheim.txt": b"geheim"})
+        tree("tree_exist", "Projekte", {"neu2.txt": txt("n2"), "Drachen/neu.txt": txt("n")})
+        tree("tree_fail", "Mit Fehler", {"ok.txt": txt("ok"), "leer.txt": b""})
+        tree("tree_file", "README", {"inhalt.txt": txt("i")})
 
     def check(self, name: str, cond, info=""):
         ok = bool(cond)
         self.results.append((name, ok))
-        info = str(info)
+        info = re.sub(r"\s*\n\s*", " ", str(info))
         if len(info) > 300:
             info = info[:300] + " …"
         print(f"[{'OK ' if ok else 'FAIL'}] {name} {info}".rstrip(), flush=True)
@@ -345,7 +389,7 @@ class Ctx:
         if sets:
             self.mock.set(**sets)
 
-    def open(self, hash_: str = "", **ctx_kw):
+    def open(self, hash_: str = "", query: str = "", **ctx_kw):
         """Open the page and wait until the sign-in view (or the app, with a trusted cookie) is there."""
         self.close()
         opts = dict(PROFILES[self.prof])
@@ -359,7 +403,7 @@ class Ctx:
         p.on("console", lambda m: self.console.append(f"{m.type}: {m.text}") if m.type == "error" else None)
         p.on("pageerror", lambda e: self.console.append(f"pageerror: {e}"))
         p.on("request", lambda r: self.requests.append((r.method, r.url)))
-        p.goto(self.run.base + "/" + hash_, timeout=30000)
+        p.goto(self.run.base + "/" + query + hash_, timeout=30000)
         self.wait("() => typeof S !== 'undefined' && S.auth !== ''", timeout=15000)
         return p
 
@@ -695,6 +739,8 @@ def t02a_files_and_folders(c: Ctx):
     c.check("hidden system folders are not listed", "System Volume Information" not in ui["rows"] and ".Trash-1000" not in ui["rows"])
     c.check("toolbar: new folder and upload (FAB on the phone)", ui["mkBtn"] and (ui["fab"] and not ui["upBtn"] if c.phone else ui["upBtn"] and not ui["fab"]),
             f"mk {ui['mkBtn']} up {ui['upBtn']} fab {ui['fab']}")
+    updir = c.ev("() => document.querySelector('#upDirBtn').getClientRects().length > 0")
+    c.check("folder upload button: on the desktop; not with the iPhone user agent (Safari has no folder picker)", updir != c.phone, updir)
     c.shot("files_root")
     c.overflow_check("file list root")
     nm = c.ev(JS_NAMES)
@@ -870,7 +916,8 @@ def t02c_rename_and_menu(c: Ctx):
     p.keyboard.press("Escape")
     c.check("Escape closes the menu", c.ev("() => document.querySelector('#menu').hidden"))
     c.open_menu("Projekte")
-    c.check("folder menu starts with 'Öffnen' instead of 'Herunterladen'", c.menu()["items"][0] == "Öffnen", c.menu()["items"])
+    c.check("folder menu: 'Öffnen', then 'Als ZIP herunterladen' (v5), then the usual entries",
+            c.menu()["items"] == ["Öffnen", "Als ZIP herunterladen", "Umbenennen", "Ausschneiden", "Kopieren", "Auswählen", "Löschen"], c.menu()["items"])
     p.keyboard.press("Escape")
     # rename a file
     c.act("Benchy.3mf", "ren")
@@ -1077,8 +1124,8 @@ def t03c_select_and_delete(c: Ctx):
     c.select_rows("README", "LEER.TXT")
     ui = c.ui()
     c.check("selection bar replaces the toolbar and counts", ui["selbar"] and not ui["toolbar"] and ui["selCount"] == "2 ausgewählt", ui["selCount"])
-    dl = c.ev("() => !document.querySelector('#sDl').hidden")
-    c.check("two files selected: no single-file download button", not dl)
+    dl = c.ev("() => document.querySelector('#sDl').getClientRects().length > 0")
+    c.check("two files selected: download button visible (v5: any selection downloads, one item after the other)", dl)
     c.tap("#sAll")
     c.wait("() => S.sel.size === 17")
     c.check("'Alle auswählen' selects every entry of the folder", c.ui()["selCount"] == "17 ausgewählt" and c.ev("() => document.querySelector('#sAll').disabled"), c.ui()["selCount"])
@@ -1963,11 +2010,10 @@ def t09a_unlock_view(c: Ctx):
     c.check("2nd wrong input: still free, no waiting time", ul(c)["msg"] == WRONG_PW_DE and not ul(c)["btnDisabled"], ul(c)["msg"])
     ul_submit(c, "falsches-passwort-3")
     u = ul(c)
-    if u["btnDisabled"]:
-        c.check("3rd wrong input: the text says how long to wait (5 s), button disabled", u["msg"].startswith(WRONG_PW_DE + " Nächster Versuch in ") and 3 <= secs(u["msg"]) <= 5, u["msg"])
-    else:     # the UI would show the wait if the 403 carried Retry-After; the mock (and docs/12_api_v4.md) only send it with the 429
-        c.run.info("3rd wrong input: the 403 carries no Retry-After, so the page shows no wait yet (the mock sends it only with the 429)")
-        c.check("3rd wrong input: plain wrong-password text (the wait shows with the next answer, the 429)", u["msg"] == WRONG_PW_DE, u["msg"])
+    c.check("3rd wrong input: right away the text says how long to wait (5 s), button disabled (the page asks GET /api/crypt for the wait)",
+            u["btnDisabled"] and u["msg"].startswith(WRONG_PW_DE + " Nächster Versuch in ") and 3 <= secs(u["msg"]) <= 5, u["msg"])
+    n_crypt = len([1 for m, x in c.requests if m == "GET" and x.split("?")[0].endswith("/api/crypt")])
+    c.check("after each wrong drive password the page asked GET /api/crypt (3 times so far)", n_crypt >= 3, n_crypt)
     c.shot("unlock_wait")
     if not u["btnDisabled"]:
         ul_submit(c, "falsches-passwort-4")                  # 4th input inside the wait: the device answers 429
@@ -2858,6 +2904,805 @@ def t09j_crypt_erase_damaged(c: Ctx):
     to_settings(c)
     c.check("damaged, role user: no buttons in the settings", crypt_btns(c) == [], crypt_btns(c))
     c.no_console_errors()
+
+
+# ================================================================== 10. API v5 (docs/15_api_v5.md, version 0.5.0)
+
+TZ_DE = "CET-1CEST,M3.5.0,M10.5.0/3"
+HTTPS_FIELDS = ("https", "https_active", "https_restart", "cert_sha256", "ca_sha256", "cert_expires")
+ANDROID_UA = ("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) "
+              "Chrome/126.0.0.0 Mobile Safari/537.36")
+T_LOST_R = "Verbindung unterbrochen. Der Upload lässt sich fortsetzen."
+IST = timezone(timedelta(hours=5, minutes=30))          # Asia/Kolkata: no daylight saving, half-hour offset
+
+
+def vis(c: Ctx, sel: str) -> bool:
+    return c.ev("s => { const e = document.querySelector(s); return !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden'; }", sel)
+
+
+def url_path(u: str) -> str:
+    return urllib.parse.urlsplit(u).path
+
+
+def url_q(u: str) -> dict:
+    return dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(u).query, keep_blank_values=True))
+
+
+def reqs(c: Ctx, method: str, path: str) -> list:
+    """Query parameters of every request of that method to exactly that path (in order)."""
+    return [url_q(u) for m, u in c.requests if m == method and url_path(u) == path]
+
+
+def wait_req(c: Ctx, method: str, path: str, n=1, timeout=8.0) -> bool:
+    end = time.time() + timeout
+    while time.time() < end and len(reqs(c, method, path)) < n:
+        c.page.wait_for_timeout(100)
+    return len(reqs(c, method, path)) >= n
+
+
+def route_status(c: Ctx, drop):
+    """The mock always reports `webdav` and the HTTPS fields; to see the UI of a firmware without them the answer of
+    /api/status is rewritten inside the browser (the mock itself is not changed)."""
+    def handler(route):
+        try:
+            resp = route.fetch()
+            j = resp.json()
+            for k in drop:
+                j.pop(k, None)
+            route.fulfill(response=resp, json=j)
+        except Exception:
+            try:
+                route.abort()
+            except Exception:
+                pass
+    c.page.route(lambda u: url_path(u) == "/api/status", handler)
+
+
+def to_sec(c: Ctx, sel: str, cond: str = ""):
+    """Settings view, scrolled to an element (optionally after waiting for a condition)."""
+    c.go("#einstellungen")
+    c.wait("() => !document.querySelector('#vSettings').hidden")
+    if cond:
+        c.wait(cond, None, 9000)
+    c.ev("s => { const e = document.querySelector(s); if (e) e.scrollIntoView(); }", sel)
+
+
+def clock_is(c: Ctx, tz: str, suffix: str, timeout=9000) -> bool:
+    """#sysTime shows the device time (de-DE, medium date, short time) in zone tz ('' = the browser's) plus the source."""
+    return c.wait("([tz, suf]) => { const s = S.st && S.st.time; if (!s) return false;"
+                  " const f = s.epoch > 1e9 ? new Intl.DateTimeFormat('de-DE', {dateStyle: 'medium', timeStyle: 'short', timeZone: tz || undefined}).format(s.epoch * 1000) : '–';"
+                  " return document.querySelector('#sysTime').textContent === f + ' · ' + suf; }", [tz, suffix], timeout)
+
+
+def up_done(c: Ctx, n=1, timeout=30000) -> bool:
+    return c.wait("n => S.ups.length === n && !S.working && S.ups.every(u => u.state === 'done')", n, timeout)
+
+
+def close_panel(c: Ctx):
+    if vis(c, "#upClose"):
+        c.tap("#upClose")
+    c.wait("() => document.querySelector('#uploads').hidden", None, 9000)
+
+
+def offsets(c: Ctx, path: str) -> list:
+    return [int(q.get("offset", -1)) for q in reqs(c, "POST", "/api/upload") if q.get("path") == path]
+
+
+def fdate_ist(mtime: int) -> str:
+    """What the list shows for a time stamp in a browser running in Asia/Kolkata (German texts)."""
+    if not mtime:
+        return "–"
+    d, now = datetime.fromtimestamp(mtime, IST), datetime.now(IST)
+    diff = (now.date() - d.date()).days
+    return f"Heute, {d:%H:%M}" if diff == 0 else f"Gestern, {d:%H:%M}" if diff == 1 else f"{d:%d.%m.%Y}"
+
+
+def menu_items(c: Ctx, name: str) -> list:
+    c.open_menu(name)
+    items = c.menu()["items"]
+    c.page.keyboard.press("Escape")
+    return items
+
+
+@test
+def t10a_clock_and_time_zone(c: Ctx):
+    c.start("files", wifi_count=1)
+    to_sec(c, "#timeItem", "() => !document.querySelector('#timeItem').hidden")
+    c.check("system section: clock line and time zone choice (admin)", vis(c, "#sysTime") and vis(c, "#tzSel") and c.text("#timeItem h3") == "Zeitzone"
+            and c.text("#timeItem .kv span") == "Uhrzeit des Laufwerks", c.text("#timeItem")[:80])
+    c.check("clock synced by NTP: date and time in the device's zone (Berlin) and 'aus dem Netz'", clock_is(c, "Europe/Berlin", "aus dem Netz"), c.text("#sysTime"))
+    c.check("synced clock: the page does not send its own time", not reqs(c, "POST", "/api/time"), reqs(c, "POST", "/api/time"))
+    o = c.ev("() => ({v: document.querySelector('#tzSel').value, n: document.querySelectorAll('#tzSel option').length, first: document.querySelector('#tzSel option').textContent})")
+    c.check("time zone list: 15 zones, Germany selected", o["v"] == TZ_DE and o["n"] == 15 and o["first"] == "(UTC+1) Berlin, Paris, Madrid", o)
+    c.shot("v5_clock_synced")
+    c.overflow_check("settings with clock and time zone")
+    c.clear_toasts()
+    c.page.select_option("#tzSel", "JST-9")
+    ok = c.wait_toast("Gespeichert.")
+    sent = reqs(c, "POST", "/api/settings/time")
+    c.check("choose Tokyo: POST /api/settings/time?tz=JST-9, toast 'Gespeichert.', the mock stores it",
+            ok and sent and sent[-1].get("tz") == "JST-9" and c.mock.state()["time"]["tz"] == "JST-9", f"{sent} {c.toast_texts()}")
+    c.check("the clock line follows the new zone (Tokyo)", clock_is(c, "Asia/Tokyo", "aus dem Netz"), c.text("#sysTime"))
+    # a zone outside the list (set by a script; '+' and ',' must arrive encoded)
+    other = "<+0330>-3:30"
+    r = c.mock.post("/api/settings/time?tz=" + urllib.parse.quote(other, safe=""))
+    ok = c.wait("v => document.querySelector('#tzSel').value === v", other, 9000)
+    lab = c.ev("() => document.querySelector('#tzSel').selectedOptions[0].textContent")
+    c.check("a zone outside the list (set by a script) appears as an extra entry with its POSIX text", r.get("ok") and ok and lab == other, f"{r} {lab!r}")
+    c.check("unknown zone: the clock line uses the browser's zone", clock_is(c, "", "aus dem Netz"), c.text("#sysTime"))
+    c.page.select_option("#tzSel", TZ_DE)
+    ok = c.wait("z => S.st.time.tz === z", TZ_DE, 9000)
+    c.check("back to Germany through the list", ok and c.mock.state()["time"]["tz"] == TZ_DE, c.mock.state()["time"])
+    c.no_console_errors()
+    # clock unknown: the page sends the browser's time once after signing in
+    c.start("files", clock="unsynced", wifi_count=1)
+    ok = wait_req(c, "POST", "/api/time")
+    q = reqs(c, "POST", "/api/time")
+    ep = int(q[0].get("epoch", "0")) if q else 0
+    c.check("clock unknown (epoch 0): after signing in the page sends POST /api/time?epoch= with the browser's time in UTC seconds",
+            ok and abs(ep - time.time()) < 120, q)
+    to_sec(c, "#timeItem", "() => !document.querySelector('#timeItem').hidden")
+    ok = clock_is(c, "Europe/Berlin", "vom Browser gesetzt", 12000)
+    c.check("clock set by the browser: time with 'vom Browser gesetzt', mock clock 'manual'", ok and c.mock.state()["clock"] == "manual",
+            f"{c.text('#sysTime')} {c.mock.state()['clock']}")
+    c.shot("v5_clock_browser")
+    c.mock.set(clock="unsynced")
+    ok = c.wait("() => document.querySelector('#sysTime').textContent === '– · nicht gestellt'", None, 12000)
+    c.check("clock unknown again (no NTP): '– · nicht gestellt'; the page does not send its time a second time",
+            ok and len(reqs(c, "POST", "/api/time")) == 1, f"{c.text('#sysTime')} {len(reqs(c, 'POST', '/api/time'))}")
+    c.shot("v5_clock_unset")
+    c.overflow_check("clock not set")
+    # role user: no clock controls, but the browser time is still sent (allowed for role user)
+    c.start("two_users", who=GUEST, clock="unsynced")
+    ok = wait_req(c, "POST", "/api/time") and c.wait("() => S.st && S.st.time && S.st.time.epoch > 0", None, 9000)
+    c.check("role user: POST /api/time is sent and sets the clock", ok and c.mock.state()["clock"] == "manual", c.mock.state()["clock"])
+    to_sec(c, "#s-usb")
+    c.check("role user: no clock and no time zone controls", not vis(c, "#sysTime") and not vis(c, "#tzSel"))
+    c.no_console_errors()
+
+
+@test
+def t10b_dates_and_sort(c: Ctx):
+    c.reset("files")
+    c.open(timezone_id="Asia/Kolkata")
+    c.login(ADMIN)
+    tzn = c.ev("() => Intl.DateTimeFormat().resolvedOptions().timeZone")
+    c.check("browser runs in Asia/Kolkata (UTC+5:30)", tzn in ("Asia/Kolkata", "Asia/Calcutta"), tzn)
+    ls = c.mock.ls("")
+    got = c.ev("() => Object.fromEntries([...document.querySelectorAll('#list .row')].map(r => [r.dataset.name, [r.querySelector('.date').textContent, r.querySelector('.meta').textContent]]))")
+    bad = []
+    for name in ("notizen.txt", "Getriebe_Gehäuse.gcode", "Benchy.3mf", "Würfel.3mf", "KURZNAME.GCO", "Anleitung Drucker.pdf"):
+        want = fdate_ist(ls[name]["mtime"])
+        if got.get(name, ["?"])[0] != want or not got[name][1].endswith(" · " + want):
+            bad.append(f"{name}: {got.get(name)} != {want}")
+    c.check("dates are true UTC shown in the browser's zone (UTC+5:30): 'Heute, HH:MM' / 'Gestern, HH:MM' / dd.mm.yyyy, column and meta line", not bad, bad[:3])
+    c.check("unknown time (mtime 0, README): '–' in the column, no date in the meta line", got["README"][0] == "–" and " · " not in got["README"][1], got["README"])
+    c.check("folders (mtime 0): '–' in the date column, meta line just 'Ordner'", all(got[d][0] == "–" and got[d][1] == "Ordner" for d in ROOT_DIRS), [got[d] for d in ROOT_DIRS])
+    c.shot("v5_dates_kolkata")
+    # sort by date
+    if c.phone:
+        c.page.select_option("#sortM", "mtime,-1")
+    else:
+        c.tap('.cols button[data-sort="mtime"]')
+    c.wait("() => S.sort.k === 'mtime' && S.sort.d === -1")
+    rows = c.ui()["rows"]
+    files = [n for n in rows if n not in ROOT_DIRS]
+    want = sorted(files, key=lambda n: -ls[n]["mtime"])
+    c.check("sort by date, newest first: folders stay first, then notizen.txt (5 min) ... README (unknown) last",
+            set(rows[:3]) == set(ROOT_DIRS) and files == want and files[0] == "notizen.txt" and files[-1] == "README", rows[:6])
+    if c.phone:
+        c.page.select_option("#sortM", "mtime,1")
+    else:
+        c.tap('.cols button[data-sort="mtime"]')
+    c.wait("() => S.sort.k === 'mtime' && S.sort.d === 1")
+    rows = c.ui()["rows"]
+    files = [n for n in rows if n not in ROOT_DIRS]
+    c.check("sort by date, oldest first: README (unknown) first, then KURZNAME.GCO (400 days)", set(rows[:3]) == set(ROOT_DIRS) and files[:2] == ["README", "KURZNAME.GCO"], rows[:6])
+    if not c.phone:
+        aria = c.ev("() => document.querySelector('.cols button[data-sort=\"mtime\"]').getAttribute('aria-label')")
+        c.check("date column header tells the sort direction", aria == "Geändert, aufsteigend sortiert", aria)
+    c.overflow_check("list sorted by date")
+    c.no_console_errors()
+
+
+@test
+def t10c_resume(c: Ctx):
+    c.start("files", upload_kbps=100)
+    f = c.run.f["big"]
+    data, size = f.read_bytes(), f.stat().st_size
+    c.mock.set(upload_drop_after=100000)
+    c.page.set_input_files("#picker", str(f))
+    ok1 = c.wait("() => document.querySelector('#upList').textContent.includes('Verbindung unterbrochen – neuer Versuch …')", None, 10000)
+    ok2 = c.wait("() => /Wird fortgesetzt ab \\d+ %/.test(document.querySelector('#upList').textContent)", None, 9000)
+    c.shot("v5_resume_retry")
+    done = up_done(c)
+    offs = offsets(c, f.name)
+    posts = [q for q in reqs(c, "POST", "/api/upload") if q.get("path") == f.name]
+    gets = [q for q in reqs(c, "GET", "/api/upload/resume") if q.get("path") == f.name]
+    c.check("dropped connection: 'Verbindung unterbrochen – neuer Versuch …', then 'Wird fortgesetzt ab N %'", ok1 and ok2, c.text("#upList")[:120])
+    c.check("automatic retry: saved without user action; POST offset=0, then offset = device's state (whole 4 KiB blocks, <= 100000)",
+            done and len(offs) == 2 and offs[0] == 0 and 0 < offs[1] <= 100000 and offs[1] % 4096 == 0, offs)
+    c.check("every POST carries size= of the whole file; each attempt asked GET /api/upload/resume?path=&size= first",
+            all(q.get("size") == str(size) for q in posts) and len(gets) >= 2 and all(g.get("size") == str(size) for g in gets), f"{posts} {gets}")
+    st, body = c.mock.raw("/api/download?path=" + urllib.parse.quote(f.name))
+    c.check("the stored file equals the original byte for byte", st == 200 and body == data, f"{st} {len(body)} of {size}")
+    mt, want = int(posts[0].get("mtime", "0")) if posts else 0, int(f.stat().st_mtime)
+    c.check("upload parameter mtime = lastModified in UTC seconds (no zone shift), the mock lists that time", abs(mt - want) <= 2
+            and abs(c.mock.ls("").get(f.name, {}).get("mtime", 0) - want) <= 2, f"{mt} {want}")
+    c.check("toast '1 Datei gespeichert.'", c.wait_toast("1 Datei gespeichert."), c.toast_texts())
+    close_panel(c)
+    # four drops in a row (first by the mock, then the browser aborts): 'Fortsetzen'
+    f2 = c.run.f["big2"]
+    data2 = f2.read_bytes()
+    c.mock.set(upload_drop_after=100000, upload_kbps=0)
+    n = [0]
+
+    def drop(route):
+        n[0] += 1
+        if n[0] == 1:
+            route.continue_()
+        else:
+            route.abort("connectionreset")
+    is_up = lambda u: url_path(u) == "/api/upload"
+    c.page.route(is_up, drop)
+    c.clear_toasts()
+    t0 = time.time()
+    c.page.set_input_files("#picker", str(f2))
+    ok = c.wait("() => !!document.querySelector('#upList [data-goon]')", None, 30000)
+    took = time.time() - t0
+    li = c.text("#upList")
+    c.check("connection lost 4 times (1 try + 3 retries after 1.5 / 3 / 4.5 s): 'Verbindung unterbrochen. Der Upload lässt sich fortsetzen.' and 'Fortsetzen'",
+            ok and T_LOST_R in li and c.text("#upList [data-goon]") == "Fortsetzen" and n[0] == 4 and took >= 8.5, f"{n[0]} tries, {took:.1f} s, {li[:100]}")
+    c.check("failed: panel head '1 von 1 nicht gespeichert', no 'gespeichert' toast", c.text("#upHead") == "1 von 1 nicht gespeichert"
+            and not any("gespeichert." in x for x in c.toast_texts()), f"{c.text('#upHead')} {c.toast_texts()}")
+    part = c.mock.state()["resumable"]
+    c.check("the device keeps the part that arrived (status upload.resumable)", part and part["path"] == f2.name and part["size"] == len(data2) and part["offset"] > 0, part)
+    c.check("while the panel shows the failed upload there is no extra hint above the list", not vis(c, "#resHint"))
+    c.shot("v5_resume_goon")
+    c.overflow_check("upload panel with 'Fortsetzen'")
+    c.page.unroute(is_up)
+    c.tap("#upList [data-goon]")
+    done = up_done(c)
+    offs = offsets(c, f2.name)
+    st, body = c.mock.raw("/api/download?path=" + urllib.parse.quote(f2.name))
+    c.check("'Fortsetzen': continues at the device's offset, saved, content complete", done and part and offs[-1] == part["offset"] and st == 200 and body == data2,
+            f"{offs} {st} {len(body)}")
+    c.check("after 'Fortsetzen': toast '1 Datei gespeichert.'", c.wait_toast("1 Datei gespeichert."), c.toast_texts())
+    close_panel(c)
+    # RESUME_MISMATCH: the page believes 0, the device holds 8192 bytes
+    f3 = c.run.f["big3"]
+    data3 = f3.read_bytes()
+    c.mock.set(resumable=f"{f3.name}|{len(data3)}|8192")
+    is_res = lambda u: url_path(u) == "/api/upload/resume"
+    c.page.route(is_res, lambda route: route.fulfill(status=200, content_type="application/json", body='{"ok":true,"offset":0}'))
+    c.page.set_input_files("#picker", str(f3))
+    done = up_done(c)
+    c.page.unroute(is_res)
+    offs = offsets(c, f3.name)
+    st, body = c.mock.raw("/api/download?path=" + urllib.parse.quote(f3.name))
+    c.check("RESUME_MISMATCH (409 with the device's offset 8192): the page continues there and the file is saved",
+            done and offs == [0, 8192] and st == 200 and len(body) == len(data3) and body[8192:] == data3[8192:], f"{offs} {st} {len(body)}")
+    close_panel(c)
+    # the hint for an unfinished upload (in another folder)
+    f4 = c.run.f["big4"]
+    data4 = f4.read_bytes()
+    c.mock.set(resumable=f"Projekte/{f4.name}|{len(data4)}|131072")
+    ok = c.wait("() => document.querySelector('#resHint').getClientRects().length > 0", None, 9000)
+    txt, pick = c.text("#resHint"), c.ev("() => L.de.otaPick")
+    c.check("unfinished upload in the status: hint names the file and 50 %, says how to resume, button to choose the file",
+            ok and f"Der Upload von „{f4.name}“ wurde bei 50 % unterbrochen." in txt and "Wähle dieselbe Datei noch einmal aus" in txt and c.text("#resPick") == pick, txt)
+    c.shot("v5_resume_hint")
+    c.overflow_check("hint for an unfinished upload")
+    with c.page.expect_file_chooser() as fc:
+        c.tap("#resPick")
+    fc.value.set_files(str(f4))
+    done = up_done(c)
+    q = [x for x in reqs(c, "POST", "/api/upload") if x.get("path", "").endswith(f4.name)]
+    c.check("the same file chosen in the root goes into the folder of the unfinished upload and continues at 131072",
+            done and q and q[0]["path"] == f"Projekte/{f4.name}" and q[0]["offset"] == "131072", q)
+    st, body = c.mock.raw("/api/download?path=" + urllib.parse.quote(f"Projekte/{f4.name}"))
+    c.check("stored in Projekte (not in the root), the part from byte 131072 on is the file's", f4.name in c.mock.ls("Projekte") and f4.name not in c.mock.ls("")
+            and st == 200 and body[131072:] == data4[131072:], f"{st} {len(body)}")
+    close_panel(c)
+    c.check("hint gone after the upload", c.wait("() => document.querySelector('#resHint').hidden", None, 9000))
+    # another upload first: the unfinished one is discarded
+    c.mock.set(resumable="Projekte/Weg.3mf|500000|65536")
+    c.wait("() => document.querySelector('#resHint').getClientRects().length > 0", None, 9000)
+    c.page.set_input_files("#picker", str(c.run.f["txt"]))
+    done = up_done(c)
+    close_panel(c)
+    ok = c.wait("() => document.querySelector('#resHint').hidden", None, 9000)
+    c.check("uploading a different file discards the unfinished one (status resumable null) and the hint goes away", done and ok and c.mock.state()["resumable"] is None,
+            c.mock.state()["resumable"])
+    c.no_console_errors(net=True)
+
+
+@test
+def t10d_folder_upload(c: Ctx):
+    if c.phone:
+        c.start("files")
+        c.check("iPhone user agent: no folder upload button", not vis(c, "#upDirBtn"))
+        c.reset("files")
+        c.open(user_agent=ANDROID_UA)
+        c.login(ADMIN)
+        t_ = c.ev(JS_TARGETS, ["#upDirBtn"])[0]
+        c.check("Android phone: folder upload icon in the toolbar (icon only, name 'Ordner hochladen', at least 40x40 px)",
+                not t_.get("missing") and t_["w"] >= 40 and t_["h"] >= 40 and c.ev("() => document.querySelector('#upDirBtn').getAttribute('aria-label')") == "Ordner hochladen"
+                and not vis(c, "#upDirBtn .bl"), t_)
+    else:
+        c.start("files")
+        c.check("desktop: 'Ordner hochladen' button next to 'Neuer Ordner'", vis(c, "#upDirBtn") and c.text("#upDirBtn").strip() == "Ordner hochladen", c.text("#upDirBtn"))
+    c.shot("v5_folder_button")
+    c.overflow_check("toolbar with folder upload")
+    c.mock.set(upload_kbps=40)
+    with c.page.expect_file_chooser() as fc:
+        c.tap("#upDirBtn")
+    c.check("the button opens a folder chooser (webkitdirectory)", c.ev("() => document.querySelector('#dirPicker').webkitdirectory") is True)
+    fc.value.set_files(str(c.run.f["tree_new"]))
+    ok = c.wait("() => /^„Neuer Upload Ordner“: \\d von 3 Dateien$/.test(document.querySelector('#upAllT').textContent) && !document.querySelector('#upAll').hidden", None, 10000)
+    c.check("folder upload: one line with the folder's progress ('„Neuer Upload Ordner“: n von 3 Dateien')", ok, c.text("#upAllT"))
+    c.shot("v5_folder_progress")
+    c.overflow_check("upload panel with folder progress")
+    done = up_done(c, 3, 40000)
+    mk = [q.get("path") for q in reqs(c, "POST", "/api/mkdir")]
+    c.check("folders created first, parents before children", mk == ["Neuer Upload Ordner", "Neuer Upload Ordner/Unter", "Neuer Upload Ordner/Unter/Tief"], mk)
+    top, sub, deep = c.mock.ls("Neuer Upload Ordner"), c.mock.ls("Neuer Upload Ordner/Unter"), c.mock.ls("Neuer Upload Ordner/Unter/Tief")
+    c.check("files land in their folders; hidden files (.DS_Store, .versteckt/) are left out", done and "a.txt" in top and "b.txt" in sub and "c.txt" in deep
+            and ".DS_Store" not in top and ".versteckt" not in top, f"{list(top)} {list(sub)} {list(deep)}")
+    c.check("summary: toast '3 Dateien gespeichert.', no error toast, folder in the list", c.wait_toast("3 Dateien gespeichert.") and c.wait_rows(["Neuer Upload Ordner"])
+            and not any(t["err"] for t in c.toasts()), c.toast_texts())
+    close_panel(c)
+    c.mock.set(upload_kbps=0)
+    # existing folders: 409 EXISTS counts as success
+    resp = []
+    c.page.on("response", lambda r: resp.append((r.request.method, url_path(r.url), url_q(r.url).get("path"), r.status)) if url_path(r.url) == "/api/mkdir" else None)
+    c.clear_toasts()
+    c.page.set_input_files("#dirPicker", str(c.run.f["tree_exist"]))
+    done = up_done(c, 2)
+    c.check("existing folders (mkdir answers 409 EXISTS): files go into them, no error", done and any(s == 409 for *_, s in resp) and "neu2.txt" in c.mock.ls("Projekte")
+            and "neu.txt" in c.mock.ls("Projekte/Drachen") and c.wait_toast("2 Dateien gespeichert.") and not any(t["err"] for t in c.toasts()), f"{resp} {c.toast_texts()}")
+    close_panel(c)
+    # a file that fails: summary toast
+    c.clear_toasts()
+    c.page.set_input_files("#dirPicker", str(c.run.f["tree_fail"]))
+    ok = c.wait("() => !S.working && S.ups.length === 2 && S.ups.every(u => u.state === 'done' || u.state === 'err')", None, 20000)
+    c.check("one file fails: '1 Datei gespeichert.' and the summary '„Mit Fehler“: 1 von 2 Dateien nicht gespeichert.' (error toast); the failed file is listed",
+            ok and c.wait_toast("1 Datei gespeichert.") and c.wait_toast("„Mit Fehler“: 1 von 2 Dateien nicht gespeichert.") and "leer.txt" in c.text("#upList")
+            and "Die Datei ist leer." in c.text("#upList") and "ok.txt" in c.mock.ls("Mit Fehler"), f"{c.toast_texts()} {c.text('#upList')[:80]}")
+    c.shot("v5_folder_failed")
+    close_panel(c)
+    # the folder name belongs to a file (docs/15_api_v5.md section 9: the UI should check with GET /api/files)
+    c.clear_toasts()
+    c.page.set_input_files("#dirPicker", str(c.run.f["tree_file"]))
+    ok = c.wait("() => !S.working && S.ups.length === 1 && S.ups[0].state === 'err'", None, 20000)
+    msg = c.ev("() => S.ups.length ? S.ups[0].msg : ''")
+    c.check("folder name taken by a file (README): nothing stored, the summary reports the failure", ok and c.wait_toast("„README“: 1 von 1 Dateien nicht gespeichert.")
+            and c.mock.ls("")["README"]["type"] == "file", f"{msg} {c.toast_texts()}")
+    c.run.info(f"{c.prof}: folder 'README' over a file of that name: mkdir 409 EXISTS is taken as 'folder exists' (no GET /api/files check as "
+               f"docs/15_api_v5.md section 9 describes), per-file message {msg!r}")
+    close_panel(c)
+    c.no_console_errors()
+
+
+@test
+def t10e_zip_download(c: Ctx):
+    p = c.start("files")
+    with p.expect_download(timeout=10000) as dl:
+        c.act("Projekte", "dl")
+    d = dl.value
+    names = zipfile.ZipFile(d.path()).namelist()
+    want = {"Projekte/Drachen/Drachenkopf.3mf", "Projekte/Drachen/Teile/Schwanz/Segment 01.gcode", "Projekte/Halterungen/Wandhalter.3mf", "Projekte/Drachen/Teile/"}
+    c.check("folder menu 'Als ZIP herunterladen': GET /api/zip?path=Projekte, file 'Projekte.zip' with the whole tree (entries start with 'Projekte/')",
+            "/api/zip?path=Projekte" in d.url and d.suggested_filename == "Projekte.zip" and want <= set(names) and all(n.startswith("Projekte/") for n in names),
+            f"{d.suggested_filename} {d.url} {names[:5]}")
+    with p.expect_download(timeout=10000) as dl:
+        c.act("Größen Prüfung äöü", "dl")
+    d = dl.value
+    names = zipfile.ZipFile(d.path()).namelist()
+    c.check("folder with umlauts: UTF-8 file name 'Größen Prüfung äöü.zip', UTF-8 entries", d.suggested_filename == "Größen Prüfung äöü.zip"
+            and "Größen Prüfung äöü/Zweiter Ordner/Notiz zum Drucken.txt" in names, f"{d.suggested_filename} {names[:4]}")
+    # mixed selection: a file and a folder, one after the other
+    got = []
+    p.on("download", lambda x: got.append(x))
+    c.select_rows("README", "Leerer Ordner")
+    c.check("selection of a file and a folder: download button visible", vis(c, "#sDl"))
+    c.tap("#sDl")
+    end = time.time() + 8
+    while time.time() < end and len(got) < 2:
+        p.wait_for_timeout(150)
+    names = sorted(x.suggested_filename for x in got)
+    zips = [x for x in got if x.suggested_filename.endswith(".zip")]
+    zn = zipfile.ZipFile(zips[0].path()).namelist() if zips else []
+    c.check("mixed selection: the file directly, the folder as ZIP (an empty folder gives one folder entry)", names == ["Leerer Ordner.zip", "README"] and zn == ["Leerer Ordner/"], f"{names} {zn}")
+    c.tap("#sX")
+    n_if = c.ev("() => document.querySelectorAll('iframe').length")
+    if n_if:
+        c.run.info(f"{c.prof}: after 3 successful ZIP downloads {n_if} hidden iframe(s) stay in the page (removed only in onload, which a download does not fire)")
+    c.no_console_errors()
+    # refusals: the USB device owns the drive (real refusal of the mock), TOO_MANY_FILES
+    c.ev("async () => { await fetch('/mock/set?owner=usb'); download([entry('Projekte')]); }")
+    ok = c.wait_dlg("Als ZIP herunterladen", 9000)
+    d = c.dlg()
+    c.check("ZIP while the USB device owns the drive (409 WRONG_OWNER): dialog 'Als ZIP herunterladen' with the explanation, only 'OK'",
+            ok and "Ein ZIP-Download ist nur möglich, solange die Dateiverwaltung aktiv ist." in d["body"] and d["yes"] == "OK" and c.ev("() => document.querySelector('#dNo').hidden"), d)
+    c.shot("v5_zip_wrong_owner")
+    c.overflow_check("ZIP refused dialog")
+    c.dlg_yes()
+    c.wait_dlg_closed()
+    c.mock.set(owner="app")
+    c.ev("() => refresh(true)")
+    c.wait("() => S.st.drive.owner === 'app' && S.entries !== null && document.querySelectorAll('#list .row').length > 0", None, 9000)
+    c.mock.set(fail_next="TOO_MANY_FILES@/api/zip")
+    c.act("Projekte", "dl")
+    ok = c.wait_dlg("Als ZIP herunterladen", 9000)
+    c.check("413 TOO_MANY_FILES: 'Zu viele Dateien für ein ZIP (höchstens 4096). Bitte Unterordner einzeln laden.'",
+            ok and c.dlg()["body"] == "Zu viele Dateien für ein ZIP (höchstens 4096). Bitte Unterordner einzeln laden.", c.dlg()["body"])
+    c.dlg_yes()
+    c.wait_dlg_closed()
+    c.mock.set(fail_next="WRONG_OWNER@/api/zip")
+    c.act("Leerer Ordner", "dl")
+    ok = c.wait_dlg("Als ZIP herunterladen", 9000)
+    c.check("WRONG_OWNER through the row menu: same explanation", ok and "solange die Dateiverwaltung aktiv ist" in c.dlg()["body"], c.dlg()["body"])
+    c.dlg_yes()
+    c.wait_dlg_closed()
+    c.check("after the refusals the page still works (still signed in, list there)", c.ui()["auth"] == "ok" and len(c.ui()["rows"]) == ROOT_COUNT, c.ui()["auth"])
+    c.no_console_errors()
+
+
+@test
+def t10f_autolock(c: Ctx):
+    c.start("files")
+    to_sec(c, "#cryptItem", "() => !document.querySelector('#cryptItem').hidden")
+    c.check("unencrypted drive: no automatic lock setting", not vis(c, "#alItem"))
+    c.start("crypt_enabled", crypt_kdf_ms=50)
+    to_sec(c, "#alItem", "() => !document.querySelector('#alItem').hidden")
+    o = c.ev("() => ({v: document.querySelector('#alSel').value, o: [...document.querySelectorAll('#alSel option')].map(x => [x.value, x.textContent]), det: document.querySelector('#swDet').checked,"
+             " h: document.querySelector('#alItem h3').textContent})")
+    c.check("encrypted (admin): 'Automatisch sperren' with Aus / 5 / 15 / 30 / 60 minutes / 'Eigene Zeit …', 'Aus' selected, USB switch off",
+            o["h"] == "Automatisch sperren" and o["v"] == "0" and o["o"] == [["0", "Aus"], ["5", "nach 5 Minuten"], ["15", "nach 15 Minuten"], ["30", "nach 30 Minuten"],
+                                                                         ["60", "nach 60 Minuten"], ["c", "Eigene Zeit …"]] and not o["det"], o)
+    c.check("the USB switch text", c.text("#alItem .inner + .inner .txt") == "Sperren, wenn das USB-Gerät getrennt wird", c.text("#alItem .inner + .inner .txt"))
+    c.shot("v5_autolock")
+    c.overflow_check("settings with automatic lock")
+    c.clear_toasts()
+    c.page.select_option("#alSel", "15")
+    ok = c.wait_toast("Gespeichert.")
+    q = reqs(c, "POST", "/api/settings/autolock")
+    c.check("choose 15 minutes: POST minutes=15&on_detach=0, toast, mock stores it", ok and q and q[-1] == {"minutes": "15", "on_detach": "0"}
+            and c.mock.state()["autolock"]["minutes"] == 15, f"{q} {c.toast_texts()}")
+    # custom time
+    n0 = len(reqs(c, "POST", "/api/settings/autolock"))
+    c.page.select_option("#alSel", "c")
+    ok = c.wait_dlg("Automatisch sperren")
+    d = c.dlg()
+    c.check("'Eigene Zeit …': dialog with 'Minuten (1 bis 1440)', prefilled with the current 15", ok and d["fields"] and d["fields"][0]["label"] == "Minuten (1 bis 1440)"
+            and d["fields"][0]["value"] == "15" and d["yes"] == "Speichern", d)
+    c.shot("v5_autolock_custom")
+    c.overflow_check("custom minutes dialog")
+    for v in ("0", "1441", "abc", "2.5", "-5", ""):
+        c.fill_dlg(v)
+        c.dlg_yes()
+        c.wait_derr()
+        c.check(f"custom minutes {v!r}: 'Bitte eine ganze Zahl von 1 bis 1440 eingeben.'", c.dlg()["err"] == "Bitte eine ganze Zahl von 1 bis 1440 eingeben." and c.dlg()["open"], c.dlg()["err"])
+    c.check("invalid inputs sent nothing", len(reqs(c, "POST", "/api/settings/autolock")) == n0)
+    c.fill_dlg("90")
+    c.clear_toasts()
+    c.dlg_yes()
+    ok = c.wait_dlg_closed() and c.wait_toast("Gespeichert.")
+    c.wait("() => document.querySelector('#alSel').value === '90'", None, 9000)
+    sel = c.ev("() => [document.querySelector('#alSel').value, document.querySelector('#alSel').selectedOptions[0].textContent]")
+    c.check("90 minutes saved: mock 90, the list shows 'nach 90 Minuten' selected", ok and c.mock.state()["autolock"]["minutes"] == 90 and sel == ["90", "nach 90 Minuten"], sel)
+    n1 = len(reqs(c, "POST", "/api/settings/autolock"))
+    c.page.select_option("#alSel", "c")
+    c.wait_dlg("Automatisch sperren")
+    c.dlg_no()
+    c.wait_dlg_closed()
+    ok = c.wait("() => document.querySelector('#alSel').value === '90'", None, 5000)
+    c.check("cancel the custom dialog: list back at 90, nothing sent", ok and len(reqs(c, "POST", "/api/settings/autolock")) == n1, c.ev("() => document.querySelector('#alSel').value"))
+    c.clear_toasts()
+    c.tap("label.switch:has(#swDet)")
+    ok = c.wait_toast("Gespeichert.")
+    q = reqs(c, "POST", "/api/settings/autolock")
+    c.check("USB switch on: POST minutes=90&on_detach=1, mock on_detach true, minutes kept", ok and q[-1] == {"minutes": "90", "on_detach": "1"}
+            and c.mock.state()["autolock"] == {**c.mock.state()["autolock"], "minutes": 90, "on_detach": True}, q[-1:])
+    # the automatic lock strikes
+    c.page.select_option("#alSel", "5")
+    c.wait("() => S.st.autolock.minutes === 5", None, 9000)
+    c.go("#/")
+    c.wait("() => S.entries !== null", None, 9000)
+    c.clear_toasts()
+    c.mock.set(idle_s=301)
+    ok = wait_unlock_view(c, True, 12000)
+    c.check("5 minutes without file access (mock idle_s=301): the page shows the unlock view and the 'locked' toast", ok and c.wait_toast(T_LOCKED_DONE), c.toast_texts())
+    to_sec(c, "#alItem")
+    c.check("locked (still encrypted): the setting stays available for the admin", vis(c, "#alItem"))
+    c.no_console_errors()
+    c.start("crypt_enabled", who=GUEST, crypt_kdf_ms=50)
+    to_sec(c, "#cryptItem", "() => !document.querySelector('#cryptItem').hidden")
+    c.check("role user: no automatic lock setting", not vis(c, "#alItem"))
+    c.start("crypt_damaged")
+    to_sec(c, "#cryptItem", "() => !document.querySelector('#cryptItem').hidden")
+    c.check("damaged key area: no automatic lock setting", not vis(c, "#alItem"))
+    c.no_console_errors()
+
+
+@test
+def t10g_display_language(c: Ctx):
+    c.reset("two_users")
+    c.open()
+    c.tap("#loginForm [data-lang]")
+    c.wait("() => lang === 'en'")
+    c.login(ADMIN)
+    ok = wait_req(c, "POST", "/api/settings/lang")
+    q = reqs(c, "POST", "/api/settings/lang")
+    c.check("English chosen on the sign-in page: after signing in POST /api/settings/lang?value=en, the mock's display language follows",
+            ok and q[-1] == {"value": "en"} and c.mock.state()["lang"] == "en", q)
+    to_sec(c, "#s-gen")
+    c.check("language item notes that it also applies to the display", vis(c, "#langX") and c.text("#langX") == "Also applies to the display on the stick.", c.text("#langX"))
+    c.tap('#langSeg button[data-v="de"]')
+    c.wait("() => lang === 'de'")
+    ok = wait_req(c, "POST", "/api/settings/lang", 2)
+    q = reqs(c, "POST", "/api/settings/lang")
+    c.check("switching to Deutsch in the settings: POST value=de, mock 'de', note in German", ok and q[-1] == {"value": "de"} and c.mock.state()["lang"] == "de"
+            and c.text("#langX") == "Gilt auch für das Display am Stick.", q)
+    c.tap('#langSeg button[data-v="de"]')
+    c.page.wait_for_timeout(800)
+    c.check("choosing the language that is already set sends nothing", len(reqs(c, "POST", "/api/settings/lang")) == 2, reqs(c, "POST", "/api/settings/lang"))
+    c.no_console_errors()
+    # no stored choice: the display language is left alone
+    c.reset("two_users")
+    c.mock.post("/api/settings/lang?value=en")
+    c.open()
+    c.login(ADMIN)
+    c.page.wait_for_timeout(1500)
+    c.check("German browser without a stored choice: no POST /api/settings/lang, the display keeps 'en'", not reqs(c, "POST", "/api/settings/lang") and c.mock.state()["lang"] == "en",
+            reqs(c, "POST", "/api/settings/lang"))
+    # role user may set it too
+    c.reset("two_users")
+    c.open()
+    c.tap("#loginForm [data-lang]")
+    c.wait("() => lang === 'en'")
+    c.login(GUEST)
+    ok = wait_req(c, "POST", "/api/settings/lang") and c.wait("() => S.st && S.st.lang === 'en'", None, 9000)
+    c.check("role user: the display language follows the choice as well", ok and c.mock.state()["lang"] == "en", c.mock.state()["lang"])
+    c.no_console_errors()
+
+
+@test
+def t10h_network_drive(c: Ctx):
+    c.start("two_users", wifi_count=1)
+    to_sec(c, "#davAddr", "() => document.querySelector('#davAddr').textContent !== '–'")
+    lines = c.ev("() => document.querySelector('#davAddr').innerText.split('\\n').map(s => s.trim()).filter(Boolean)")
+    c.check("network drive card: title, both addresses (name.local and IP) with /dav/", c.ev("() => document.querySelector('#davAddr').closest('.item').querySelector('h3').textContent") == "Als Netzlaufwerk verbinden"
+            and lines == ["http://datadrive-mock.local/dav/", "http://192.0.2.152/dav/"], lines)
+    how = c.text("#davHow")
+    c.check("instructions for Windows and phones (tools/webdav script, iPhone 'Dateien' cannot)", "Windows:" in how and "tools/webdav" in how and "Handy:" in how, how[:80])
+    c.check("switch shown because the status has 'webdav' (on)", vis(c, "label.switch:has(#swDav)") and c.ev("() => document.querySelector('#swDav').checked"))
+    c.shot("v5_dav_card")
+    c.overflow_check("network drive card")
+    c.clear_toasts()
+    c.tap("label.switch:has(#swDav)")
+    ok = c.wait_toast("Gespeichert.")
+    st, _ = c.mock.raw("/dav/", method="OPTIONS")
+    c.check("switch off: POST /api/settings/webdav?value=0, toast, /dav/ answers 404", ok and reqs(c, "POST", "/api/settings/webdav")[-1] == {"value": "0"}
+            and c.mock.state()["webdav"] is False and st == 404 and not c.ev("() => document.querySelector('#swDav').checked"), f"{st} {c.toast_texts()}")
+    c.clear_toasts()
+    c.tap("label.switch:has(#swDav)")
+    ok = c.wait_toast("Gespeichert.")
+    st, _ = c.mock.raw("/dav/", method="OPTIONS")
+    c.check("switch on again: /dav/ answers 200", ok and c.mock.state()["webdav"] is True and st == 200, st)
+    c.no_console_errors()
+    # role user: no network section, no switch
+    c.start("two_users", who=GUEST)
+    to_sec(c, "#s-usb")
+    c.check("role user: network section and switch not shown", not vis(c, "#s-net") and not vis(c, "label.switch:has(#swDav)"))
+    # firmware without the switch: the field is missing
+    c.reset("two_users", wifi_count=1)
+    c.open()
+    route_status(c, ("webdav",))
+    c.login(ADMIN)
+    to_sec(c, "#davAddr", "() => document.querySelector('#davAddr').textContent !== '–'")
+    c.check("status without 'webdav': card with the addresses, but no switch", vis(c, "#davAddr") and not vis(c, "label.switch:has(#swDav)") and "/dav/" in c.text("#davAddr"))
+    c.overflow_check("network drive card without switch")
+    c.no_console_errors()
+
+
+@test
+def t10i_https_section(c: Ctx):
+    c.start("two_users", wifi_count=1)
+    to_sec(c, "#s-sec", "() => !document.querySelector('#s-sec').hidden")
+    c.check("status with the HTTPS fields: section 'Sicherheit' and its chip are shown, state 'Aus'", vis(c, "#s-sec") and vis(c, "#secChip") and c.text("#secChip") == "Sicherheit"
+            and c.text("#httpsState") == "Aus: Passwörter und Dateien gehen lesbar durchs WLAN." and not c.ev("() => document.querySelector('#swHttps').checked"), c.text("#httpsState"))
+    c.tap("label.switch:has(#swHttps)")
+    ok = c.wait_dlg("HTTPS einschalten?")
+    c.check("switch: confirmation 'HTTPS einschalten?' with 'Einschalten'", ok and c.dlg()["yes"] == "Einschalten", c.dlg()["title"])
+    c.dlg_yes()
+    ok = c.wait_dlg("Jetzt neu starten?")
+    c.check("after saving: offer to restart now", ok and c.dlg()["no"] == "Später", c.dlg()["title"])
+    c.clear_toasts()
+    c.dlg_no()
+    ok = c.wait_toast("Gespeichert. Wirksam nach dem nächsten Neustart.") and c.wait("() => !document.querySelector('#httpsPend').hidden", None, 9000)
+    st = c.mock.state()["status"]
+    c.check("'Später': toast, pending notice, mock setting on (restart needed), fingerprints shown", ok and st["https"] is True and st["https_restart"] is True
+            and c.text("#fpCa") not in ("", "–"), f"{st.get('https')} {st.get('https_restart')} {c.text('#fpCa')[:20]}")
+    c.shot("v5_https_pending")
+    c.overflow_check("HTTPS section")
+    c.no_console_errors()
+    # firmware built without PD_HTTPS_OPTION: the fields are missing
+    c.run.info("the mock always reports the HTTPS fields (no switch for a build without PD_HTTPS_OPTION); the test removes them from /api/status in the browser")
+    c.reset("two_users", wifi_count=1)
+    c.open()
+    route_status(c, HTTPS_FIELDS)
+    c.login(ADMIN)
+    to_sec(c, "#s-sys", "() => document.querySelector('#sysVer').textContent !== '–'")
+    c.check("status without the HTTPS fields: no 'Sicherheit' section and no chip", not vis(c, "#s-sec") and not vis(c, "#secChip"))
+    tabs = c.ev("() => [...document.querySelectorAll('.tabs a')].filter(a => a.getClientRects().length).map(a => a.textContent)")
+    c.check("section chips without HTTPS", tabs == ["Allgemein", "Vertraute Geräte", "Netzwerk", "Speicher & USB", "Benutzer", "System"], tabs)
+    c.overflow_check("settings without HTTPS")
+    c.no_console_errors()
+
+
+@test
+def t10j_captive(c: Ctx):
+    c.reset("files")
+    c.open(query="?captive=1")
+    loc = c.ev("() => location.pathname + location.search")
+    c.check("captive sheet (/?captive=1): address cleaned to '/', sign-in view with the hint about the phone's sign-in window",
+            loc == "/" and vis(c, "#cpLogin") and c.text("#cpLogin").startswith("Du bist im Anmeldefenster des Telefons.") and c.ev("() => document.documentElement.classList.contains('cap')"),
+            f"{loc} {c.text('#cpLogin')[:50]}")
+    c.shot("v5_captive_login")
+    c.overflow_check("captive sign-in")
+    c.login(ADMIN)
+    hint = c.text("#cpHint")
+    c.check("signed in: hint at the top with the link 'Zur WLAN-Einrichtung' (admin)", vis(c, "#cpHint") and "Die WLAN-Einrichtung klappt hier." in hint and c.text("#cpHint a") == "Zur WLAN-Einrichtung", hint[:80])
+    ui = c.ui()
+    c.check("captive: no upload buttons (upload, folder upload, FAB)", not ui["upBtn"] and not ui["fab"] and not vis(c, "#upDirBtn"), f"up {ui['upBtn']} fab {ui['fab']}")
+    c.check("captive: file menu without 'Herunterladen'", menu_items(c, "README") == ["Umbenennen", "Ausschneiden", "Kopieren", "Auswählen", "Löschen"])
+    c.check("captive: folder menu without 'Als ZIP herunterladen'", menu_items(c, "Projekte") == ["Öffnen", "Umbenennen", "Ausschneiden", "Kopieren", "Auswählen", "Löschen"])
+    c.select_rows("README")
+    c.check("captive: no download button in the selection bar", not vis(c, "#sDl"))
+    c.tap("#sX")
+    c.mock.set(resumable="Projekte/Teil.3mf|500000|65536")
+    c.page.wait_for_timeout(3500)
+    c.check("captive: no hint for an unfinished upload (choosing a file is not possible)", not vis(c, "#resHint") and c.ev("() => S.st.upload.resumable !== null"))
+    c.shot("v5_captive_files")
+    c.overflow_check("captive file view")
+    c.tap("#cpHint a")
+    ok = c.wait("() => !document.querySelector('#vSettings').hidden", None, 6000)
+    c.check("'Zur WLAN-Einrichtung' opens the settings", ok)
+    c.no_console_errors()
+    # setup access point: add the home network inside the sheet
+    c.reset("ap_setup", scan_ms=200)
+    c.open(query="?captive=1")
+    c.login(ADMIN)
+    c.check("ap_setup + captive: hint shown, the USB view offers no upload", vis(c, "#cpHint") and not vis(c, "#lockedUp"))
+    to_sec(c, "#s-net")
+    c.tap("#wifiAdd")
+    c.wait_dlg("WLAN hinzufügen")
+    c.fill_dlg("Heimnetz", "geheim1234")
+    c.dlg_yes()
+    ok = c.wait("() => document.querySelector('#dlg').open && document.querySelector('#dBody').textContent.includes('Dieses Fenster trennt sich gleich.')", None, 9000)
+    d = c.dlg()
+    c.check("network added in the sheet: the note stays on screen (dialog, only 'OK'): saved, reconnecting, switch to the home Wi-Fi",
+            ok and "„Heimnetz“ gespeichert." in d["body"] and "ins Heim-WLAN wechseln" in d["body"] and d["yes"] == "OK" and c.ev("() => document.querySelector('#dNo').hidden"), d["body"][:120])
+    c.shot("v5_captive_added")
+    c.overflow_check("captive note after adding a network")
+    c.dlg_yes()
+    c.wait_dlg_closed()
+    c.no_console_errors(net=True)
+    # role user: hint without the link
+    c.reset("two_users")
+    c.open(query="?captive=1")
+    c.login(GUEST)
+    c.check("role user in the sheet: hint without the setup link", vis(c, "#cpHint") and not c.ev("() => !!document.querySelector('#cpHint a')"))
+    c.no_console_errors()
+
+
+@test
+def t10k_v5_english_and_layout(c: Ctx):
+    c.reset("crypt_enabled", crypt_kdf_ms=50, wifi_count=1)
+    c.open(locale="en-GB")
+    c.login(ADMIN)
+    c.mock.set(resumable="Projekte/Big part.3mf|1048576|262144")
+    ok = c.wait("() => document.querySelector('#resHint').getClientRects().length > 0", None, 9000)
+    r = c.ev(JS_UNTRANSLATED)
+    c.check("English hint for an unfinished upload, no German leftovers", ok and "The upload of “Big part.3mf” stopped at 25 %." in c.text("#resHint") and not r["bad"], f"{c.text('#resHint')[:70]} {r['bad']}")
+    c.check("English folder menu: 'Download as ZIP'", menu_items(c, "Projekte")[:2] == ["Open", "Download as ZIP"])
+    if not c.phone:
+        c.check("English folder upload button", c.text("#upDirBtn").strip() == "Upload folder", c.text("#upDirBtn"))
+    c.mock.set(fail_next="TOO_MANY_FILES@/api/zip")
+    c.act("Projekte", "dl")
+    ok = c.wait_dlg("Download as ZIP", 9000)
+    r = c.ev(JS_UNTRANSLATED)
+    c.check("English ZIP refusal", ok and c.dlg()["body"] == "Too many files for one ZIP (at most 4096). Please download the subfolders one by one." and not r["bad"], f"{c.dlg()['body']} {r['bad']}")
+    c.dlg_yes()
+    c.wait_dlg_closed()
+    to_sec(c, "#alItem", "() => !document.querySelector('#alItem').hidden && !document.querySelector('#timeItem').hidden")
+    r = c.ev(JS_UNTRANSLATED)
+    o = c.ev("() => [...document.querySelectorAll('#alSel option')].map(x => x.textContent)")
+    c.check("English settings v5: automatic lock, clock, network drive, display note; no German leftovers or raw keys",
+            c.text("#alItem h3") == "Lock automatically" and o == ["Off", "after 5 minutes", "after 15 minutes", "after 30 minutes", "after 60 minutes", "Custom time …"]
+            and c.text("#sysTime").endswith(" · from the network") and c.text("#langX") == "Also applies to the display on the stick."
+            and "Connect as a network drive" in c.text("#s-net") and c.text("#timeItem h3") == "Time zone" and not r["bad"], f"{o} {c.text('#sysTime')} {r['bad']}")
+    c.shot("v5_settings_en", full=True)
+    c.page.select_option("#alSel", "c")
+    ok = c.wait_dlg("Lock automatically")
+    c.fill_dlg("0")
+    c.dlg_yes()
+    c.wait_derr()
+    r = c.ev(JS_UNTRANSLATED)
+    c.check("English custom minutes dialog", ok and c.dlg()["fields"][0]["label"] == "Minutes (1 to 1440)" and c.dlg()["err"] == "Please enter a whole number from 1 to 1440." and not r["bad"],
+            f"{c.dlg()['err']} {r['bad']}")
+    c.dlg_no()
+    c.wait_dlg_closed()
+    c.mock.set(clock="unsynced")
+    c.check("English: clock not set", c.wait("() => document.querySelector('#sysTime').textContent === '– · not set'", None, 12000), c.text("#sysTime"))
+    # English upload messages (the browser aborts every upload: 1 try + 3 retries)
+    c.go("#/")
+    c.wait("() => S.entries !== null", None, 9000)
+    is_up = lambda u: url_path(u) == "/api/upload"
+    c.page.route(is_up, lambda route: route.abort("connectionreset"))
+    c.page.set_input_files("#picker", str(c.run.f["txt"]))
+    ok1 = c.wait("() => document.querySelector('#upList').textContent.includes('Connection lost — trying again …')", None, 9000)
+    ok2 = c.wait("() => !!document.querySelector('#upList [data-goon]')", None, 25000)
+    r = c.ev(JS_UNTRANSLATED)
+    c.check("English upload retry texts: 'Connection lost — trying again …', then 'Connection lost. The upload can be resumed.' and 'Resume'",
+            ok1 and ok2 and "Connection lost. The upload can be resumed." in c.text("#upList") and c.text("#upList [data-goon]") == "Resume" and not r["bad"], f"{c.text('#upList')[:90]} {r['bad']}")
+    c.page.unroute(is_up)
+    c.tap("#upClose")
+    # a resume that keeps failing with RESUME_MISMATCH (4 answers without a usable offset): the message must be English
+    dev_text = "Der Upload kann an dieser Stelle nicht fortgesetzt werden."
+    c.page.route(is_up, lambda route: route.fulfill(status=409, content_type="application/json",
+                                                    body=json.dumps({"ok": False, "code": "RESUME_MISMATCH", "error": dev_text})))
+    c.page.set_input_files("#picker", str(c.run.f["odd"]))
+    ok = c.wait("() => S.ups.length === 1 && S.ups[0].state === 'err'", None, 15000)
+    msg = c.ev("() => S.ups.length ? S.ups[0].msg : ''")
+    n_mis = len([1 for q in reqs(c, "POST", "/api/upload") if q.get("path") == c.run.f["odd"].name])
+    c.check("RESUME_MISMATCH that does not resolve (1 + 3 tries): error in English, not the device's German text", ok and n_mis == 4 and msg and dev_text not in msg,
+            f"{n_mis} tries, {msg!r}")
+    c.page.unroute(is_up)
+    c.tap("#upClose")
+    c.no_console_errors(net=True)
+    # English captive hint
+    c.reset("files")
+    c.open(query="?captive=1", locale="en-GB")
+    r = c.ev(JS_UNTRANSLATED)
+    c.check("English captive hint on the sign-in view", c.text("#cpLogin").startswith("You’re in the phone’s sign-in window.") and not r["bad"], f"{c.text('#cpLogin')[:50]} {r['bad']}")
+    # narrow windows
+    for vw, vh in ((390, 844), (320, 568)):
+        c.reset("crypt_enabled", crypt_kdf_ms=50, wifi_count=1)
+        c.open("", viewport={"width": vw, "height": vh})
+        c.login(ADMIN)
+        c.mock.set(resumable="Projekte/Ein ziemlich langer Name für ein unterbrochenes Teil.3mf|1048576|262144")
+        c.wait("() => document.querySelector('#resHint').getClientRects().length > 0", None, 9000)
+        c.overflow_check(f"{vw} px wide: hint for an unfinished upload")
+        c.ev("() => { S.ups.push({id: 9999, file: new File(['x'], 'x.txt'), name: 'Überlanger Dateiname eines abgebrochenen Uploads mit Fortsetzen.3mf', dir: '', size: 1,"
+             " state: 'err', msg: t('upLostR'), resume: true, pct: 37}); renderUploads(); }")
+        c.overflow_check(f"{vw} px wide: upload panel with 'Fortsetzen'")
+        c.shot(f"w{vw}_v5_upload_panel")
+        c.ev("() => clearUps()")
+        c.open_menu("Projekte")
+        c.overflow_check(f"{vw} px wide: folder menu with 'Als ZIP herunterladen'")
+        c.page.keyboard.press("Escape")
+        to_sec(c, "#alItem", "() => !document.querySelector('#alItem').hidden && !document.querySelector('#timeItem').hidden")
+        c.overflow_check(f"{vw} px wide: settings (automatic lock)")
+        c.ev("() => document.querySelector('#s-net').scrollIntoView()")
+        c.overflow_check(f"{vw} px wide: settings (network drive)")
+        c.ev("() => document.querySelector('#timeItem').scrollIntoView()")
+        c.overflow_check(f"{vw} px wide: settings (clock and time zone)")
+        c.shot(f"w{vw}_v5_settings")
+        c.page.select_option("#alSel", "c")
+        c.wait_dlg("Automatisch sperren")
+        c.overflow_check(f"{vw} px wide: custom minutes dialog")
+        c.dlg_no()
+        c.wait_dlg_closed()
+        c.reset("files")
+        c.open("", query="?captive=1", viewport={"width": vw, "height": vh})
+        c.overflow_check(f"{vw} px wide: captive sign-in")
+        c.login(ADMIN)
+        c.overflow_check(f"{vw} px wide: captive file view")
+        c.shot(f"w{vw}_v5_captive")
+    c.no_console_errors(net=True)
 
 
 # ================================================================== main

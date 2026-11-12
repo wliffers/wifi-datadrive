@@ -1012,6 +1012,7 @@ de: {
     "pw.BAD_LOGIN": "Das aktuelle Passwort stimmt nicht.",
     "up.NOT_FOUND": "Der Zielordner existiert nicht mehr – nicht hochgeladen.",
     "mk.NOT_FOUND": "Der übergeordnete Ordner existiert nicht mehr.",
+    "up.RESUME_MISMATCH": "Der Upload ließ sich nicht fortsetzen. Bitte die Datei noch einmal hochladen.",
     "zip.TOO_MANY_FILES": "Zu viele Dateien für ein ZIP (höchstens 4096). Bitte Unterordner einzeln laden.", "zip.TOO_LARGE": "Der Ordner ist zu groß für ein ZIP (höchstens 4 GB). Bitte Unterordner einzeln laden.",
     "paste.BAD_NAME": "Ein Ordner lässt sich nicht in sich selbst einfügen, und Pfade dürfen höchstens 8 Ebenen tief sein.",
     "paste.NOT_FOUND": "Das Element oder der Zielordner existiert nicht mehr.",
@@ -1312,6 +1313,7 @@ en: {
     "pw.BAD_LOGIN": "The current password is wrong.",
     "up.NOT_FOUND": "The target folder no longer exists — not uploaded.",
     "mk.NOT_FOUND": "The parent folder no longer exists.",
+    "up.RESUME_MISMATCH": "The upload could not be resumed. Please upload the file again.",
     "zip.TOO_MANY_FILES": "Too many files for one ZIP (at most 4096). Please download the subfolders one by one.", "zip.TOO_LARGE": "The folder is too large for one ZIP (at most 4 GB). Please download the subfolders one by one.",
     "paste.BAD_NAME": "A folder can’t be pasted into itself, and paths can be at most 8 levels deep.",
     "paste.NOT_FOUND": "The item or the target folder no longer exists.",
@@ -2146,6 +2148,7 @@ function download(items){
       if (j && !j.ok) { authFail(j); if (S.auth === "ok") errBox(t("zipDl"), j.code === "WRONG_OWNER" ? t("zipNo") : errText(j, "zip")); }
     };
     document.body.appendChild(f);
+    setTimeout(() => f.remove(), 120000);   // a started download fires no onload: do not pile up frames
   }, n * 1500));
 }
 const BAD_CHARS = /[\/\\:*?"<>|\x00-\x1f]/;
