@@ -1,5 +1,6 @@
 #include "auth.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include "esp_log.h"
@@ -7,27 +8,36 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "lwip/sockets.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/md.h"
 #include "mbedtls/pkcs5.h"
 #include "mbedtls/platform_util.h"
 #include "mbedtls/sha256.h"
 #include "nvs.h"
+#include "sdkconfig.h"
 
 // Authentication (API contract v3, section 2). Security notes:
 // - Passwords and session tokens are never logged or stored in plain text. Buffers that held
 //   them are wiped with mbedtls_platform_zeroize().
 // - Hashes, tokens and cached Basic digests are compared in constant time.
 // - Every header is length-checked before it is copied; oversize input is rejected.
-// - Fail closed: if the user database cannot be loaded, admin/admin is used in RAM only;
-//   there is no code path that grants access without a verified password or session.
+// - Fail closed: if a stored user database exists but cannot be read or validated, every login
+//   and every protected request is refused (503 AUTH_UNAVAILABLE) until the BOOT button reset
+//   (auth_reset_users) writes a fresh one. Only a missing database (first start) creates
+//   admin/admin. There is no code path that grants access without a verified password or session.
+// - Lock-out per peer address (5 failures -> 30 s, doubling up to 15 min), reset only by a
+//   verified password from the same peer, plus a global cap against distributed guessing.
+// - Trusted devices carry the epoch of their user; any password/role change, deletion or a
+//   failed device removal gives the user a new epoch, so stale NVS copies are never accepted.
 
 static const char *TAG = "auth";
 
 #define NVS_NS          "pd_auth"
 #define NVS_KEY_USERS   "users"
 #define DB_MAGIC        0x31554450u   // "PDU1"
-#define DB_VERSION      1
+#define DB_VERSION_1    1             // firmware up to 0.3.0 stage 2: no epoch (migrated at load)
+#define DB_VERSION      2
 #define SALT_LEN        16
 #define HASH_LEN        32
 #define PBKDF2_ROUNDS   2000
@@ -35,8 +45,24 @@ static const char *TAG = "auth";
 
 #define SESSIONS_MAX    8
 #define SESSION_IDLE_US (12LL * 3600 * 1000000)
-#define LOCK_FAILS      5
-#define LOCK_US         (30LL * 1000000)
+
+// Lock-out per peer.
+#define PEERS_MAX           16
+#define PEER_LOCK_FAILS     5                         // consecutive failures -> lock-out
+#define PEER_LOCK_BASE_US   (30LL * 1000000)          // first lock-out, doubled on each further one
+#define PEER_LOCK_MAX_US    (15LL * 60 * 1000000)
+#define RECENT_SUCCESS_US   (12LL * 3600 * 1000000)   // exempt from the global cap
+// Global cap: more than GLOBAL_FAILS failures within GLOBAL_WINDOW_US -> password checks of
+// peers without a recent success are refused for GLOBAL_LOCK_US.
+#define GLOBAL_FAILS        30
+#define GLOBAL_WINDOW_US    (60LL * 1000000)
+#define GLOBAL_LOCK_US      (30LL * 1000000)
+
+// Trusted devices: flash wear limits for creating device records.
+#define DEVICES_PER_USER    4
+#define DEV_WRITE_GAP_US    (10LL * 1000000)
+#define DEV_WRITES_PER_HOUR 20
+#define DEV_WRITE_WINDOW_US (3600LL * 1000000)
 
 // Longest legal Basic header: "Basic " + base64(24 + 1 + 64 bytes) = 6 + 120 chars. Allow some
 // slack for extra spaces; anything longer cannot be valid and is rejected without decoding.
@@ -58,20 +84,40 @@ typedef struct {
     uint8_t flags;                    // FLAG_*
     uint8_t salt[SALT_LEN];
     uint8_t hash[HASH_LEN];
+} __attribute__((packed)) user_rec_v1_t;
+
+typedef struct {
+    uint32_t magic;
+    uint8_t version;                  // DB_VERSION_1
+    uint8_t count;
+    uint8_t reserved[2];
+    user_rec_v1_t users[AUTH_USERS_MAX];
+} __attribute__((packed)) user_db_v1_t;
+
+typedef struct {
+    char name[AUTH_NAME_MAX + 1];
+    uint8_t role;                     // ROLE_V_*
+    uint8_t flags;                    // FLAG_*
+    uint8_t salt[SALT_LEN];
+    uint8_t hash[HASH_LEN];
+    uint32_t epoch;                   // random, never 0; new on password/role change and re-creation
 } __attribute__((packed)) user_rec_t;
 
 typedef struct {
     uint32_t magic;
-    uint8_t version;
+    uint8_t version;                  // DB_VERSION
     uint8_t count;
     uint8_t reserved[2];
     user_rec_t users[AUTH_USERS_MAX];
 } __attribute__((packed)) user_db_t;
 
+_Static_assert(sizeof(user_db_v1_t) != sizeof(user_db_t), "layouts must be distinguishable by size");
+
 // Trusted devices (contract 2.2a): persistent sessions. Only SHA-256(token) is stored.
+// Version 1 records (no epoch) are discarded at load.
 #define NVS_KEY_DEVICES "devices"
 #define DEV_MAGIC       0x31445044u   // "PDD1"
-#define DEV_VERSION     1
+#define DEV_VERSION     2
 
 typedef struct {
     uint8_t used;
@@ -79,6 +125,7 @@ typedef struct {
     char user[AUTH_NAME_MAX + 1];
     char label[AUTH_DEVICE_LABEL_MAX + 1];
     uint32_t seq;                     // creation order: the lowest is the oldest
+    uint32_t epoch;                   // must equal the user's epoch, else the record is invalid
 } __attribute__((packed)) device_rec_t;
 
 typedef struct {
@@ -104,18 +151,42 @@ typedef struct {
     uint8_t digest[32];               // SHA-256 of the last verified Authorization header value
 } basic_cache_t;
 
+/** Failure bookkeeping of one peer address (IPv4 as IPv4-mapped IPv6). */
+typedef struct {
+    bool used;
+    bool has_success;                 // a password was verified from this peer (success_us valid)
+    uint8_t addr[16];
+    uint8_t fails;                    // consecutive failures since the last lock-out / success
+    uint8_t lockouts;                 // lock-outs since the last success (doubles the duration)
+    int64_t lock_until_us;            // locked while now < lock_until_us
+    int64_t last_seen_us;             // LRU replacement
+    int64_t success_us;
+} peer_t;
+
 static SemaphoreHandle_t s_mutex;
 static StaticSemaphore_t s_mutex_buf;
 static bool s_ready;
+static volatile bool s_storage_ok;    // false: stored user database unreadable -> refuse everything
 
 static user_db_t s_db;
-static user_db_t s_backup;            // rollback copy while saving
+static union {
+    user_db_t v2;                     // rollback copy while saving
+    user_db_v1_t v1;                  // load buffer for the migration
+} s_bk;
 static basic_cache_t s_basic_cache[AUTH_USERS_MAX];   // parallel to s_db.users
 static session_t s_sessions[SESSIONS_MAX];
 static device_db_t s_dev;
-static int s_fails;
-static int64_t s_lock_until_us;       // 0 = not locked
 static uint8_t s_dummy_salt[SALT_LEN];   // for unknown users: same work as a real check
+
+static peer_t s_peers[PEERS_MAX];
+static int64_t s_glob_fail_us[GLOBAL_FAILS];   // ring of the last failure times
+static int s_glob_pos;
+static uint32_t s_glob_count;                  // failures noted (saturating)
+static int64_t s_glob_lock_until_us;           // 0 = not locked
+
+static int64_t s_dev_write_us[DEV_WRITES_PER_HOUR];   // ring of the last device-record writes
+static int s_dev_write_pos;
+static uint32_t s_dev_write_count;                    // writes noted (saturating)
 
 // Identity of the request being handled. Only used by the HTTP server task, which handles one
 // request at a time; reset at the start of every auth_authorize()/auth_identify()/auth_login().
@@ -127,6 +198,7 @@ static struct {
     uint8_t token[TOKEN_LEN];         // token of that slot (guards against slot reuse)
     int device;                       // slot in s_dev.dev for a trusted device, else -1
     uint8_t dev_hash[32];             // hash of that slot (guards against slot reuse)
+    uint32_t retry_s;                 // seconds for Retry-After when AUTH_ERR_LOCKED was returned
 } s_cur = {.session = -1, .device = -1};
 
 static void lock(void)
@@ -158,6 +230,7 @@ const char *auth_result_code(auth_result_t r)
     case AUTH_ERR_LAST_ADMIN:     return "LAST_ADMIN";
     case AUTH_ERR_USER_LIMIT:     return "USER_LIMIT";
     case AUTH_ERR_LOCKED:         return "LOCKED";
+    case AUTH_ERR_UNAVAILABLE:    return "AUTH_UNAVAILABLE";
     default:                      return "IO";
     }
 }
@@ -179,7 +252,9 @@ const char *auth_result_str(auth_result_t r)
     case AUTH_ERR_EXISTS:         return "Diesen Benutzer gibt es schon.";
     case AUTH_ERR_LAST_ADMIN:     return "Der letzte Administrator kann nicht entfernt werden.";
     case AUTH_ERR_USER_LIMIT:     return "Es sind bereits 8 Benutzer angelegt. Bitte zuerst einen löschen.";
-    case AUTH_ERR_LOCKED:         return "Zu viele Fehlversuche. Bitte in 30 Sekunden erneut versuchen.";
+    // The first lock-out lasts 30 s, further ones longer (Retry-After header has the seconds).
+    case AUTH_ERR_LOCKED:         return "Zu viele Fehlversuche. Bitte etwas warten und dann erneut versuchen.";
+    case AUTH_ERR_UNAVAILABLE:    return "Die Benutzerverwaltung ist nicht lesbar. Bitte die Taste am Gerät 10 Sekunden halten, um die Anmeldung zurückzusetzen.";
     default:                      return "Die Benutzerdaten konnten nicht gespeichert werden.";
     }
 }
@@ -201,13 +276,26 @@ const char *auth_result_http_status(auth_result_t r)
     case AUTH_ERR_LAST_ADMIN:
     case AUTH_ERR_USER_LIMIT:     return "409 Conflict";
     case AUTH_ERR_LOCKED:         return "429 Too Many Requests";
+    case AUTH_ERR_UNAVAILABLE:    return "503 Service Unavailable";
     default:                      return "500 Internal Server Error";
     }
 }
 
 esp_err_t auth_send_error(httpd_req_t *req, auth_result_t r)
 {
+    // httpd keeps only the pointer until the response is sent (inside web_send_error), and the
+    // HTTP server task handles one request at a time: a static buffer is sufficient.
+    static char retry[12];
+    if (r == AUTH_ERR_LOCKED && s_cur.retry_s > 0) {
+        snprintf(retry, sizeof(retry), "%u", (unsigned)s_cur.retry_s);
+        httpd_resp_set_hdr(req, "Retry-After", retry);
+    }
     return web_send_error(req, auth_result_http_status(r), auth_result_code(r), auth_result_str(r));
+}
+
+bool auth_storage_ok(void)
+{
+    return s_storage_ok;
 }
 
 // ================================================================== small helpers
@@ -299,6 +387,165 @@ static bool pbkdf2(const char *pass, size_t plen, const uint8_t salt[SALT_LEN], 
     return true;
 }
 
+/** A random epoch that is neither 0 (= "none") nor old. */
+static uint32_t new_epoch(uint32_t old)
+{
+    uint32_t e;
+    do {
+        e = esp_random();
+    } while (e == 0 || e == old);
+    return e;
+}
+
+// ================================================================== peer address
+
+/** Peer address of the request as 16 bytes (IPv4 as ::ffff:a.b.c.d). All zero if unknown:
+ *  all such requests then share one bucket (fail closed rather than unlimited). */
+static void peer_addr(httpd_req_t *req, uint8_t out[16])
+{
+    memset(out, 0, 16);
+    struct sockaddr_storage ss;
+    socklen_t sl = sizeof(ss);
+    memset(&ss, 0, sizeof(ss));
+    const int fd = httpd_req_to_sockfd(req);
+    if (fd < 0 || getpeername(fd, (struct sockaddr *)&ss, &sl) != 0) {
+        return;
+    }
+    if (ss.ss_family == AF_INET && sl >= sizeof(struct sockaddr_in)) {
+        struct sockaddr_in a;
+        memcpy(&a, &ss, sizeof(a));
+        out[10] = 0xff;
+        out[11] = 0xff;
+        memcpy(out + 12, &a.sin_addr.s_addr, 4);
+    }
+#if CONFIG_LWIP_IPV6
+    else if (ss.ss_family == AF_INET6 && sl >= sizeof(struct sockaddr_in6)) {
+        struct sockaddr_in6 a;
+        memcpy(&a, &ss, sizeof(a));
+        memcpy(out, a.sin6_addr.s6_addr, 16);
+    }
+#endif
+}
+
+/** Printable form of a peer address for the log (not secret). */
+static void peer_str(const uint8_t a[16], char out[48])
+{
+    static const uint8_t mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff};
+    if (memcmp(a, mapped, sizeof(mapped)) == 0) {
+        snprintf(out, 48, "%u.%u.%u.%u", a[12], a[13], a[14], a[15]);
+        return;
+    }
+    size_t n = 0;
+    out[0] = '\0';
+    for (int i = 0; i < 16 && n < 40; i += 2) {
+        n += (size_t)snprintf(out + n, 48 - n, "%s%x", i ? ":" : "", (unsigned)((a[i] << 8) | a[i + 1]));
+    }
+}
+
+// ================================================================== lock-out (s_mutex held)
+
+static bool peer_recent_success(const peer_t *p, int64_t now)
+{
+    return p->has_success && now - p->success_us < RECENT_SUCCESS_US;
+}
+
+/** Entry of this address; a new one replaces (in this order) a free slot, the least recently
+ *  used unlocked entry, the least recently used locked entry, and only then the least recently
+ *  used entry with a recent success (those are exempt from the global cap). Never NULL. */
+static peer_t *peer_get(const uint8_t addr[16], int64_t now)
+{
+    for (int i = 0; i < PEERS_MAX; i++) {
+        if (s_peers[i].used && memcmp(s_peers[i].addr, addr, 16) == 0) {
+            s_peers[i].last_seen_us = now;
+            return &s_peers[i];
+        }
+    }
+    int best = -1, best_rank = 4;
+    for (int i = 0; i < PEERS_MAX; i++) {
+        const peer_t *p = &s_peers[i];
+        const int rank = !p->used ? 0 : peer_recent_success(p, now) ? 3 : now < p->lock_until_us ? 2 : 1;
+        if (rank < best_rank || (rank == best_rank && p->last_seen_us < s_peers[best].last_seen_us)) {
+            best = i;
+            best_rank = rank;
+        }
+    }
+    peer_t *p = &s_peers[best];
+    memset(p, 0, sizeof(*p));
+    p->used = true;
+    memcpy(p->addr, addr, 16);
+    p->last_seen_us = now;
+    return p;
+}
+
+/** 0 if p may have a password checked now, else the seconds until it may (>= 1). */
+static uint32_t peer_blocked_s(const peer_t *p, int64_t now)
+{
+    int64_t until = 0;
+    if (now < p->lock_until_us) {
+        until = p->lock_until_us;
+    }
+    if (now < s_glob_lock_until_us && !peer_recent_success(p, now) && s_glob_lock_until_us > until) {
+        until = s_glob_lock_until_us;
+    }
+    return until == 0 ? 0 : (uint32_t)((until - now + 999999) / 1000000);
+}
+
+static void peer_success(peer_t *p, int64_t now)
+{
+    p->fails = 0;
+    p->lockouts = 0;
+    p->lock_until_us = 0;
+    p->has_success = true;
+    p->success_us = now;
+}
+
+static void peer_failure(peer_t *p, int64_t now)
+{
+    char who[48];
+    if (++p->fails >= PEER_LOCK_FAILS) {
+        int64_t dur = PEER_LOCK_BASE_US;
+        for (int i = 0; i < p->lockouts && dur < PEER_LOCK_MAX_US; i++) {
+            dur *= 2;
+        }
+        if (dur > PEER_LOCK_MAX_US) {
+            dur = PEER_LOCK_MAX_US;
+        }
+        p->fails = 0;
+        if (p->lockouts < UINT8_MAX) {
+            p->lockouts++;
+        }
+        p->lock_until_us = now + dur;
+        peer_str(p->addr, who);
+        ESP_LOGW(TAG, "%d failed password checks from %s - locked for %lld s", PEER_LOCK_FAILS, who,
+                 (long long)(dur / 1000000));
+    }
+    // Global cap: the failure GLOBAL_FAILS entries ago is overwritten; if it lies within the
+    // window, this is failure number GLOBAL_FAILS + 1 within it.
+    const int64_t oldest = s_glob_fail_us[s_glob_pos];
+    const bool full = s_glob_count >= GLOBAL_FAILS;
+    s_glob_fail_us[s_glob_pos] = now;
+    s_glob_pos = (s_glob_pos + 1) % GLOBAL_FAILS;
+    if (s_glob_count < UINT32_MAX) {
+        s_glob_count++;
+    }
+    if (full && now - oldest < GLOBAL_WINDOW_US) {
+        if (now >= s_glob_lock_until_us) {
+            ESP_LOGW(TAG, "more than %d failed password checks per minute - password checks restricted for 30 s",
+                     GLOBAL_FAILS);
+        }
+        s_glob_lock_until_us = now + GLOBAL_LOCK_US;
+    }
+}
+
+static void lockout_reset_all(void)
+{
+    memset(s_peers, 0, sizeof(s_peers));
+    memset(s_glob_fail_us, 0, sizeof(s_glob_fail_us));
+    s_glob_pos = 0;
+    s_glob_count = 0;
+    s_glob_lock_until_us = 0;
+}
+
 // ================================================================== user database (s_mutex held)
 
 static int find_user(const char *name)
@@ -323,7 +570,8 @@ static int admin_count(void)
     return n;
 }
 
-/** New salt + hash for u (u->name must be set). False if hashing failed (u unchanged then). */
+/** New salt + hash for u (u->name must be set). False if hashing failed (u unchanged then).
+ *  Does not touch the epoch (callers decide). */
 static bool rec_set_password(user_rec_t *u, const char *pass)
 {
     uint8_t salt[SALT_LEN], hash[HASH_LEN];
@@ -350,6 +598,7 @@ static void db_make_default(user_db_t *db)
     user_rec_t *u = &db->users[0];
     strlcpy(u->name, "admin", sizeof(u->name));
     u->role = ROLE_V_ADMIN;
+    u->epoch = new_epoch(0);
     if (!rec_set_password(u, "admin")) {
         ESP_LOGE(TAG, "default account could not be hashed - login impossible");
     }
@@ -377,22 +626,79 @@ static bool db_valid(const user_db_t *db)
     return admin;
 }
 
-/** ESP_OK, ESP_ERR_NVS_NOT_FOUND (nothing stored yet) or another error (unreadable/corrupt). */
-static esp_err_t db_load(user_db_t *out)
+/** Load the stored users into s_db. ESP_OK (*migrated: converted from version 1 or epochs
+ *  assigned, must be saved), ESP_ERR_NVS_NOT_FOUND (nothing stored yet) or another error
+ *  (stored data unreadable/corrupt: s_db is left empty). Uses s_bk as buffer. */
+static esp_err_t db_load(bool *migrated)
 {
+    *migrated = false;
+    memset(&s_db, 0, sizeof(s_db));
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READONLY, &h);
     if (err != ESP_OK) {
         return err;   // ESP_ERR_NVS_NOT_FOUND: namespace does not exist yet
     }
-    size_t len = sizeof(*out);
-    err = nvs_get_blob(h, NVS_KEY_USERS, out, &len);
-    nvs_close(h);
-    if (err != ESP_OK) {
+    size_t len = 0;
+    err = nvs_get_blob(h, NVS_KEY_USERS, NULL, &len);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        // Trusted devices without users: the user record was lost, not "never created" (the
+        // devices are only ever written after the users). Do not fall back to admin/admin.
+        size_t dlen = 0;
+        if (nvs_get_blob(h, NVS_KEY_DEVICES, NULL, &dlen) == ESP_OK) {
+            err = ESP_ERR_INVALID_STATE;
+        }
+        nvs_close(h);
         return err;
     }
-    if (len != sizeof(*out) || !db_valid(out)) {
-        return ESP_ERR_INVALID_STATE;
+    if (err == ESP_OK && len == sizeof(user_db_t)) {
+        err = nvs_get_blob(h, NVS_KEY_USERS, &s_bk.v2, &len);
+        if (err == ESP_OK && (len != sizeof(user_db_t) || !db_valid(&s_bk.v2))) {
+            err = ESP_ERR_INVALID_STATE;
+        }
+        if (err == ESP_OK) {
+            memcpy(&s_db, &s_bk.v2, sizeof(s_db));
+        }
+    } else if (err == ESP_OK && len == sizeof(user_db_v1_t)) {
+        // Migration from version 1 (no epochs): same fields, epoch 0 -> new epochs below.
+        err = nvs_get_blob(h, NVS_KEY_USERS, &s_bk.v1, &len);
+        if (err == ESP_OK && (len != sizeof(user_db_v1_t) || s_bk.v1.magic != DB_MAGIC ||
+                              s_bk.v1.version != DB_VERSION_1 || s_bk.v1.count > AUTH_USERS_MAX)) {
+            err = ESP_ERR_INVALID_STATE;
+        }
+        if (err == ESP_OK) {
+            s_db.magic = DB_MAGIC;
+            s_db.version = DB_VERSION;
+            s_db.count = s_bk.v1.count;
+            for (int i = 0; i < s_bk.v1.count; i++) {
+                const user_rec_v1_t *o = &s_bk.v1.users[i];
+                user_rec_t *u = &s_db.users[i];
+                memcpy(u->name, o->name, sizeof(u->name));
+                u->role = o->role;
+                u->flags = o->flags;
+                memcpy(u->salt, o->salt, SALT_LEN);
+                memcpy(u->hash, o->hash, HASH_LEN);
+                u->epoch = 0;
+            }
+            if (!db_valid(&s_db)) {
+                err = ESP_ERR_INVALID_STATE;
+            } else {
+                ESP_LOGW(TAG, "user database converted from version 1 (trusted devices must log in again)");
+            }
+        }
+    } else if (err == ESP_OK) {
+        err = ESP_ERR_INVALID_SIZE;
+    }
+    nvs_close(h);
+    mbedtls_platform_zeroize(&s_bk, sizeof(s_bk));
+    if (err != ESP_OK) {
+        mbedtls_platform_zeroize(&s_db, sizeof(s_db));
+        return err == ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_INVALID_STATE : err;   // vanished meanwhile
+    }
+    for (int i = 0; i < s_db.count; i++) {
+        if (s_db.users[i].epoch == 0) {
+            s_db.users[i].epoch = new_epoch(0);
+            *migrated = true;
+        }
     }
     return ESP_OK;
 }
@@ -414,14 +720,22 @@ static esp_err_t db_save(void)
     return err;
 }
 
-/** Save s_db; on failure restore s_backup (which the caller filled before changing s_db). */
+/** Save s_db; on failure restore s_bk.v2 (which the caller filled before changing s_db). */
 static auth_result_t db_commit(void)
 {
     if (db_save() != ESP_OK) {
-        memcpy(&s_db, &s_backup, sizeof(s_db));
+        memcpy(&s_db, &s_bk.v2, sizeof(s_db));
         return AUTH_ERR_IO;
     }
     return AUTH_OK;
+}
+
+/** Give user idx a new epoch and save it. AUTH_ERR_IO: nothing changed. */
+static auth_result_t user_bump_epoch(int idx)
+{
+    memcpy(&s_bk.v2, &s_db, sizeof(s_db));
+    s_db.users[idx].epoch = new_epoch(s_db.users[idx].epoch);
+    return db_commit();
 }
 
 // ================================================================== sessions (s_mutex held)
@@ -505,6 +819,7 @@ static int session_create(const char *name, int64_t now, uint8_t token[TOKEN_LEN
 
 // ================================================================== trusted devices (s_mutex held)
 // NVS is written only when a device is created or removed (flash wear), never on lookup.
+// Creating is rate-limited; removing never is (a removal that is not saved could come back).
 
 static void devices_make_empty(device_db_t *d)
 {
@@ -514,8 +829,27 @@ static void devices_make_empty(device_db_t *d)
     d->next_seq = 1;
 }
 
+/** True if a new device record may be written now (flash wear limit). */
+static bool dev_write_allowed(int64_t now)
+{
+    if (s_dev_write_count == 0) {
+        return true;
+    }
+    const int last = (s_dev_write_pos + DEV_WRITES_PER_HOUR - 1) % DEV_WRITES_PER_HOUR;
+    if (now - s_dev_write_us[last] < DEV_WRITE_GAP_US) {
+        return false;
+    }
+    // Slot s_dev_write_pos holds the write DEV_WRITES_PER_HOUR writes ago (once the ring is full).
+    return s_dev_write_count < DEV_WRITES_PER_HOUR || now - s_dev_write_us[s_dev_write_pos] >= DEV_WRITE_WINDOW_US;
+}
+
 static esp_err_t devices_save(void)
 {
+    s_dev_write_us[s_dev_write_pos] = esp_timer_get_time();   // every write counts for the budget
+    s_dev_write_pos = (s_dev_write_pos + 1) % DEV_WRITES_PER_HOUR;
+    if (s_dev_write_count < UINT32_MAX) {
+        s_dev_write_count++;
+    }
     nvs_handle_t h;
     esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (err == ESP_OK) {
@@ -531,41 +865,74 @@ static esp_err_t devices_save(void)
     return err;
 }
 
-/** Load the devices into s_dev (empty on any problem: fail closed). Needs s_db loaded. */
+/** True if slot i is a usable device: used, its user exists and the epochs match. */
+static bool dev_live(int i)
+{
+    const device_rec_t *d = &s_dev.dev[i];
+    if (!d->used) {
+        return false;
+    }
+    const int idx = find_user(d->user);
+    return idx >= 0 && d->epoch != 0 && d->epoch == s_db.users[idx].epoch;
+}
+
+/** Load the devices into s_dev (empty on any problem: fail closed). Needs s_db loaded. Records
+ *  that are malformed, of an old layout, of a user that no longer exists or of an old epoch of
+ *  their user are removed from NVS as well. */
 static void devices_load(void)
 {
+    devices_make_empty(&s_dev);
     nvs_handle_t h;
-    size_t len = sizeof(s_dev);
+    size_t len = 0;
+    bool purge = false;
     esp_err_t err = nvs_open(NVS_NS, NVS_READONLY, &h);
     if (err == ESP_OK) {
-        err = nvs_get_blob(h, NVS_KEY_DEVICES, &s_dev, &len);
+        err = nvs_get_blob(h, NVS_KEY_DEVICES, NULL, &len);
+        if (err == ESP_OK && len == sizeof(s_dev)) {
+            err = nvs_get_blob(h, NVS_KEY_DEVICES, &s_dev, &len);
+        } else if (err == ESP_OK) {
+            ESP_LOGW(TAG, "trusted devices of an older layout discarded");
+            purge = true;
+        }
         nvs_close(h);
     }
-    if (err != ESP_OK || len != sizeof(s_dev) || s_dev.magic != DEV_MAGIC || s_dev.version != DEV_VERSION) {
-        if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
-            ESP_LOGE(TAG, "trusted devices unreadable (%s) - none active", esp_err_to_name(err));
-        } else if (err == ESP_OK) {
-            ESP_LOGE(TAG, "trusted devices corrupt - none active");
-        }
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
         devices_make_empty(&s_dev);
+        ESP_LOGI(TAG, "no trusted devices stored");
+        return;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "trusted devices unreadable (%s) - none active", esp_err_to_name(err));
+        purge = true;
+    } else if (!purge && (len != sizeof(s_dev) || s_dev.magic != DEV_MAGIC || s_dev.version != DEV_VERSION)) {
+        ESP_LOGE(TAG, "trusted devices corrupt - none active");
+        purge = true;
+    }
+    if (purge) {
+        devices_make_empty(&s_dev);
+        devices_save();   // a failure is logged; the stale data stays invalid either way
         return;
     }
     int n = 0;
     for (int i = 0; i < AUTH_DEVICES_MAX; i++) {
         device_rec_t *d = &s_dev.dev[i];
-        if (!d->used) {
+        if (!d->used && d->epoch == 0) {
             continue;
         }
-        // Drop (in RAM only) records that are malformed or belong to a user that no longer exists.
         if (d->used != 1 || memchr(d->user, '\0', sizeof(d->user)) == NULL ||
-            memchr(d->label, '\0', sizeof(d->label)) == NULL || find_user(d->user) < 0) {
+            memchr(d->label, '\0', sizeof(d->label)) == NULL || !dev_live(i)) {
             mbedtls_platform_zeroize(d, sizeof(*d));
+            purge = true;
             continue;
         }
         if (d->seq >= s_dev.next_seq) {
             s_dev.next_seq = d->seq + 1;
         }
         n++;
+    }
+    if (purge) {
+        ESP_LOGW(TAG, "invalid or revoked trusted devices removed");
+        devices_save();
     }
     ESP_LOGI(TAG, "%d trusted device(s) loaded", n);
 }
@@ -583,8 +950,8 @@ static int device_find(const uint8_t token[TOKEN_LEN])
             found = i;
         }
     }
-    if (found >= 0 && find_user(s_dev.dev[found].user) < 0) {
-        found = -1;   // user vanished (the record goes with the next save)
+    if (found >= 0 && !dev_live(found)) {
+        found = -1;   // user vanished or epoch changed (the record goes with the next save/load)
     }
     return found;
 }
@@ -594,7 +961,7 @@ static void device_id(int i, char out[9])
     hex_encode(s_dev.dev[i].hash, 4, out);
 }
 
-/** Remove all devices of name except slot keep (-1: none). True if anything was removed. */
+/** Remove (RAM only) all devices of name except slot keep (-1: none). True if anything was removed. */
 static bool devices_remove_user(const char *name, int keep)
 {
     bool changed = false;
@@ -607,23 +974,79 @@ static bool devices_remove_user(const char *name, int keep)
     return changed;
 }
 
-/** Create a trusted device for name with a fresh token. Returns the slot or -1 if it could not
- *  be saved (nothing changed then). The oldest device is replaced when all slots are used. */
-static int device_create(const char *name, const char *label, uint8_t token[TOKEN_LEN])
+static bool current_device_is(int dev);
+
+/** Remove device slot i from RAM and NVS. If NVS cannot be updated, the owner gets a new epoch,
+ *  so the stale stored copy can never be accepted again (that also revokes the owner's other
+ *  devices, except the caller's own one until the next restart). False if neither worked. */
+static bool device_remove(int i)
 {
-    int slot = -1;
-    for (int i = 0; i < AUTH_DEVICES_MAX && slot < 0; i++) {
-        if (!s_dev.dev[i].used) {
-            slot = i;
-        }
+    char user[AUTH_NAME_MAX + 1];
+    strlcpy(user, s_dev.dev[i].user, sizeof(user));
+    mbedtls_platform_zeroize(&s_dev.dev[i], sizeof(device_rec_t));
+    if (devices_save() == ESP_OK) {
+        return true;
     }
-    if (slot < 0) {
-        slot = 0;
-        for (int i = 1; i < AUTH_DEVICES_MAX; i++) {
-            if (s_dev.dev[i].seq < s_dev.dev[slot].seq) {
-                slot = i;
+    const int idx = find_user(user);
+    if (idx < 0) {
+        return true;   // no such user: the stored record is purged at the next load
+    }
+    if (user_bump_epoch(idx) != AUTH_OK) {
+        ESP_LOGE(TAG, "trusted device could not be revoked in flash");
+        return false;
+    }
+    for (int k = 0; k < AUTH_DEVICES_MAX; k++) {
+        if (s_dev.dev[k].used && strcasecmp(s_dev.dev[k].user, user) == 0) {
+            if (current_device_is(k)) {
+                s_dev.dev[k].epoch = s_db.users[idx].epoch;   // RAM only: valid until restart
+            } else {
+                mbedtls_platform_zeroize(&s_dev.dev[k], sizeof(device_rec_t));
             }
         }
+    }
+    ESP_LOGW(TAG, "trusted device removal not saved - all stored devices of that user revoked");
+    return true;
+}
+
+/** Create a trusted device for user uidx with a fresh token. Returns the slot or -1 (nothing
+ *  changed then: write limit reached, no slot the user may take, or saving failed).
+ *  Slot choice: the user's device with the same label; else, at DEVICES_PER_USER devices, the
+ *  user's oldest; else a free slot; else the user's own oldest. Other users' devices are never
+ *  displaced. */
+static int device_create(int uidx, const char *label, uint8_t token[TOKEN_LEN], int64_t now)
+{
+    if (!dev_write_allowed(now)) {
+        ESP_LOGW(TAG, "trusted device not saved (write limit) - volatile session instead");
+        return -1;
+    }
+    const char *name = s_db.users[uidx].name;
+    int same_label = -1, oldest_own = -1, free_slot = -1, own = 0;
+    for (int i = 0; i < AUTH_DEVICES_MAX; i++) {
+        const device_rec_t *d = &s_dev.dev[i];
+        if (!dev_live(i)) {
+            if (free_slot < 0) {
+                free_slot = i;   // unused or stale record
+            }
+            continue;
+        }
+        if (strcasecmp(d->user, name) != 0) {
+            continue;
+        }
+        own++;
+        if (same_label < 0 && strcmp(d->label, label) == 0) {
+            same_label = i;
+        }
+        if (oldest_own < 0 || d->seq < s_dev.dev[oldest_own].seq) {
+            oldest_own = i;
+        }
+    }
+    int slot = same_label;
+    if (slot < 0) {
+        slot = own >= DEVICES_PER_USER ? oldest_own : free_slot >= 0 ? free_slot : oldest_own;
+    }
+    if (slot < 0) {
+        ESP_LOGW(TAG, "no free trusted-device slot - volatile session instead");
+        return -1;
     }
     device_rec_t old = s_dev.dev[slot];
     const uint32_t old_seq = s_dev.next_seq;
@@ -634,6 +1057,7 @@ static int device_create(const char *name, const char *label, uint8_t token[TOKE
         esp_fill_random(token, TOKEN_LEN);
         if (mbedtls_sha256(token, TOKEN_LEN, d->hash, 0) != 0) {
             s_dev.dev[slot] = old;
+            mbedtls_platform_zeroize(&old, sizeof(old));
             return -1;
         }
         unique = true;
@@ -647,6 +1071,7 @@ static int device_create(const char *name, const char *label, uint8_t token[TOKE
     strlcpy(d->user, name, sizeof(d->user));
     strlcpy(d->label, label, sizeof(d->label));
     d->seq = s_dev.next_seq++;
+    d->epoch = s_db.users[uidx].epoch;
     if (devices_save() != ESP_OK) {
         s_dev.dev[slot] = old;
         s_dev.next_seq = old_seq;
@@ -657,21 +1082,7 @@ static int device_create(const char *name, const char *label, uint8_t token[TOKE
     return slot;
 }
 
-// ================================================================== lock-out + password checks (s_mutex held)
-
-static bool locked_now(int64_t now)
-{
-    return s_lock_until_us != 0 && now < s_lock_until_us;
-}
-
-static void note_failure(int64_t now)
-{
-    if (++s_fails >= LOCK_FAILS) {
-        s_fails = 0;
-        s_lock_until_us = now + LOCK_US;
-        ESP_LOGW(TAG, "%d failed password checks in a row - locked for 30 s", LOCK_FAILS);
-    }
-}
+// ================================================================== password checks (s_mutex held)
 
 /** Constant work for known and unknown users (a dummy salt is hashed for unknown ones). */
 static bool verify_password(int idx, const char *pass)
@@ -688,16 +1099,26 @@ static bool verify_password(int idx, const char *pass)
     return ok;
 }
 
-/** Index of the user if name/pass match (resets the failure counter), else -1 (counted). */
-static int check_credentials(const char *name, const char *pass, int64_t now)
+/** Password check for the peer addr, honouring its lock-out and the global cap. AUTH_OK (and
+ *  *idx = user), AUTH_ERR_BAD_LOGIN (counted) or AUTH_ERR_LOCKED (not checked, s_cur.retry_s set). */
+static auth_result_t check_credentials(const uint8_t addr[16], const char *name, const char *pass, int64_t now,
+                                       int *idx_out)
 {
+    *idx_out = -1;
+    peer_t *p = peer_get(addr, now);
+    const uint32_t blocked = peer_blocked_s(p, now);
+    if (blocked) {
+        s_cur.retry_s = blocked;
+        return AUTH_ERR_LOCKED;
+    }
     const int idx = auth_valid_name(name) ? find_user(name) : -1;
     if (verify_password(idx, pass)) {
-        s_fails = 0;
-        return idx;
+        peer_success(p, now);
+        *idx_out = idx;
+        return AUTH_OK;
     }
-    note_failure(now);
-    return -1;
+    peer_failure(p, now);
+    return AUTH_ERR_BAD_LOGIN;
 }
 
 // ================================================================== request identity
@@ -785,8 +1206,10 @@ static bool read_session_cookie(httpd_req_t *req, uint8_t token[TOKEN_LEN])
 
 typedef enum { BASIC_ABSENT, BASIC_OK, BASIC_FAIL, BASIC_LOCKED } basic_result_t;
 
-/** HTTP Basic. s_mutex held. Sets the request identity on success. */
-static basic_result_t try_basic(httpd_req_t *req, int64_t now)
+/** HTTP Basic. s_mutex held. Sets the request identity on success. The peer's lock-out applies
+ *  to cache hits as well (otherwise the cache would answer guesses during a lock-out); a cache
+ *  hit never resets the failure counter, only a real password check does. */
+static basic_result_t try_basic(httpd_req_t *req, const uint8_t addr[16], int64_t now)
 {
     const size_t len = httpd_req_get_hdr_value_len(req, "Authorization");
     if (len == 0) {
@@ -806,7 +1229,9 @@ static basic_result_t try_basic(httpd_req_t *req, int64_t now)
         if (strncasecmp(scheme, "Basic ", 6) != 0) {
             return BASIC_ABSENT;
         }
-        return locked_now(now) ? BASIC_LOCKED : BASIC_FAIL;
+        const uint32_t blocked = peer_blocked_s(peer_get(addr, now), now);
+        s_cur.retry_s = blocked;
+        return blocked ? BASIC_LOCKED : BASIC_FAIL;
     }
     if (httpd_req_get_hdr_value_str(req, "Authorization", hdr, sizeof(hdr)) != ESP_OK) {
         return BASIC_FAIL;
@@ -815,7 +1240,10 @@ static basic_result_t try_basic(httpd_req_t *req, int64_t now)
         res = BASIC_ABSENT;   // another scheme: treated like no credentials
         goto out;
     }
-    if (locked_now(now)) {
+    peer_t *p = peer_get(addr, now);
+    const uint32_t blocked = peer_blocked_s(p, now);
+    if (blocked) {
+        s_cur.retry_s = blocked;
         res = BASIC_LOCKED;
         goto out;
     }
@@ -830,7 +1258,9 @@ static basic_result_t try_basic(httpd_req_t *req, int64_t now)
         }
     }
     if (hit >= 0) {
-        s_fails = 0;
+        // Keeps a polling script exempt from the global cap; the failure counter stays as it is.
+        p->has_success = true;
+        p->success_us = now;
         set_current(hit, -1, -1);
         res = BASIC_OK;
         goto out;
@@ -857,17 +1287,21 @@ static basic_result_t try_basic(httpd_req_t *req, int64_t now)
         *colon = '\0';
         pass = colon + 1;
     }
-    const int idx = check_credentials((const char *)raw, pass, now);
-    if (idx >= 0) {
+    int idx = -1;
+    const auth_result_t r = check_credentials(addr, (const char *)raw, pass, now, &idx);
+    if (r == AUTH_OK) {
         s_basic_cache[idx].valid = true;
         memcpy(s_basic_cache[idx].digest, digest, sizeof(digest));
         set_current(idx, -1, -1);
         res = BASIC_OK;
+    } else if (r == AUTH_ERR_LOCKED) {
+        res = BASIC_LOCKED;
     }
 
 out:
     mbedtls_platform_zeroize(hdr, sizeof(hdr));
     mbedtls_platform_zeroize(raw, sizeof(raw));
+    mbedtls_platform_zeroize(digest, sizeof(digest));
     return res;
 }
 
@@ -875,29 +1309,37 @@ out:
 static auth_result_t identify(httpd_req_t *req, bool with_basic)
 {
     uint8_t token[TOKEN_LEN];
+    uint8_t addr[16] = {0};
     const bool have_cookie = read_session_cookie(req, token);
+    if (with_basic) {
+        peer_addr(req, addr);
+    }
     auth_result_t r = AUTH_ERR_UNAUTHORIZED;
 
     lock();
     const int64_t now = esp_timer_get_time();
-    if (have_cookie) {
-        const int slot = session_find(token, now);
-        if (slot >= 0) {
-            set_current(find_user(s_sessions[slot].user), slot, -1);
-            r = AUTH_OK;
-        } else {
-            const int dev = device_find(token);   // trusted device: no time limit
-            if (dev >= 0) {
-                set_current(find_user(s_dev.dev[dev].user), -1, dev);
+    if (!s_storage_ok) {
+        r = AUTH_ERR_UNAVAILABLE;
+    } else {
+        if (have_cookie) {
+            const int slot = session_find(token, now);
+            if (slot >= 0) {
+                set_current(find_user(s_sessions[slot].user), slot, -1);
                 r = AUTH_OK;
+            } else {
+                const int dev = device_find(token);   // trusted device: no time limit
+                if (dev >= 0) {
+                    set_current(find_user(s_dev.dev[dev].user), -1, dev);
+                    r = AUTH_OK;
+                }
             }
         }
-    }
-    if (r != AUTH_OK && with_basic) {
-        switch (try_basic(req, now)) {
-        case BASIC_OK:     r = AUTH_OK; break;
-        case BASIC_LOCKED: r = AUTH_ERR_LOCKED; break;
-        default:           break;
+        if (r != AUTH_OK && with_basic) {
+            switch (try_basic(req, addr, now)) {
+            case BASIC_OK:     r = AUTH_OK; break;
+            case BASIC_LOCKED: r = AUTH_ERR_LOCKED; break;
+            default:           break;
+            }
         }
     }
     unlock();
@@ -946,7 +1388,7 @@ bool auth_authorize(httpd_req_t *req, web_role_t min_role)
         auth_send_error(req, AUTH_ERR_UNAUTHORIZED);   // fail closed
         return false;
     }
-    const auth_result_t r = identify(req, true);
+    const auth_result_t r = identify(req, true);   // AUTH_ERR_UNAVAILABLE if the database is unreadable
     if (r != AUTH_OK) {
         auth_send_error(req, r);
         return false;
@@ -1049,33 +1491,39 @@ static void sanitize_label(const char *in, char out[AUTH_DEVICE_LABEL_MAX + 1])
 auth_result_t auth_login(httpd_req_t *req, const char *user, const char *pass, const char *device_label,
                          char token_hex[AUTH_TOKEN_HEX + 1], bool *persistent)
 {
-    (void)req;
     clear_current();
     token_hex[0] = '\0';
     *persistent = false;
     if (!s_ready) {
         return AUTH_ERR_BAD_LOGIN;
     }
+    uint8_t addr[16];
+    peer_addr(req, addr);
     lock();
-    const int64_t now = esp_timer_get_time();
-    if (locked_now(now)) {
+    if (!s_storage_ok) {
         unlock();
-        return AUTH_ERR_LOCKED;
+        return AUTH_ERR_UNAVAILABLE;
     }
-    const int idx = check_credentials(user, pass, now);
-    if (idx < 0) {
+    const int64_t now = esp_timer_get_time();
+    int idx = -1;
+    const auth_result_t r = check_credentials(addr, user, pass, now, &idx);
+    if (r != AUTH_OK) {
         unlock();
-        ESP_LOGW(TAG, "login failed");
-        return AUTH_ERR_BAD_LOGIN;
+        if (r == AUTH_ERR_BAD_LOGIN) {
+            char who[48];
+            peer_str(addr, who);
+            ESP_LOGW(TAG, "login failed from %s", who);
+        }
+        return r;
     }
     uint8_t token[TOKEN_LEN];
     int dev = -1;
     if (device_label != NULL) {
         char label[AUTH_DEVICE_LABEL_MAX + 1];
         sanitize_label(device_label, label);
-        dev = device_create(s_db.users[idx].name, label, token);
+        dev = device_create(idx, label, token, now);
         if (dev < 0) {
-            ESP_LOGE(TAG, "trusted device could not be saved - volatile session instead");
+            ESP_LOGW(TAG, "trusted device not created - volatile session instead");
         }
     }
     int slot = -1;
@@ -1109,8 +1557,9 @@ void auth_logout(httpd_req_t *req)
         session_wipe(slot);
     }
     if (current_device_is(s_cur.device)) {
-        mbedtls_platform_zeroize(&s_dev.dev[s_cur.device], sizeof(device_rec_t));
-        devices_save();   // removed in RAM in any case; a save error is logged
+        const int dev = s_cur.device;
+        s_cur.device = -1;   // not "current" any more: device_remove must not keep it alive
+        device_remove(dev);  // removed in RAM in any case; if not saved, the user's epoch changes
     }
     unlock();
     ESP_LOGI(TAG, "logout '%s'", s_cur.user);
@@ -1126,10 +1575,9 @@ size_t auth_list_devices(auth_device_info_t *out, size_t max)
     }
     lock();
     size_t n = 0;
-    for (int i = 0; i < AUTH_DEVICES_MAX && n < max; i++) {
+    for (int i = 0; i < AUTH_DEVICES_MAX && n < max && s_storage_ok; i++) {
         const device_rec_t *d = &s_dev.dev[i];
-        if (!d->used || find_user(d->user) < 0 ||
-            (s_cur.role != WEB_ROLE_ADMIN && strcasecmp(d->user, s_cur.user) != 0)) {
+        if (!dev_live(i) || (s_cur.role != WEB_ROLE_ADMIN && strcasecmp(d->user, s_cur.user) != 0)) {
             continue;
         }
         device_id(i, out[n].id);
@@ -1154,7 +1602,7 @@ auth_result_t auth_device_delete(const char *id)
     int found = -1;
     for (int i = 0; i < AUTH_DEVICES_MAX && found < 0; i++) {
         char did[9];
-        if (s_dev.dev[i].used) {
+        if (dev_live(i)) {
             device_id(i, did);
             if (strcasecmp(did, id) == 0) {
                 found = i;
@@ -1162,14 +1610,19 @@ auth_result_t auth_device_delete(const char *id)
         }
     }
     auth_result_t r = AUTH_OK;
-    if (found < 0) {
+    if (!s_storage_ok) {
+        r = AUTH_ERR_UNAVAILABLE;
+    } else if (found < 0) {
         r = AUTH_ERR_NOT_FOUND;
     } else if (s_cur.role != WEB_ROLE_ADMIN && strcasecmp(s_dev.dev[found].user, s_cur.user) != 0) {
         r = AUTH_ERR_FORBIDDEN_ROLE;
     } else {
         ESP_LOGI(TAG, "trusted device %d of '%s' removed", found, s_dev.dev[found].user);
-        mbedtls_platform_zeroize(&s_dev.dev[found], sizeof(device_rec_t));
-        if (devices_save() != ESP_OK) {
+        if (current_device_is(found)) {
+            // The response still reports {"ok":true}; the identity of this request stays.
+            s_cur.device = -1;   // deleting the own device: it must not be kept alive
+        }
+        if (!device_remove(found)) {
             r = AUTH_ERR_IO;   // removed in RAM anyway: it stops working now
         }
     }
@@ -1184,7 +1637,7 @@ size_t auth_list_users(auth_user_info_t *out, size_t max)
     }
     lock();
     size_t n = 0;
-    for (int i = 0; i < s_db.count && n < max; i++, n++) {
+    for (int i = 0; i < s_db.count && n < max && s_storage_ok; i++, n++) {
         strlcpy(out[n].name, s_db.users[i].name, sizeof(out[n].name));
         out[n].role = role_from_v(s_db.users[i].role);
     }
@@ -1211,19 +1664,22 @@ auth_result_t auth_user_add(const char *name, const char *pass, web_role_t role)
     }
     lock();
     auth_result_t r = AUTH_OK;
-    if (find_user(name) >= 0) {
+    if (!s_storage_ok) {
+        r = AUTH_ERR_UNAVAILABLE;
+    } else if (find_user(name) >= 0) {
         r = AUTH_ERR_EXISTS;
     } else if (s_db.count >= AUTH_USERS_MAX) {
         r = AUTH_ERR_USER_LIMIT;
     } else {
-        memcpy(&s_backup, &s_db, sizeof(s_db));
+        memcpy(&s_bk.v2, &s_db, sizeof(s_db));
         const int idx = s_db.count;
         user_rec_t *u = &s_db.users[idx];
         memset(u, 0, sizeof(*u));
         strlcpy(u->name, name, sizeof(u->name));
         u->role = role_to_v(role);
+        u->epoch = new_epoch(0);   // a re-created name never matches devices of the old user
         if (!rec_set_password(u, pass)) {
-            memcpy(&s_db, &s_backup, sizeof(s_db));
+            memcpy(&s_db, &s_bk.v2, sizeof(s_db));
             r = AUTH_ERR_IO;
         } else {
             s_db.count++;
@@ -1246,14 +1702,16 @@ auth_result_t auth_user_delete(const char *name)
     lock();
     auth_result_t r = AUTH_OK;
     const int idx = find_user(name);
-    if (idx < 0) {
+    if (!s_storage_ok) {
+        r = AUTH_ERR_UNAVAILABLE;
+    } else if (idx < 0) {
         r = AUTH_ERR_NOT_FOUND;
     } else if (s_db.users[idx].role == ROLE_V_ADMIN && admin_count() <= 1) {
         r = AUTH_ERR_LAST_ADMIN;
     } else {
         char removed[AUTH_NAME_MAX + 1];
         strlcpy(removed, s_db.users[idx].name, sizeof(removed));
-        memcpy(&s_backup, &s_db, sizeof(s_db));
+        memcpy(&s_bk.v2, &s_db, sizeof(s_db));
         const int tail = s_db.count - idx - 1;
         memmove(&s_db.users[idx], &s_db.users[idx + 1], (size_t)tail * sizeof(user_rec_t));
         s_db.count--;
@@ -1264,7 +1722,7 @@ auth_result_t auth_user_delete(const char *name)
             mbedtls_platform_zeroize(&s_basic_cache[s_db.count], sizeof(basic_cache_t));
             sessions_end_user(removed, -1);
             if (devices_remove_user(removed, -1)) {
-                devices_save();   // removed in RAM in any case; a save error is logged
+                devices_save();   // on failure: records of a missing user are purged at load
             }
             ESP_LOGI(TAG, "user '%s' deleted", removed);
         }
@@ -1284,18 +1742,21 @@ auth_result_t auth_user_set_role(const char *name, web_role_t role)
     lock();
     auth_result_t r = AUTH_OK;
     const int idx = find_user(name);
-    if (idx < 0) {
+    if (!s_storage_ok) {
+        r = AUTH_ERR_UNAVAILABLE;
+    } else if (idx < 0) {
         r = AUTH_ERR_NOT_FOUND;
     } else if (s_db.users[idx].role == ROLE_V_ADMIN && role == WEB_ROLE_USER && admin_count() <= 1) {
         r = AUTH_ERR_LAST_ADMIN;
     } else if (s_db.users[idx].role != role_to_v(role)) {
-        memcpy(&s_backup, &s_db, sizeof(s_db));
+        memcpy(&s_bk.v2, &s_db, sizeof(s_db));
         s_db.users[idx].role = role_to_v(role);
+        s_db.users[idx].epoch = new_epoch(s_db.users[idx].epoch);   // same commit as the role
         r = db_commit();
         if (r == AUTH_OK) {
             s_basic_cache[idx].valid = false;
             if (devices_remove_user(s_db.users[idx].name, -1)) {
-                devices_save();
+                devices_save();   // on failure: the stored records have the old epoch
             }
             ESP_LOGI(TAG, "user '%s' is now %s", s_db.users[idx].name, role == WEB_ROLE_ADMIN ? "admin" : "user");
         }
@@ -1306,21 +1767,20 @@ auth_result_t auth_user_set_role(const char *name, web_role_t role)
 
 auth_result_t auth_user_set_password(httpd_req_t *req, const char *name, const char *pass, const char *old)
 {
-    (void)req;
     if (!s_ready || s_cur.user[0] == '\0') {
         return AUTH_ERR_UNAUTHORIZED;
     }
+    uint8_t addr[16];
+    peer_addr(req, addr);
     lock();
     const int64_t now = esp_timer_get_time();
     auth_result_t r = AUTH_OK;
     int idx = -1;
     const bool own = strcasecmp(name, s_cur.user) == 0;
-    if (own) {
-        if (locked_now(now)) {
-            r = AUTH_ERR_LOCKED;
-        } else if ((idx = check_credentials(s_cur.user, old ? old : "", now)) < 0) {
-            r = AUTH_ERR_BAD_LOGIN;
-        }
+    if (!s_storage_ok) {
+        r = AUTH_ERR_UNAVAILABLE;
+    } else if (own) {
+        r = check_credentials(addr, s_cur.user, old ? old : "", now, &idx);   // BAD_LOGIN / LOCKED
     } else if (s_cur.default_pw) {
         r = AUTH_ERR_MUST_CHANGE_PASSWORD;   // forced change: only the own account first
     } else if (s_cur.role != WEB_ROLE_ADMIN) {
@@ -1334,11 +1794,12 @@ auth_result_t auth_user_set_password(httpd_req_t *req, const char *name, const c
         r = AUTH_ERR_DEFAULT_PASSWORD;   // never back to the delivery password
     }
     if (r == AUTH_OK) {
-        memcpy(&s_backup, &s_db, sizeof(s_db));
+        memcpy(&s_bk.v2, &s_db, sizeof(s_db));
         if (!rec_set_password(&s_db.users[idx], pass)) {
-            memcpy(&s_db, &s_backup, sizeof(s_db));
+            memcpy(&s_db, &s_bk.v2, sizeof(s_db));
             r = AUTH_ERR_IO;
         } else {
+            s_db.users[idx].epoch = new_epoch(s_db.users[idx].epoch);   // same commit as the hash
             r = db_commit();
         }
     }
@@ -1352,9 +1813,16 @@ auth_result_t auth_user_set_password(httpd_req_t *req, const char *name, const c
         }
         sessions_end_user(s_db.users[idx].name, keep);
         // Trusted devices of the user are removed - except the caller's own device on an own
-        // change, so that (like the own RAM session) it continues without a new login.
+        // change, which is re-issued with the new epoch so that (like the own RAM session) it
+        // continues without a new login. If that save fails, the stored copy keeps the old
+        // epoch: the device works until the next restart and must log in again then.
         const int keep_dev = own && current_device_is(s_cur.device) ? s_cur.device : -1;
-        if (devices_remove_user(s_db.users[idx].name, keep_dev)) {
+        bool changed = devices_remove_user(s_db.users[idx].name, keep_dev);
+        if (keep_dev >= 0) {
+            s_dev.dev[keep_dev].epoch = s_db.users[idx].epoch;
+            changed = true;
+        }
+        if (changed) {
             devices_save();
         }
         if (own) {
@@ -1376,8 +1844,7 @@ esp_err_t auth_init(void)
     lock();
     sessions_wipe_all();
     memset(s_basic_cache, 0, sizeof(s_basic_cache));
-    s_fails = 0;
-    s_lock_until_us = 0;
+    lockout_reset_all();
     esp_fill_random(s_dummy_salt, sizeof(s_dummy_salt));
 
     // One timed hash at start-up: shows the real cost of a password check in the log.
@@ -1390,12 +1857,20 @@ esp_err_t auth_init(void)
     }
 
     devices_make_empty(&s_dev);
-    esp_err_t err = db_load(&s_backup);
+    bool migrated = false;
+    esp_err_t err = db_load(&migrated);
     if (err == ESP_OK) {
-        memcpy(&s_db, &s_backup, sizeof(s_db));
+        s_storage_ok = true;
         ESP_LOGI(TAG, "%d user(s) loaded", s_db.count);
-        devices_load();   // only with real users: never for the RAM fallback below
+        if (migrated) {
+            err = db_save();   // on failure the users stay valid in RAM; the next change retries
+            if (err == ESP_OK) {
+                ESP_LOGI(TAG, "user database saved in the new format");
+            }
+        }
+        devices_load();   // drops devices of old layouts or epochs (also from NVS)
     } else if (err == ESP_ERR_NVS_NOT_FOUND) {
+        s_storage_ok = true;
         db_make_default(&s_db);
         err = db_save();
         if (err == ESP_OK) {
@@ -1404,12 +1879,16 @@ esp_err_t auth_init(void)
             ESP_LOGE(TAG, "no users stored and saving failed - admin/admin in RAM only");
         }
     } else {
-        // Unreadable or corrupt: never run without authentication. The stored data is left
-        // alone; the next successful user change overwrites it.
-        ESP_LOGE(TAG, "user database unreadable (%s) - using admin/admin in RAM only", esp_err_to_name(err));
-        db_make_default(&s_db);
+        // A database exists but cannot be read or validated: never fall back to a known
+        // password. Every login and protected request is refused until the BOOT button reset.
+        s_storage_ok = false;
+        mbedtls_platform_zeroize(&s_db, sizeof(s_db));
+        ESP_LOGE(TAG, "user database unreadable (%s) - all logins refused until the button reset",
+                 esp_err_to_name(err));
+        if (err == ESP_OK) {
+            err = ESP_FAIL;
+        }
     }
-    mbedtls_platform_zeroize(&s_backup, sizeof(s_backup));
     s_ready = true;
     unlock();
     return err;
@@ -1423,15 +1902,17 @@ esp_err_t auth_reset_users(void)
     lock();
     sessions_wipe_all();
     memset(s_basic_cache, 0, sizeof(s_basic_cache));
-    s_fails = 0;
-    s_lock_until_us = 0;
-    db_make_default(&s_db);
+    lockout_reset_all();
+    db_make_default(&s_db);   // new epochs: no stored device can match any more
     devices_make_empty(&s_dev);
     esp_err_t err = db_save();
     const esp_err_t dev_err = devices_save();
     if (err == ESP_OK) {
         err = dev_err;
     }
+    // The owner pressed the button: admin/admin applies (with the forced change) even if the
+    // database could not be written; this also repairs an unreadable database.
+    s_storage_ok = true;
     s_ready = true;
     unlock();
     if (err == ESP_OK) {

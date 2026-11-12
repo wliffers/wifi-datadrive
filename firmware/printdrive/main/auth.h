@@ -3,10 +3,19 @@
 /**
  * Authentication and user management (work package P1, API contract v3 section 2).
  *
- * - Users live in NVS (namespace "pd_auth"), at most AUTH_USERS_MAX. Per user: name, role,
- *   16-byte salt and PBKDF2-HMAC-SHA256 (2000 rounds, 32 bytes). Never the password.
+ * - Users live in NVS (namespace "pd_auth", key "users", layout version 2), at most
+ *   AUTH_USERS_MAX. Per user: name, role, 16-byte salt, PBKDF2-HMAC-SHA256 (2000 rounds,
+ *   32 bytes) and a random epoch. Never the password. Version 1 (no epoch) is converted at load.
  * - Sessions live in RAM (cookie "dd_session"), HTTP Basic works on every request.
- * - 5 failed password checks in a row lock every password check for 30 s (429 LOCKED).
+ * - Trusted devices (key "devices", version 2) carry their user's epoch; a new epoch (password
+ *   or role change, deletion/re-creation, failed device removal) invalidates them.
+ * - Lock-out per peer address: 5 failed password checks in a row from one address lock that
+ *   address for 30 s (429 LOCKED, Retry-After), doubling with every further lock-out up to
+ *   15 min; only a verified password from the same address resets it. Sessions and trusted
+ *   devices keep working. Global cap: more than 30 failures per minute restrict password checks
+ *   for 30 s to addresses with a verified password within the last 12 hours.
+ * - If a stored user database exists but cannot be read, everything protected answers
+ *   503 AUTH_UNAVAILABLE until auth_reset_users() (BOOT button) writes a new one.
  *
  * All state is protected by one mutex, so auth_reset_users() may be called from any task.
  * The per-request identity (auth_current_*) is only meaningful in the HTTP server task
@@ -46,6 +55,7 @@ typedef enum {
     AUTH_ERR_USER_LIMIT,      // 409 AUTH_USERS_MAX users exist
     AUTH_ERR_LOCKED,          // 429 too many failed attempts
     AUTH_ERR_IO,              // 500 user database could not be saved
+    AUTH_ERR_UNAVAILABLE,     // 503 code AUTH_UNAVAILABLE: stored user database unreadable
 } auth_result_t;
 
 /** Machine-readable code ("BAD_LOGIN", ...). */
@@ -54,8 +64,15 @@ const char *auth_result_code(auth_result_t r);
 const char *auth_result_str(auth_result_t r);
 /** HTTP status line ("401 Unauthorized", ...). */
 const char *auth_result_http_status(auth_result_t r);
-/** Send {"ok":false,"code":..,"error":..} for r (r != AUTH_OK) with the matching status. */
+/** Send {"ok":false,"code":..,"error":..} for r (r != AUTH_OK) with the matching status.
+ *  For AUTH_ERR_LOCKED from this request's check it adds "Retry-After: <seconds>".
+ *  HTTP server task only. */
 esp_err_t auth_send_error(httpd_req_t *req, auth_result_t r);
+
+/** False while a stored user database exists but cannot be read or validated (every login and
+ *  protected request is refused with 503 AUTH_UNAVAILABLE; auth_reset_users() repairs it).
+ *  True after a normal start, a first start and a reset. Callable from any task. */
+bool auth_storage_ok(void);
 
 // ------------------------------------------------------------------ dispatcher interface
 
@@ -70,7 +87,7 @@ bool auth_authorize(httpd_req_t *req, web_role_t min_role);
 
 /** Full identification of the caller for a public route (/api/session): session cookie
  *  first, then HTTP Basic (which counts failures and honours the lock-out). Returns AUTH_OK,
- *  AUTH_ERR_UNAUTHORIZED or AUTH_ERR_LOCKED; sends nothing. */
+ *  AUTH_ERR_UNAUTHORIZED, AUTH_ERR_LOCKED or AUTH_ERR_UNAVAILABLE; sends nothing. */
 auth_result_t auth_identify(httpd_req_t *req);
 
 /** Name of the logged-in user of this request, "" if none. Never NULL. */
@@ -84,12 +101,15 @@ bool auth_current_default_password(httpd_req_t *req);
 
 // ------------------------------------------------------------------ endpoints (web_auth.c)
 
-/** Check user/pass (counts failures, honours the lock-out) and create a session. With
- *  device_label != NULL a trusted device (persistent, contract 2.2a) is created instead; the
- *  label is sanitised here. If it cannot be saved, a volatile session is created and
- *  *persistent stays false. On AUTH_OK token_hex receives the cookie value (AUTH_TOKEN_HEX
- *  chars + NUL) and the request identity is set to this user.
- *  Errors: AUTH_ERR_BAD_LOGIN, AUTH_ERR_LOCKED. */
+/** Check user/pass (counts failures of the peer address, honours its lock-out) and create a
+ *  session. With device_label != NULL a trusted device (persistent, contract 2.2a) is created
+ *  instead; the label is sanitised here. The same user with the same label replaces its
+ *  record; a user has at most 4 devices and only ever displaces its own oldest one; device
+ *  records are written at most once per 10 s and 20 times per hour. If no device can be
+ *  created or saved, a volatile session is created and *persistent stays false. On AUTH_OK
+ *  token_hex receives the cookie value (AUTH_TOKEN_HEX chars + NUL) and the request identity
+ *  is set to this user.
+ *  Errors: AUTH_ERR_BAD_LOGIN, AUTH_ERR_LOCKED, AUTH_ERR_UNAVAILABLE. */
 auth_result_t auth_login(httpd_req_t *req, const char *user, const char *pass, const char *device_label,
                          char token_hex[AUTH_TOKEN_HEX + 1], bool *persistent);
 
@@ -106,8 +126,10 @@ typedef struct {
 /** Trusted devices visible to the caller (own ones; admin: all). Returns the count. */
 size_t auth_list_devices(auth_device_info_t *out, size_t max);
 
-/** Remove a trusted device by id: own one, or any as admin.
- *  Errors: AUTH_ERR_NOT_FOUND, AUTH_ERR_FORBIDDEN_ROLE, AUTH_ERR_IO (removed in RAM anyway). */
+/** Remove a trusted device by id: own one, or any as admin. If the removal cannot be saved, the
+ *  owner gets a new epoch (all of the owner's stored devices become invalid).
+ *  Errors: AUTH_ERR_NOT_FOUND, AUTH_ERR_FORBIDDEN_ROLE, AUTH_ERR_IO (removed in RAM anyway, but
+ *  neither the removal nor the new epoch could be saved). */
 auth_result_t auth_device_delete(const char *id);
 
 typedef struct {
@@ -143,12 +165,14 @@ bool auth_valid_name(const char *name);
 
 // ------------------------------------------------------------------ lifecycle
 
-/** Load users from NVS (creates admin/admin if there are none). Call once before the web
- *  server starts. On a storage error the users are admin/admin in RAM only (logged) and an
- *  error is returned; authentication is still enforced. */
+/** Load users from NVS. Nothing stored yet (first start): admin/admin is created (in RAM only
+ *  if saving fails). A stored database of layout version 1 is converted (users kept, trusted
+ *  devices discarded). A stored database that cannot be read or validated: every login and
+ *  protected request is refused (auth_storage_ok() false) and an error is returned; the stored
+ *  data is left alone. Call once before the web server starts. */
 esp_err_t auth_init(void);
 
 /** Delete all users, sessions and trusted devices and re-create admin/admin (BOOT button held
- *  10 s; the forced password change applies again). Also clears the lock-out. Safe to call
- *  from any task. */
+ *  10 s; the forced password change applies again). Also clears all lock-outs and repairs an
+ *  unreadable database (admin/admin applies even if saving fails). Safe to call from any task. */
 esp_err_t auth_reset_users(void);

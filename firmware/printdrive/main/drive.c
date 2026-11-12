@@ -160,6 +160,22 @@ static uint32_t idle_ms(bool seen, const volatile uint32_t *last)
 static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static void unlock(void) { xSemaphoreGive(s_lock); }
 
+/** Like lock(), but gives up (false) as soon as a long folder operation (copy, recursive
+ *  delete) is running, so the caller (UI task, button) is not frozen. The owner cannot change
+ *  during such an operation anyway. */
+static bool lock_unless_long_op(void)
+{
+    if (s_long_op) {
+        return false;
+    }
+    while (xSemaphoreTake(s_lock, pdMS_TO_TICKS(STATUS_WAIT_MS)) != pdTRUE) {
+        if (s_long_op) {
+            return false;
+        }
+    }
+    return true;
+}
+
 const char *drive_result_str(drive_result_t r)
 {
     // Shown to end users in the web UI: plain language, no internal terms.
@@ -685,7 +701,9 @@ void drive_get_status(drive_status_t *out)
 drive_result_t drive_set_owner(drive_owner_t target, bool force)
 {
     drive_result_t r = DRIVE_OK;
-    lock();
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
     if (target == s_st.owner) {
         goto out;
     }
@@ -960,7 +978,47 @@ static uint32_t fat_mtime(WORD fdate, WORD ftime)
     return t >= MTIME_MIN ? (uint32_t)t : 0;
 }
 
-/** NOT_FOUND unless the parent folder of the FatFs path in buf exists (root always does). */
+/** Name the listing hides (leading dot, "System Volume Information"). */
+static bool name_hidden(const char *n)
+{
+    return n[0] == '.' || strcasecmp(n, "System Volume Information") == 0;
+}
+
+/**
+ * Central visibility check for EXISTING objects (buf = mutable FatFs path "N:/a/b/c", modified
+ * temporarily). Every component is resolved with f_stat(); if the long name FatFs reports for
+ * it is hidden (e.g. reached through an 8.3 alias like "SYSTEM~1" or "TRASHE~1") the result is
+ * NOT_FOUND, exactly as if it did not exist. On DRIVE_OK *fno describes the last component
+ * (untouched for the root). A missing component gives NOT_FOUND.
+ */
+static drive_result_t check_visible(char *buf, FILINFO *fno)
+{
+    char *seg = buf + FAT_REL_OFF;
+    while (*seg) {
+        char *slash = strchr(seg, '/');
+        if (slash) {
+            *slash = '\0';
+        }
+        const bool given_hidden = name_hidden(seg);   // cheap check of the given spelling
+        const FRESULT fr = f_stat(buf, fno);
+        if (slash) {
+            *slash = '/';
+        }
+        if (fr != FR_OK) {
+            return fr_result(fr);
+        }
+        if (given_hidden || name_hidden(fno->fname)) {   // the reported long name is the real test
+            return DRIVE_ERR_NOT_FOUND;
+        }
+        if (!slash) {
+            break;
+        }
+        seg = slash + 1;
+    }
+    return DRIVE_OK;
+}
+
+/** NOT_FOUND unless the parent folder of the FatFs path in buf exists and is visible (root always does). */
 static drive_result_t check_parent(char *buf, FILINFO *fno)
 {
     char *slash = strrchr(buf + FAT_REL_OFF, '/');
@@ -968,12 +1026,12 @@ static drive_result_t check_parent(char *buf, FILINFO *fno)
         return DRIVE_OK;
     }
     *slash = '\0';
-    const FRESULT fr = f_stat(buf, fno);
+    const drive_result_t r = check_visible(buf, fno);
     *slash = '/';
-    if (fr == FR_OK) {
+    if (r == DRIVE_OK) {
         return (fno->fattrib & AM_DIR) ? DRIVE_OK : DRIVE_ERR_NOT_FOUND;
     }
-    return fr_result(fr);
+    return r;
 }
 
 // ---- recursive folder operations
@@ -1245,13 +1303,14 @@ static drive_result_t prepare_move_copy(tree_ctx_t *c, const char *from, const c
     if (!slen || !fat_path(c->path2, TREE_PATH_SIZE, to)) {
         return DRIVE_ERR_IO;
     }
-    FRESULT fr = f_stat(c->path, &c->fno);
-    if (fr != FR_OK) {
-        return fr_result(fr);
+    FRESULT fr;
+    drive_result_t r = check_visible(c->path, &c->fno);
+    if (r != DRIVE_OK) {
+        return r;
     }
     *is_dir = (c->fno.fattrib & AM_DIR) != 0;
     c->bytes = c->fno.fsize;
-    drive_result_t r = check_parent(c->path2, &c->fno);
+    r = check_parent(c->path2, &c->fno);
     if (r != DRIVE_OK || !*is_dir) {
         return r;
     }
@@ -1314,6 +1373,9 @@ drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list
     }
     if (r == DRIVE_OK && !fat_path(c->path, sizeof(c->path), dir)) {
         r = DRIVE_ERR_IO;
+    }
+    if (r == DRIVE_OK) {
+        r = check_visible(c->path, &c->fno);          // hidden folders (also via alias): NOT_FOUND
     }
     if (r == DRIVE_OK) {
         r = fr_result(f_opendir(&c->dir, c->path));   // a file instead of a folder: NOT_FOUND
@@ -1392,7 +1454,7 @@ drive_result_t drive_delete(const char *path, bool recursive)
         r = DRIVE_ERR_IO;
     }
     if (r == DRIVE_OK) {
-        r = fr_result(f_stat(c->path, &c->fno));
+        r = check_visible(c->path, &c->fno);
     }
     if (r == DRIVE_OK && (c->fno.fattrib & AM_DIR)) {
         FF_DIR *d = &c->dirs[0];
@@ -1550,6 +1612,18 @@ drive_result_t drive_download_open(const char *path, int *fd, uint32_t *size)
     if (r == DRIVE_OK && path[0] == '\0') {
         r = DRIVE_ERR_IS_DIR;
     }
+    if (r == DRIVE_OK && path[0] != '\0') {
+        struct {
+            char path[FAT_REL_OFF + VFS_REL_MAX + 1];
+            FILINFO fno;
+        } *v = malloc(sizeof(*v));
+        if (!v || !fat_path(v->path, sizeof(v->path), path)) {
+            r = DRIVE_ERR_IO;
+        } else {
+            r = check_visible(v->path, &v->fno);
+        }
+        free(v);
+    }
     if (r == DRIVE_OK) {
         char full[sizeof(DRIVE_BASE_PATH) + 1 + VFS_REL_MAX + 1];
         make_path(full, sizeof(full), path);
@@ -1622,9 +1696,23 @@ drive_result_t drive_upload_begin(const char *path, uint32_t size, bool overwrit
     make_path(full, sizeof(full), path);
     struct stat st;
     char *slash = strrchr(full + sizeof(DRIVE_BASE_PATH), '/');
-    if (slash) {   // target folder must exist (the root always does)
+    if (slash) {   // target folder must exist and be visible (the root always does)
         *slash = '\0';
-        const bool folder = stat(full, &st) == 0 && S_ISDIR(st.st_mode);
+        bool folder = stat(full, &st) == 0 && S_ISDIR(st.st_mode);
+        if (folder) {
+            struct {
+                char path[FAT_REL_OFF + DRIVE_PATH_MAX + 1];
+                FILINFO fno;
+            } *v = malloc(sizeof(*v));
+            if (!v) {
+                *slash = '/';
+                r = DRIVE_ERR_IO;
+                goto out;
+            }
+            folder = fat_path(v->path, sizeof(v->path), full + sizeof(DRIVE_BASE_PATH)) &&
+                     check_visible(v->path, &v->fno) == DRIVE_OK;
+            free(v);
+        }
         *slash = '/';
         if (!folder) {
             r = DRIVE_ERR_NOT_FOUND;
@@ -1804,7 +1892,11 @@ void drive_upload_abort(void)
 
 drive_result_t drive_prepare_restart(bool force)
 {
-    lock();
+    if (force) {
+        lock();
+    } else if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
     if (!force && s_st.upload_active) {
         unlock();
         return DRIVE_ERR_BUSY;

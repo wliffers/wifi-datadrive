@@ -214,11 +214,12 @@ static bool check_csrf(httpd_req_t *req)
 static esp_err_t dispatch(httpd_req_t *req)
 {
     const web_route_t *route = req->user_ctx;
+    // On failure with a body: ESP_FAIL closes the connection instead of draining the body.
     if (!auth_authorize(req, route->role)) {
-        return ESP_OK;
+        return req->content_len > 0 ? ESP_FAIL : ESP_OK;
     }
     if (req->method == HTTP_POST && !check_csrf(req)) {
-        return ESP_OK;
+        return req->content_len > 0 ? ESP_FAIL : ESP_OK;
     }
     return route->handler(req);
 }

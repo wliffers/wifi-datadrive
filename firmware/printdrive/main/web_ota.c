@@ -150,10 +150,21 @@ static esp_err_t h_ota(httpd_req_t *req)
     ESP_LOGI(TAG, "update ok: %u bytes in %lld ms, restarting into %s", (unsigned)total,
              (esp_timer_get_time() - t0) / 1000, part->label);
 
-    // The image is in place; stop host I/O now (blocks permanently), answer, then restart.
-    const drive_result_t r = drive_prepare_restart(true);
+    // The image is in place. Wait (up to 10 s) until the USB host is not writing, then stop host
+    // I/O (blocks permanently) - forced only after the timeout. The wait happens before the
+    // answer, which keeps the web client waiting for the answer meanwhile (acceptable, and the
+    // forced step then never drops the host's data without need).
+    drive_result_t r = drive_prepare_restart(false);
+    for (int i = 0; i < 20 && (r == DRIVE_ERR_HOST_WRITING || r == DRIVE_ERR_BUSY); i++) {
+        vTaskDelay(pdMS_TO_TICKS(500));
+        r = drive_prepare_restart(false);
+    }
     if (r != DRIVE_OK) {
-        ESP_LOGW(TAG, "drive_prepare_restart: %s", drive_result_str(r));
+        ESP_LOGW(TAG, "drive_prepare_restart: %s - forcing", drive_result_str(r));
+        r = drive_prepare_restart(true);
+        if (r != DRIVE_OK) {
+            ESP_LOGW(TAG, "drive_prepare_restart(force): %s", drive_result_str(r));
+        }
     }
     web_send_json(req, "200 OK", "{\"ok\":true,\"restart\":true}");
     vTaskDelay(pdMS_TO_TICKS(500));

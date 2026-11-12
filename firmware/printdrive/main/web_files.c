@@ -150,6 +150,12 @@ static esp_err_t h_download(httpd_req_t *req)
         }
     }
     drive_download_close(fd);
+    if (err == ESP_OK && n < 0) {
+        // Read error: do NOT send the terminating chunk, abort the connection instead so the
+        // client sees a failed transfer rather than a silently truncated file.
+        ESP_LOGE(TAG, "download '%s': read error, aborting", path);
+        return ESP_FAIL;
+    }
     if (err == ESP_OK) {
         err = httpd_resp_send_chunk(req, NULL, 0);
     }
@@ -307,7 +313,10 @@ static esp_err_t h_push(httpd_req_t *req)
         drive_get_status(&st);
         if (st.owner == DRIVE_OWNER_USB) {
             r = drive_set_owner(DRIVE_OWNER_APP, force);
-            took_over = r == DRIVE_OK;
+            // do_mount_app() sets the owner before it knows whether the file system mounted
+            // (NO_FS): decide from the real owner, so the drive is always given back.
+            drive_get_status(&st);
+            took_over = st.owner == DRIVE_OWNER_APP;
             if (took_over) {
                 ESP_LOGI(TAG, "push: drive taken over from the USB host");
             }
