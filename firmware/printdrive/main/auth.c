@@ -1410,6 +1410,31 @@ auth_result_t auth_identify(httpd_req_t *req)
     return s_ready ? identify(req, true) : AUTH_ERR_UNAUTHORIZED;
 }
 
+auth_result_t auth_identify_basic_only(httpd_req_t *req)
+{
+    clear_current();
+    if (!s_ready) {
+        return AUTH_ERR_UNAUTHORIZED;
+    }
+    uint8_t addr[16];
+    peer_addr(req, addr);
+    auth_result_t r = AUTH_ERR_UNAUTHORIZED;
+    lock();
+    const int64_t now = esp_timer_get_time();
+    if (!s_storage_ok) {
+        r = AUTH_ERR_UNAVAILABLE;
+    } else {
+        // No session cookie is looked at: only the credentials in this request count.
+        switch (try_basic(req, addr, now)) {
+        case BASIC_OK:     r = AUTH_OK; break;
+        case BASIC_LOCKED: r = AUTH_ERR_LOCKED; break;
+        default:           break;
+        }
+    }
+    unlock();
+    return r;
+}
+
 const char *auth_current_user(httpd_req_t *req)
 {
     (void)req;

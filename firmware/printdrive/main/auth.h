@@ -90,6 +90,12 @@ bool auth_authorize(httpd_req_t *req, web_role_t min_role);
  *  AUTH_ERR_UNAUTHORIZED, AUTH_ERR_LOCKED or AUTH_ERR_UNAVAILABLE; sends nothing. */
 auth_result_t auth_identify(httpd_req_t *req);
 
+/** HTTP Basic only (WebDAV): like auth_identify(), but a session cookie or trusted-device cookie
+ *  is ignored - the request must carry valid Basic credentials itself. Same failure counting,
+ *  lock-out and cache as auth_identify(). Returns AUTH_OK, AUTH_ERR_UNAUTHORIZED (missing, other
+ *  scheme, malformed or wrong), AUTH_ERR_LOCKED or AUTH_ERR_UNAVAILABLE; sends nothing. */
+auth_result_t auth_identify_basic_only(httpd_req_t *req);
+
 /** Name of the logged-in user of this request, "" if none. Never NULL. */
 const char *auth_current_user(httpd_req_t *req);
 

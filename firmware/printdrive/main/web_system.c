@@ -4,6 +4,7 @@
 #include <string.h>
 #include "anim.h"
 #include "applog.h"
+#include "auth.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -29,6 +30,9 @@ static const char *TAG = "web";
 #else
 #define UPLOAD_TYPES ".3mf"
 #endif
+
+#define STATUS_BUF_SIZE 3072     // /api/status answer (heap)
+#define STATUS_SLACK    8        // closer than this to the end = possibly cut off (see h_status())
 
 static const char *owner_str(drive_owner_t o)
 {
@@ -91,8 +95,11 @@ static esp_err_t h_set_tz(httpd_req_t *req)
     return web_send_result(req, DRIVE_OK);
 }
 
-// POST /api/time?epoch=<unix seconds> (user): only while NTP has not set the clock.
-// Answer {"ok":true,"set":true|false}; set=false: NTP has synced, the clock was left alone.
+// POST /api/time?epoch=<unix seconds>[&force=1] (user): taken only while the clock is unknown
+// (no NTP, not set by anyone since power-up); force=1 (admin only, else 403 FORBIDDEN_ROLE) also
+// replaces a known clock, but never one set by NTP.
+// Answer {"ok":true,"set":true|false}; set=false: the clock was already known (or NTP has synced)
+// and was left alone.
 static esp_err_t h_set_time(httpd_req_t *req)
 {
     uint32_t epoch;
@@ -103,7 +110,11 @@ static esp_err_t h_set_time(httpd_req_t *req)
     if (epoch < 1700000000u || epoch >= 4102444800u) {
         return web_send_error(req, "400 Bad Request", "BAD_REQUEST", "Uhrzeit nicht plausibel");
     }
-    const esp_err_t err = pd_time_set_client(epoch);
+    const bool force = web_query_flag(req, "force");
+    if (force && auth_current_role(req) != WEB_ROLE_ADMIN) {
+        return auth_send_error(req, AUTH_ERR_FORBIDDEN_ROLE);
+    }
+    const esp_err_t err = force ? pd_time_set_admin(epoch) : pd_time_set_client(epoch);
     if (err == ESP_ERR_INVALID_STATE) {
         return web_send_json(req, "200 OK", "{\"ok\":true,\"set\":false}");
     }
@@ -167,12 +178,19 @@ static esp_err_t h_status(httpd_req_t *req)
         d.file_count = 0;
     }
 
-    char buf[2048] = "";
-    web_appendf(buf, sizeof(buf), "{\"version\":");
-    web_json_str(buf, sizeof(buf), esp_app_get_description()->version);
-    web_appendf(buf, sizeof(buf), ",\"uptime_s\":%lld,\"heap\":%lu,\"types\":\"%s\"",
+    // Heap, not the httpd task stack (10/12 KiB, shared with FatFs/mbedTLS): about 1.6 KiB is
+    // typical, the worst case (escaped SSIDs, hostname, resumable path, all names at their limits)
+    // stays below 2.5 KiB.
+    char *const buf = malloc(STATUS_BUF_SIZE);
+    if (!buf) {
+        return web_send_error(req, "500 Internal Server Error", "NO_MEM", "Zu wenig Arbeitsspeicher.");
+    }
+    buf[0] = '\0';
+    web_appendf(buf, STATUS_BUF_SIZE, "{\"version\":");
+    web_json_str(buf, STATUS_BUF_SIZE, esp_app_get_description()->version);
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"uptime_s\":%lld,\"heap\":%lu,\"types\":\"%s\"",
                 esp_timer_get_time() / 1000000, (unsigned long)esp_get_free_heap_size(), UPLOAD_TYPES);
-    web_appendf(buf, sizeof(buf),
+    web_appendf(buf, STATUS_BUF_SIZE,
                 ",\"drive\":{\"owner\":\"%s\",\"fs_ok\":%s,\"needs_format\":%s,\"usb_connected\":%s,"
                 "\"usb_suspended\":%s,\"host_ejected\":%s,\"host_writable\":%s,\"host_idle_ms\":%ld,"
                 "\"host_write_idle_ms\":%ld,\"write_guard_ms\":%d,\"total\":%llu,\"free\":%llu,\"files\":%lu,"
@@ -183,55 +201,65 @@ static esp_err_t h_status(httpd_req_t *req)
                 idle_json(d.host_idle_ms), idle_json(d.host_write_idle_ms), CONFIG_PD_HOST_WRITE_GUARD_MS,
                 (unsigned long long)d.total_bytes, (unsigned long long)d.free_bytes,
                 (unsigned long)d.file_count, (unsigned long)d.sector_size);
-    web_appendf(buf, sizeof(buf), ",\"medium\":{\"sd\":%s,\"name\":", d.on_sd ? "true" : "false");
-    web_json_str(buf, sizeof(buf), d.medium_name);
-    web_appendf(buf, sizeof(buf), "}");
-    web_appendf(buf, sizeof(buf), ",\"upload\":{\"active\":%s,\"name\":", d.upload_active ? "true" : "false");
-    web_json_str(buf, sizeof(buf), d.upload_name);
-    web_appendf(buf, sizeof(buf), ",\"received\":%lu,\"total\":%lu,\"resumable\":", (unsigned long)d.upload_received,
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"medium\":{\"sd\":%s,\"name\":", d.on_sd ? "true" : "false");
+    web_json_str(buf, STATUS_BUF_SIZE, d.medium_name);
+    web_appendf(buf, STATUS_BUF_SIZE, "}");
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"upload\":{\"active\":%s,\"name\":", d.upload_active ? "true" : "false");
+    web_json_str(buf, STATUS_BUF_SIZE, d.upload_name);
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"received\":%lu,\"total\":%lu,\"resumable\":", (unsigned long)d.upload_received,
                 (unsigned long)d.upload_total);
     {   // interrupted upload kept for resuming (web_files.c, /api/upload/resume), else null
         char rp[DRIVE_PATH_MAX + 1];
         uint32_t rsize = 0, roff = 0;
         if (drive_upload_resumable(rp, sizeof(rp), &rsize, &roff)) {
-            web_appendf(buf, sizeof(buf), "{\"path\":");
-            web_json_str(buf, sizeof(buf), rp);
-            web_appendf(buf, sizeof(buf), ",\"size\":%lu,\"offset\":%lu}}", (unsigned long)rsize, (unsigned long)roff);
+            web_appendf(buf, STATUS_BUF_SIZE, "{\"path\":");
+            web_json_str(buf, STATUS_BUF_SIZE, rp);
+            web_appendf(buf, STATUS_BUF_SIZE, ",\"size\":%lu,\"offset\":%lu}}", (unsigned long)rsize, (unsigned long)roff);
         } else {
-            web_appendf(buf, sizeof(buf), "null}");
+            web_appendf(buf, STATUS_BUF_SIZE, "null}");
         }
     }
-    web_appendf(buf, sizeof(buf), ",\"wifi\":{\"sta_configured\":%s,\"sta_connected\":%s,\"ssid\":",
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"wifi\":{\"sta_configured\":%s,\"sta_connected\":%s,\"ssid\":",
                 w.sta_configured ? "true" : "false", w.sta_connected ? "true" : "false");
-    web_json_str(buf, sizeof(buf), w.sta_ssid);
-    web_appendf(buf, sizeof(buf), ",\"ip\":\"%s\",\"rssi\":%d,\"ap_active\":%s,\"ap_ssid\":", w.sta_ip,
+    web_json_str(buf, STATUS_BUF_SIZE, w.sta_ssid);
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"ip\":\"%s\",\"rssi\":%d,\"ap_active\":%s,\"ap_ssid\":", w.sta_ip,
                 w.sta_rssi, w.ap_active ? "true" : "false");
-    web_json_str(buf, sizeof(buf), w.ap_ssid);
-    web_appendf(buf, sizeof(buf), ",\"ap_ip\":\"%s\",\"hostname\":", w.ap_ip);
-    web_json_str(buf, sizeof(buf), w.hostname);
-    web_appendf(buf, sizeof(buf), "}");
+    web_json_str(buf, STATUS_BUF_SIZE, w.ap_ssid);
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"ap_ip\":\"%s\",\"hostname\":", w.ap_ip);
+    web_json_str(buf, STATUS_BUF_SIZE, w.hostname);
+    web_appendf(buf, STATUS_BUF_SIZE, "}");
     char part[17];
     bool pending;
     ota_get_info(part, sizeof(part), &pending);
-    web_appendf(buf, sizeof(buf), ",\"ota\":{\"partition\":\"%s\",\"pending_verify\":%s}", part,
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"ota\":{\"partition\":\"%s\",\"pending_verify\":%s}", part,
                 pending ? "true" : "false");
-    web_appendf(buf, sizeof(buf), ",\"webdav\":%s", web_dav_enabled() ? "true" : "false");
-    web_appendf(buf, sizeof(buf), ",\"crypt\":{\"enabled\":%s,\"unlocked\":%s,\"damaged\":%s}",
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"webdav\":%s", web_dav_enabled() ? "true" : "false");
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"crypt\":{\"enabled\":%s,\"unlocked\":%s,\"damaged\":%s}",
                 d.crypt != DRIVE_CRYPT_OFF ? "true" : "false", locked ? "false" : "true",
                 d.crypt == DRIVE_CRYPT_DAMAGED ? "true" : "false");
-    append_clock_settings(buf, sizeof(buf));   // "time", "autolock", "lang" - before the HTTPS fields
+    append_clock_settings(buf, STATUS_BUF_SIZE);   // "time", "autolock", "lang" - before the HTTPS fields
 #ifdef CONFIG_PD_HTTPS_OPTION
     pd_tls_info_t t;
     pd_tls_get_info(&t);
-    web_appendf(buf, sizeof(buf),
+    web_appendf(buf, STATUS_BUF_SIZE,
                 ",\"https\":%s,\"https_active\":%s,\"https_restart\":%s,\"cert_sha256\":\"%s\",\"ca_sha256\":\"%s\","
                 "\"cert_expires\":\"%s\"}",
                 t.enabled ? "true" : "false", t.active ? "true" : "false", t.restart_pending ? "true" : "false",
                 t.cert_sha256, t.ca_sha256, t.cert_expires);
 #else
-    web_appendf(buf, sizeof(buf), "}");   // without the fields the web UI hides its HTTPS section
+    web_appendf(buf, STATUS_BUF_SIZE, "}");   // without the fields the web UI hides its HTTPS section
 #endif
-    return web_send_json(req, "200 OK", buf);
+    // web_appendf()/web_json_str() cut silently at the end of the buffer: an answer that came that
+    // close may be incomplete, and broken JSON is worse than an error.
+    esp_err_t err;
+    if (strlen(buf) + STATUS_SLACK >= STATUS_BUF_SIZE) {
+        ESP_LOGE(TAG, "status answer too long (%u bytes)", (unsigned)strlen(buf));
+        err = web_send_error(req, "500 Internal Server Error", "IO", "Statusantwort zu lang");
+    } else {
+        err = web_send_json(req, "200 OK", buf);
+    }
+    free(buf);
+    return err;
 }
 
 static esp_err_t h_mode(httpd_req_t *req)

@@ -384,6 +384,77 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     }
 }
 
+// ---- switching away from a weak network ---------------------------------------------
+// The station stays associated as long as the access point answers at all, even at -94 dBm with a
+// few kB/s. If the signal stays weak, look whether another stored network (or another access point
+// of the same network) is clearly stronger and reconnect to it.
+#define ROAM_RSSI        (-80)      // weaker than this counts as weak
+#define ROAM_GAIN        12         // the alternative must be this many dB stronger
+#define ROAM_AFTER_MS    30000      // weak for this long before the first look
+#define ROAM_PERIOD_MS   120000     // at most one look (scan) per period
+
+static int64_t s_weak_since_ms, s_next_roam_ms;
+
+static void roam_check(int rssi_now)
+{
+    const int64_t t = now_ms();
+    if (rssi_now > ROAM_RSSI) {
+        s_weak_since_ms = 0;
+        return;
+    }
+    if (s_weak_since_ms == 0) {
+        s_weak_since_ms = t;
+        return;
+    }
+    if (t - s_weak_since_ms < ROAM_AFTER_MS || t < s_next_roam_ms) {
+        return;
+    }
+    s_next_roam_ms = t + ROAM_PERIOD_MS;
+
+    char ssids[PD_WIFI_MAX_NETWORKS][33];
+    bool used[PD_WIFI_MAX_NETWORKS];
+    lock();
+    const int cur = s_cur_slot;
+    for (int i = 0; i < PD_WIFI_MAX_NETWORKS; i++) {
+        used[i] = s_nets[i].used;
+        strlcpy(ssids[i], s_nets[i].ssid, sizeof(ssids[i]));
+    }
+    unlock();
+    if (xSemaphoreTake(s_scan_lock, 0) != pdTRUE) {
+        return;   // a web scan is running: next period
+    }
+    int best = -1, best_rssi = -1000;
+    wifi_scan_config_t sc = {0};
+    sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+    sc.scan_time.active.min = 60;
+    sc.scan_time.active.max = 110;
+    if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
+        uint16_t n = SCAN_MAX_RECORDS;
+        if (esp_wifi_scan_get_ap_records(&n, s_scan_recs) == ESP_OK) {
+            for (int k = 0; k < n; k++) {
+                for (int i = 0; i < PD_WIFI_MAX_NETWORKS; i++) {
+                    if (used[i] && strcmp((const char *)s_scan_recs[k].ssid, ssids[i]) == 0 &&
+                        s_scan_recs[k].rssi > best_rssi) {
+                        best = i;
+                        best_rssi = s_scan_recs[k].rssi;
+                    }
+                }
+            }
+        }
+    }
+    xSemaphoreGive(s_scan_lock);
+    if (best < 0 || best_rssi < rssi_now + ROAM_GAIN) {
+        return;
+    }
+    ESP_LOGW(TAG, "weak signal (%d dBm): switching to '%s' (%d dBm)%s", rssi_now, ssids[best], best_rssi,
+             best == cur ? ", other access point" : "");
+    lock();
+    s_prefer_slot = best;
+    s_reconfigure = true;   // wifi_task disconnects and starts a new round, preferred network first
+    unlock();
+    s_weak_since_ms = 0;
+}
+
 static void wifi_task(void *arg)
 {
     while (true) {
@@ -463,6 +534,7 @@ static void wifi_task(void *arg)
                 lock();
                 s_st.sta_rssi = ap.rssi;
                 unlock();
+                roam_check(ap.rssi);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(1000));

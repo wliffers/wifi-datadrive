@@ -51,10 +51,27 @@ bool pd_time_tz_valid(const char *tz);
 esp_err_t pd_time_set_tz(const char *tz);
 
 /**
- * Set the clock from a client (browser). Refused while NTP has synced (ESP_ERR_INVALID_STATE).
- * ESP_ERR_INVALID_ARG if epoch is before the firmware's build date or after 2100.
+ * Set the clock from a client (browser, any logged-in user): only while the clock is UNKNOWN
+ * (pd_time_now() == 0). Once it is known - set by NTP, by a client, by an admin, or kept over a
+ * soft restart - further client times are ignored (ESP_ERR_INVALID_STATE), so nobody can move the
+ * clock back and forth. ESP_ERR_INVALID_ARG if epoch is before the firmware's build date or after
+ * 2100.
  */
 esp_err_t pd_time_set_client(uint32_t epoch);
+
+/**
+ * Set the clock on an admin's request (the caller checks the role): also when the clock is already
+ * known, but never while NTP has synced (ESP_ERR_INVALID_STATE). ESP_ERR_INVALID_ARG as above.
+ * Afterwards the clock counts as trusted (pd_time_trusted()) until the next power-up.
+ */
+esp_err_t pd_time_set_admin(uint32_t epoch);
+
+/**
+ * True if the clock comes from a trusted source since power-up: NTP, or an admin
+ * (pd_time_set_admin()). A clock set by an ordinary client or kept over a soft restart is not
+ * trusted (used for certificate dates, see tls.c).
+ */
+bool pd_time_trusted(void);
 
 /**
  * FAT date/time (local time, as in FILINFO.fdate/ftime) -> unix seconds using the current time

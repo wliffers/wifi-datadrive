@@ -374,6 +374,7 @@ static const web_route_t s_https_routes[] = {
 #define REDIR_REQ_SIZE  512     // request line + headers read; a longer target redirects to "/"
 #define REDIR_RESP_SIZE 768     // 51 + host (< 64) + target (< 512) + 72 always fit
 #define REDIR_TIMEOUT_S 3
+#define REDIR_DEADLINE_MS 5000  // whole request per connection: a byte every few seconds cannot hold the task
 
 /** Local IPv4 address of the connection (dual-stack socket: IPv4 shows up as ::ffff:a.b.c.d). */
 static bool redirect_local_ip(int fd, char out[16])
@@ -479,12 +480,17 @@ static void redirect_find_host(const char *req, char host[64])
     }
 }
 
-/** Names of the stick itself: an IPv4 address, <hostname>, <hostname>.local. */
-static bool redirect_host_is_ours(const char *h, const pd_wifi_status_t *w)
+/** Names of the stick itself: the IPv4 address the client connected to (local_ip, NULL if unknown:
+ *  then the station or setup-AP address), <hostname>, <hostname>.local. */
+static bool redirect_host_is_ours(const char *h, const pd_wifi_status_t *w, const char *local_ip)
 {
     const size_t n = strlen(h), hl = strlen(w->hostname);
     if (strspn(h, "0123456789.") == n) {
-        return true;
+        // A numeric Host must be our real address, never just any number (DNS rebinding etc.).
+        if (local_ip) {
+            return strcmp(h, local_ip) == 0;
+        }
+        return (w->sta_ip[0] && strcmp(h, w->sta_ip) == 0) || (w->ap_ip[0] && strcmp(h, w->ap_ip) == 0);
     }
     if (hl == 0) {
         return false;
@@ -516,8 +522,17 @@ static size_t redirect_put(char *buf, size_t pos, const char *s, size_t n)
 
 static void redirect_answer(int fd, char *req, char *resp)
 {
+    // SO_RCVTIMEO restarts with every byte: limit the whole request instead, so a client sending a
+    // byte every few seconds cannot keep this (only) task from answering others.
+    const int64_t deadline_us = esp_timer_get_time() + (int64_t)REDIR_DEADLINE_MS * 1000;
     size_t n = 0;
     while (n < REDIR_REQ_SIZE - 1) {
+        const int64_t left_us = deadline_us - esp_timer_get_time();
+        if (left_us < 1000) {
+            break;    // deadline reached (a 0 timeout would mean "wait forever")
+        }
+        const struct timeval tv = {.tv_sec = (time_t)(left_us / 1000000), .tv_usec = (long)(left_us % 1000000)};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         const ssize_t got = recv(fd, req + n, REDIR_REQ_SIZE - 1 - n, 0);
         if (got <= 0) {
             break;
@@ -540,7 +555,7 @@ static void redirect_answer(int fd, char *req, char *resp)
     size_t tlen;
     redirect_target(req, &target, &tlen);
     redirect_find_host(req, host);
-    if (host[0] && !redirect_host_is_ours(host, &w)) {
+    if (host[0] && !redirect_host_is_ours(host, &w, have_ip ? ip : NULL)) {
         // A foreign name: a captive-portal check (the setup AP's DNS answers every name with the
         // stick) or a DNS alias. The certificate only names the stick, so go to its address -
         // on the setup AP to the setup page, as web_static_not_found() does without HTTPS.
@@ -678,7 +693,10 @@ static esp_err_t start_https_server(const httpd_config_t *base, httpd_handle_t *
     cfg.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;
     cfg.port_secure = 443;
     cfg.session_tickets = true;         // browsers resume (no ECDHE/ECDSA) instead of a full handshake
-    cfg.tls_handshake_timeout_ms = 5000;   // a client that stalls in the handshake blocks the server
+    // A client that stalls in the handshake blocks the (single) server task: keep it short. A full
+    // ECDHE/ECDSA handshake takes well under 1 s here. esp_http_server 5.5.6 has no total deadline
+    // for the request headers (only the per-recv timeout above); see PD_HTTPS_OPTION in Kconfig.
+    cfg.tls_handshake_timeout_ms = 3000;
     cfg.user_cb = https_session_cb;
     const esp_err_t err = httpd_ssl_start(server, &cfg);
     pd_tls_release_server_credentials();   // the server keeps its own copy

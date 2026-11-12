@@ -21,6 +21,7 @@
 #include "mbedtls/sha256.h"
 #include "mbedtls/x509_crt.h"
 #include "nvs.h"
+#include "pd_time.h"
 #include "pd_wifi.h"
 #include "sdkconfig.h"
 
@@ -96,11 +97,21 @@ static int32_t build_day(void)
     return (y >= 2024 && d >= 1 && d <= 31) ? days_from_civil(y, m, d) : days_from_civil(2026, 1, 1);
 }
 
-/** "Today" as well as the device knows it: the clock if it was set by a browser (plausible
- *  range only), else the firmware build date. The device has no RTC. */
+/**
+ * Day the certificate dates count from (notBefore = this - 2, notAfter = notBefore + 820). A
+ * notBefore in the future would make every client reject the certificate, so a clock that any
+ * logged-in browser could have set (pd_time_set_client(), or a clock kept over a soft restart) is
+ * never used: the firmware build date, unless the clock is trusted (NTP or set by an admin,
+ * pd_time_trusted()) and later than the build date (plausible range only). The build date alone
+ * cannot be used for good: Apple accepts at most 825 days between notBefore and notAfter, so a
+ * device without firmware updates could otherwise never renew an expired certificate.
+ */
 static int32_t ref_day(void)
 {
     const int32_t b = build_day();
+    if (!pd_time_trusted()) {
+        return b;
+    }
     const time_t now = time(NULL);
     const int32_t n = (int32_t)(now / 86400);
     return (n > b && n < b + 20 * 365) ? n : b;

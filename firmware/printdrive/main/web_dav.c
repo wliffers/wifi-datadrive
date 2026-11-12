@@ -14,21 +14,29 @@
  * cannot give. Instead such requests get 503 with a short German text and Retry-After.
  * Locked or damaged encrypted drive: 423, as the other file handlers (web_crypt_block()).
  *
- * Authentication: HTTP Basic only (web_dav_authorize()). WebDAV clients cannot send the CSRF
- * header X-PrintDrive, so the dispatcher exempts these routes from that check. This is safe:
- *  - A cookie alone never authorizes a WebDAV request: an "Authorization: Basic" header is
- *    required. A cross-site page cannot add that header (it is not CORS-safelisted, so the
- *    browser sends a preflight OPTIONS first, and our OPTIONS answer never contains
- *    Access-Control-Allow-* - the preflight fails and the real request is never sent).
+ * Authentication: HTTP Basic only (web_dav_authorize() -> auth_identify_basic_only()). WebDAV
+ * clients cannot send the CSRF header X-PrintDrive, so the dispatcher exempts these routes from
+ * that check. This is safe:
+ *  - A cookie never authorizes a WebDAV request, not even together with a Basic header: only the
+ *    Basic credentials of the request itself are checked. A cross-site page cannot add an
+ *    "Authorization" header (it is not CORS-safelisted, so the browser sends a preflight OPTIONS
+ *    first, and our OPTIONS answer never contains Access-Control-Allow-* - the preflight fails
+ *    and the real request is never sent).
  *  - All writing methods (PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK, PROPPATCH, PROPFIND) are
  *    not "simple" methods, so a cross-site page can only send them after that failing preflight.
  *  - POST is not registered under /dav (httpd answers 405), and GET/HEAD only read.
- *  - Credentials a browser cached after a 401 from /dav/ are only sent for /dav/ paths, and
- *    there a forged simple request can at most read, and the page cannot see the answer.
+ *  - Credentials a browser cached after a 401 from /dav/ are NOT limited to /dav/: browsers send
+ *    cached Basic credentials with requests to every path of the host, cross-site ones included,
+ *    and auth.c accepts Basic on the API routes as well. This stays harmless only because of two
+ *    invariants of the whole web server: no GET route anywhere changes state, and every API POST
+ *    needs the X-PrintDrive header (which a cross-site page cannot set without a preflight). A
+ *    forged simple request can then at most read, and the page cannot see the answer.
  *
- * Memory: no permanent buffers beyond the placeholder table (about 1 KiB). Listings use the
- * shared 16 KiB I/O buffer of the web server (web_io_buf()), answers are streamed in 1400-byte
- * pieces from the stack. No malloc here; drive_list() itself allocates about 1.3 KiB briefly.
+ * Memory: no permanent buffers beyond the placeholder table (about 1 KiB). Listings are read page
+ * by page (drive_list_page()) into the shared 16 KiB I/O buffer of the web server (web_io_buf());
+ * the drive lock is only held while a page is read, never while it is sent. Answers are streamed
+ * in 1400-byte pieces from the stack. No malloc here; the drive layer allocates about 1.3 KiB
+ * briefly per page.
  */
 
 #include <stdarg.h>
@@ -183,13 +191,24 @@ static bool junk_name(const char *seg)
            strcasecmp(seg, "ehthumbs.db") == 0;
 }
 
+/** 8.3 alias of the drive layer's upload temp files in the root (".pd_upload.tmp" is stored as
+ *  "PD_UPL~1.TMP", ".pd_old.tmp" as "PD_OLD~1.TMP"; with more numbers "PD_UP~12.TMP" etc.): every
+ *  "PD_*~*.TMP". Through such a name a request would reach the hidden temp file, or an upload
+ *  would end with its own temp file renamed onto the requested name. */
+static bool temp_alias(const char *seg)
+{
+    const size_t n = strlen(seg);
+    return n >= 8 && n <= 12 && strncasecmp(seg, "PD_", 3) == 0 && strchr(seg, '~') &&
+           strcasecmp(seg + n - 4, ".TMP") == 0;
+}
+
 static bool junk_path(const char *path)
 {
     const char *seg = path;
     while (*seg) {
         const char *slash = strchr(seg, '/');
         if (!slash) {
-            return junk_name(seg);
+            return junk_name(seg) || (seg == path && temp_alias(seg));
         }
         if (seg[0] == '.') {
             return true;
@@ -224,7 +243,7 @@ static esp_err_t send_empty(httpd_req_t *req, const char *status)
 
 static esp_err_t send_401(httpd_req_t *req)
 {
-    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"" DAV_REALM "\"");
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"" DAV_REALM "\", charset=\"UTF-8\"");
     return send_text(req, "401 Unauthorized", "Anmeldung erforderlich (Benutzer und Passwort der Weboberfläche).");
 }
 
@@ -347,13 +366,22 @@ static esp_err_t send_all(httpd_req_t *req, const char *p, size_t len)
 /** Header of a file answer with its real Content-Length. httpd_resp_send() needs the whole body
  *  in RAM and httpd_resp_send_chunk() has no length; macOS Finder needs Content-Length on file
  *  answers, and HEAD must report the size without a body. */
-static esp_err_t send_file_head(httpd_req_t *req, uint32_t size)
+static esp_err_t send_file_head(httpd_req_t *req, uint32_t size, uint32_t mtime)
 {
-    char h[200];
+    // ETag: the same value as getetag in PROPFIND; Last-Modified only with a known time (as
+    // getlastmodified).
+    char lm[64] = "";
+    if (mtime != 0) {
+        const time_t t = (time_t)mtime;
+        struct tm tm;
+        gmtime_r(&t, &tm);
+        strftime(lm, sizeof(lm), "Last-Modified: %a, %d %b %Y %H:%M:%S GMT\r\n", &tm);
+    }
+    char h[320];
     const int n = snprintf(h, sizeof(h),
                            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: %lu\r\n"
-                           "Accept-Ranges: none\r\nCache-Control: no-cache\r\n\r\n",
-                           (unsigned long)size);
+                           "ETag: \"%lx-%lx\"\r\n%sAccept-Ranges: none\r\nCache-Control: no-cache\r\n\r\n",
+                           (unsigned long)size, (unsigned long)size, (unsigned long)mtime, lm);
     return send_all(req, h, (size_t)n);
 }
 
@@ -469,11 +497,12 @@ static drive_result_t drive_ready(drive_status_t *st)
     return st->fs_ok ? DRIVE_OK : DRIVE_ERR_NO_FS;
 }
 
-/** The only directory iteration this module uses: drive_list() into the shared I/O buffer
- *  (packed entries, see DRIVE_LIST_HDR). */
-static drive_result_t list_dir(const char *dir, drive_list_info_t *info)
+/** The only directory iteration this module uses: one page of drive_list_page() into the shared
+ *  I/O buffer (packed entries, see DRIVE_LIST_HDR), starting at visible entry number start. The
+ *  drive lock is released when it returns, so the page may be sent over the network. */
+static drive_result_t list_page(const char *dir, uint32_t start, drive_list_info_t *info, uint32_t *next, bool *more)
 {
-    return drive_list(dir, (char *)web_io_buf(), WEB_IO_BUF_SIZE, info);
+    return drive_list_page(dir, start, (char *)web_io_buf(), WEB_IO_BUF_SIZE, info, next, more);
 }
 
 /** Next entry of the listing in the I/O buffer; returns its name. */
@@ -488,9 +517,10 @@ static const char *list_next(size_t *pos, entry_t *e)
     return name;
 }
 
-/** Type, size and time of an existing path ("" = root) by listing its parent folder (path is
- *  modified temporarily). If the parent listing was truncated, falls back to
- *  drive_download_open() (size only). Uses the I/O buffer. */
+/** Type, size and time of an existing path ("" = root) by listing its parent folder page by page
+ *  (path is modified temporarily). Uses the I/O buffer. Note: the name is compared as given
+ *  (case-insensitive ASCII); an 8.3 alias or a different case of a non-ASCII letter is not found
+ *  here even though the drive layer resolves it. */
 static drive_result_t lookup(char *path, entry_t *e)
 {
     memset(e, 0, sizeof(*e));
@@ -500,39 +530,36 @@ static drive_result_t lookup(char *path, entry_t *e)
     }
     char *slash = strrchr(path, '/');
     const char *name = slash ? slash + 1 : path;
-    drive_list_info_t info;
-    if (slash) {
-        *slash = '\0';
-    }
-    drive_result_t r = list_dir(slash ? path : "", &info);
-    if (slash) {
-        *slash = '/';
-    }
-    if (r != DRIVE_OK) {
-        return r;   // parent missing (or not a folder): NOT_FOUND
-    }
-    size_t pos = 0;
-    for (uint32_t i = 0; i < info.count; i++) {
-        entry_t x;
-        if (strcasecmp(list_next(&pos, &x), name) == 0) {
-            *e = x;
-            return DRIVE_OK;
+    uint32_t start = 0;
+    bool more = true;
+    drive_result_t r = DRIVE_OK;
+    while (more && r == DRIVE_OK) {
+        drive_list_info_t info;
+        uint32_t next = 0;
+        if (slash) {
+            *slash = '\0';
         }
+        r = list_page(slash ? path : "", start, &info, &next, &more);
+        if (slash) {
+            *slash = '/';
+        }
+        if (r != DRIVE_OK) {
+            break;   // parent missing (or not a folder): NOT_FOUND
+        }
+        size_t pos = 0;
+        for (uint32_t i = 0; i < info.count; i++) {
+            entry_t x;
+            if (strcasecmp(list_next(&pos, &x), name) == 0) {
+                *e = x;
+                return DRIVE_OK;
+            }
+        }
+        if (more && next <= start) {
+            r = DRIVE_ERR_IO;   // cannot happen (see drive_list_page()): never loop forever
+        }
+        start = next;
     }
-    if (!info.truncated) {
-        return DRIVE_ERR_NOT_FOUND;
-    }
-    int fd = -1;
-    uint32_t size = 0;
-    r = drive_download_open(path, &fd, &size);
-    if (r == DRIVE_OK) {
-        drive_download_close(fd);
-        e->size = size;
-    } else if (r == DRIVE_ERR_IS_DIR) {
-        e->is_dir = true;
-        r = DRIVE_OK;
-    }
-    return r;
+    return r == DRIVE_OK ? DRIVE_ERR_NOT_FOUND : r;
 }
 
 // ============================================================== placeholders
@@ -542,11 +569,23 @@ static drive_result_t lookup(char *path, entry_t *e)
 // stores empty files (upload rules), so such a name is kept here in RAM and reported as an empty
 // file until the real PUT arrives, it is deleted or moved, or 5 minutes have passed. A real file
 // of the same name always wins.
+//
+// "Shadow" placeholder: a 0-byte PUT onto an EXISTING file (a client truncating it before it
+// writes the new content). The drive cannot store the empty file, and deleting the real one would
+// lose it for good if the content never follows, so the real file stays on the medium untouched
+// and WebDAV reports it as empty (PROPFIND, GET, HEAD) while the shadow lives - but only as long
+// as the real file is still the one that was shadowed (same size and time); a file changed in
+// between by the web interface wins. The following PUT replaces the real file and ends the shadow;
+// if nothing follows, the shadow expires and the old content is visible again. Elsewhere (web
+// interface, printer) the real file is never hidden.
 
 typedef struct {
     bool used;
+    bool shadow;          // shadows the real file real_size/real_mtime
     int64_t t_us;
     uint32_t mtime;
+    uint32_t real_size;
+    uint32_t real_mtime;
     char path[DRIVE_PATH_MAX + 1];
 } placeholder_t;
 
@@ -573,7 +612,8 @@ static placeholder_t *ph_find(const char *path)
     return NULL;
 }
 
-static void ph_add(const char *path)
+/** Add (or renew) the placeholder of path; real != NULL: a shadow of that existing file. */
+static void ph_add(const char *path, const entry_t *real)
 {
     if (strlen(path) > DRIVE_PATH_MAX) {
         return;   // cannot happen: the name passed the rules for new paths
@@ -596,7 +636,23 @@ static void ph_add(const char *path)
     p->used = true;
     p->t_us = esp_timer_get_time();
     p->mtime = now > 1700000000 ? (uint32_t)now : 0;   // only with a set clock
+    p->shadow = real != NULL;
+    p->real_size = real ? real->size : 0;
+    p->real_mtime = real ? real->mtime : 0;
     strlcpy(p->path, path, sizeof(p->path));
+}
+
+/** The real file e that exists under the name of placeholder p, as WebDAV reports it: the empty
+ *  file of a shadow that still covers exactly this file. Otherwise the real file wins and the
+ *  placeholder is dropped (false). */
+static bool ph_covers(placeholder_t *p, entry_t *e)
+{
+    if (p->shadow && !e->is_dir && e->size == p->real_size && e->mtime == p->real_mtime) {
+        *e = (entry_t){.is_dir = false, .size = 0, .mtime = p->mtime};
+        return true;
+    }
+    p->used = false;
+    return false;
 }
 
 /** Remove the placeholder of path and all below it (folder deleted or moved). */
@@ -739,20 +795,22 @@ static esp_err_t h_propfind(httpd_req_t *req)
     }
     entry_t self = {.is_dir = true};
     drive_list_info_t info = {0};
-    bool listed = false;
+    uint32_t start = 0, next = 0;
+    bool listed = false, more = false;
     r = DRIVE_OK;
     if (depth == 1) {
-        r = list_dir(path, &info);   // a folder: its entries; NOT_FOUND for files and missing paths
+        // First page: a folder gives its entries; NOT_FOUND for files and missing paths.
+        r = list_page(path, start, &info, &next, &more);
         listed = r == DRIVE_OK;
     }
     if (path[0] != '\0' && !listed && (depth == 0 || r == DRIVE_ERR_NOT_FOUND)) {
         r = lookup(path, &self);
-        if (r == DRIVE_ERR_NOT_FOUND) {
-            const placeholder_t *ph = ph_find(path);
-            if (ph) {
-                self = (entry_t){.is_dir = false, .size = 0, .mtime = ph->mtime};
-                r = DRIVE_OK;
-            }
+        placeholder_t *ph = ph_find(path);
+        if (r == DRIVE_ERR_NOT_FOUND && ph) {
+            self = (entry_t){.is_dir = false, .size = 0, .mtime = ph->mtime};
+            r = DRIVE_OK;
+        } else if (r == DRIVE_OK && ph) {
+            ph_covers(ph, &self);
         }
     }
     if (r != DRIVE_OK) {
@@ -764,31 +822,54 @@ static esp_err_t h_propfind(httpd_req_t *req)
     out_str(&o, "<D:multistatus xmlns:D=\"DAV:\">");
     out_response(&o, path, NULL, &self, &st);
     if (listed) {
+        // Page by page: the drive lock is only held while a page is read, never while it is sent.
         ph_expire();
-        size_t pos = 0;
-        for (uint32_t i = 0; i < info.count; i++) {
-            entry_t e;
-            const char *name = list_next(&pos, &e);
-            if (junk_name(name)) {
-                continue;
-            }
-            for (int k = 0; k < PH_MAX; k++) {   // a real file replaces its placeholder
-                const char *pn = s_ph[k].used ? ph_name_in(&s_ph[k], path) : NULL;
-                if (pn && strcasecmp(pn, name) == 0) {
-                    s_ph[k].used = false;
+        bool covered[PH_MAX] = {false};   // shadow placeholders already reported with their real file
+        while (o.err == ESP_OK) {
+            size_t pos = 0;
+            for (uint32_t i = 0; i < info.count; i++) {
+                entry_t e;
+                const char *name = list_next(&pos, &e);
+                if (junk_name(name)) {
+                    continue;
                 }
+                for (int k = 0; k < PH_MAX; k++) {   // a real file replaces its placeholder (or is shadowed)
+                    const char *pn = s_ph[k].used ? ph_name_in(&s_ph[k], path) : NULL;
+                    if (pn && strcasecmp(pn, name) == 0 && ph_covers(&s_ph[k], &e)) {
+                        covered[k] = true;
+                    }
+                }
+                out_response(&o, path, name, &e, NULL);
             }
-            out_response(&o, path, name, &e, NULL);
+            if (!more) {
+                break;
+            }
+            if (next <= start) {
+                r = DRIVE_ERR_IO;   // cannot happen (see drive_list_page()): never loop forever
+                break;
+            }
+            start = next;
+            r = list_page(path, start, &info, &next, &more);
+            if (r != DRIVE_OK) {
+                break;
+            }
+        }
+        if (o.err != ESP_OK) {
+            return o.err;   // client gone
+        }
+        if (r != DRIVE_OK) {
+            // The 207 has started: a shortened listing would look complete to the client. Close the
+            // connection without the end of the answer instead, so the request visibly fails.
+            ESP_LOGW(TAG, "PROPFIND '%s': listing broke off after entry %lu: %s", path, (unsigned long)start,
+                     drive_result_str(r));
+            return ESP_FAIL;
         }
         for (int k = 0; k < PH_MAX; k++) {
-            const char *pn = s_ph[k].used ? ph_name_in(&s_ph[k], path) : NULL;
+            const char *pn = s_ph[k].used && !covered[k] ? ph_name_in(&s_ph[k], path) : NULL;
             if (pn) {
                 const entry_t e = {.is_dir = false, .size = 0, .mtime = s_ph[k].mtime};
                 out_response(&o, path, pn, &e, NULL);
             }
-        }
-        if (info.truncated) {
-            ESP_LOGW(TAG, "PROPFIND '%s': listing truncated after %lu entries", path, (unsigned long)info.count);
         }
     }
     out_str(&o, "</D:multistatus>");
@@ -811,6 +892,14 @@ static esp_err_t get_or_head(httpd_req_t *req, bool head)
     if (junk_path(path)) {
         return send_text(req, "404 Not Found", MSG_NOT_FOUND);
     }
+    // Time (Last-Modified, ETag as getetag) from the listing of the parent folder - before the file
+    // is opened: lookup() uses the I/O buffer, and the drive layer reports no time on open.
+    entry_t e = {0};
+    const bool known = path[0] && lookup(path, &e) == DRIVE_OK && !e.is_dir;
+    placeholder_t *ph = path[0] ? ph_find(path) : NULL;
+    if (known && ph && ph_covers(ph, &e)) {
+        return send_file_head(req, 0, e.mtime);   // shadowed by a 0-byte PUT: reported empty
+    }
     int fd = -1;
     uint32_t size = 0;
     r = path[0] ? drive_download_open(path, &fd, &size) : DRIVE_ERR_IS_DIR;
@@ -820,13 +909,13 @@ static esp_err_t get_or_head(httpd_req_t *req, bool head)
         httpd_resp_set_hdr(req, "Cache-Control", "no-store");
         return head ? httpd_resp_send(req, NULL, 0) : httpd_resp_sendstr(req, COLLECTION_HTML);
     }
-    if (r == DRIVE_ERR_NOT_FOUND && ph_find(path)) {
-        return send_file_head(req, 0);
+    if (r == DRIVE_ERR_NOT_FOUND && (ph = ph_find(path)) != NULL) {
+        return send_file_head(req, 0, ph->mtime);
     }
     if (r != DRIVE_OK) {
         return send_result(req, r);
     }
-    esp_err_t err = send_file_head(req, size);
+    esp_err_t err = send_file_head(req, size, known && e.size == size ? e.mtime : 0);
     uint32_t left = head ? 0 : size;
     uint8_t *const buf = web_io_buf();
     while (err == ESP_OK && left > 0) {
@@ -864,15 +953,22 @@ static esp_err_t h_put(httpd_req_t *req)
         return refuse_upload(req, DRIVE_ERR_BAD_NAME, "400 Bad Request", MSG_BAD_PATH);
     }
     // Chunked body (macOS Finder): esp_http_server has no decoder for request bodies - content_len
-    // would be 0 and the chunks would be parsed as the next request. Refuse and close.
-    if (httpd_req_get_hdr_value_len(req, "Transfer-Encoding") > 0) {
+    // would be 0 and the chunks would be parsed as the next request. Any Transfer-Encoding other
+    // than exactly "identity" (also "identity, chunked") is refused, and so is a PUT without
+    // Content-Length (its body length is unknown; only an explicit "Content-Length: 0" is an empty
+    // file). The connection is closed: the body that follows cannot be told apart from a request.
+    const size_t te_len = httpd_req_get_hdr_value_len(req, "Transfer-Encoding");
+    bool length_ok = httpd_req_get_hdr_value_len(req, "Content-Length") > 0;
+    if (te_len > 0) {
         char te[16] = "";
-        httpd_req_get_hdr_value_str(req, "Transfer-Encoding", te, sizeof(te));   // may truncate
-        if (strncasecmp(te, "identity", 8) != 0) {
-            httpd_resp_set_hdr(req, "Connection", "close");
-            send_text(req, "411 Length Required", MSG_CHUNKED);
-            return ESP_FAIL;
-        }
+        length_ok = length_ok && te_len < sizeof(te) &&
+                    httpd_req_get_hdr_value_str(req, "Transfer-Encoding", te, sizeof(te)) == ESP_OK &&
+                    strcasecmp(te, "identity") == 0;
+    }
+    if (!length_ok) {
+        httpd_resp_set_hdr(req, "Connection", "close");
+        send_text(req, "411 Length Required", MSG_CHUNKED);
+        return ESP_FAIL;
     }
     drive_status_t st;
     drive_result_t r = drive_ready(&st);
@@ -888,16 +984,30 @@ static esp_err_t h_put(httpd_req_t *req)
     }
     const size_t total = req->content_len;
     if (total == 0) {
-        // Windows creates the file empty first. Begin + abort performs the checks of a real upload
-        // (name, type, folder, existence, space) without storing anything.
-        r = drive_upload_begin(path, 1, false);
+        // Windows creates the file empty first. drive_upload_check() performs the checks of a real
+        // upload (name, type, folder, existence, space) without touching anything - in particular a
+        // kept interrupted upload of the web interface survives.
+        r = drive_upload_check(path, 1, false);
         if (r == DRIVE_OK) {
-            drive_upload_abort();
-            ph_add(path);
+            ph_add(path, NULL);
             return send_empty(req, "201 Created");
         }
         if (r == DRIVE_ERR_EXISTS) {
-            return send_empty(req, "204 No Content");   // kept as it is: the drive stores no empty files
+            // An existing file truncated before the new content follows (Windows does this when
+            // it overwrites a file): a shadow placeholder, see above. The real file stays.
+            entry_t e = {0};
+            r = drive_upload_check(path, 1, true);
+            if (r == DRIVE_OK && (lookup(path, &e) != DRIVE_OK || e.is_dir)) {
+                // Found by the drive layer only under another spelling (8.3 alias, case of a
+                // non-ASCII letter): the real file cannot be told apart reliably - refuse rather
+                // than claim an empty file.
+                return send_text(req, "409 Conflict",
+                                 "Die vorhandene Datei kann unter diesem Namen nicht geleert werden.");
+            }
+            if (r == DRIVE_OK) {
+                ph_add(path, &e);
+                return send_empty(req, "204 No Content");
+            }
         }
         return r == DRIVE_ERR_NOT_FOUND ? send_text(req, "409 Conflict", MSG_PARENT) : send_result(req, r);
     }
@@ -934,6 +1044,11 @@ static esp_err_t h_put(httpd_req_t *req)
             fill = 0;
             if (r != DRIVE_OK) {
                 drive_upload_abort();
+                if (remaining > DRAIN_LIMIT) {   // the rest is not worth reading: answer and close
+                    httpd_resp_set_hdr(req, "Connection", "close");
+                    send_result(req, r);
+                    return ESP_FAIL;
+                }
                 return drain(req) ? send_result(req, r) : ESP_FAIL;
             }
         }
@@ -1014,45 +1129,19 @@ static esp_err_t h_mkcol(httpd_req_t *req)
 
 // ============================================================== MOVE, COPY
 
-/**
- * Overwrite: T for MOVE/COPY onto an existing target (RFC 4918 9.8.4, 9.9.3). The target is not
- * deleted first but renamed to a temporary name next to it ("~old-XXXXXXXX-name", same file
- * type), and only removed after the operation succeeded; otherwise it is renamed back. So nothing
- * is lost if the operation fails - or if the "target" is the source itself under another spelling
- * (case, umlaut case, 8.3 alias): then the source moved away with it, the operation finds no
- * source, everything is renamed back and *same is set. No room for the temporary name: EXISTS.
+/*
+ * Overwrite: T onto an existing target (RFC 4918 9.8.4, 9.9.3): drive_replace() does the whole
+ * replacement under one acquisition of the drive lock (old target renamed to a hidden temporary
+ * name, removed only after the new object took its place, restored on failure), so the printer or
+ * the auto-lock can never get the drive in between. It refuses with BAD_NAME when the target is
+ * the source under another spelling (case, umlaut case, 8.3 alias) or a folder containing it.
+ *
+ * Placeholders: a real file always moves/copies as itself (a shadow at the source ends with a
+ * MOVE). A source that only exists as a placeholder moves/copies as a placeholder, but never onto
+ * an existing real file or folder: replacing real data by an empty file that the drive cannot
+ * store (and that expires after 5 minutes) would delete it for good - 409 with Overwrite: T,
+ * 412 with Overwrite: F.
  */
-static drive_result_t replace_target(const char *src, const char *dst, bool copy, bool *same)
-{
-    *same = false;
-    char tmp[DRIVE_PATH_MAX + 1];
-    const char *slash = strrchr(dst, '/');
-    const int plen = slash ? (int)(slash - dst + 1) : 0;
-    const int n = snprintf(tmp, sizeof(tmp), "%.*s~old-%08lx-%s", plen, dst, (unsigned long)esp_random(),
-                           slash ? slash + 1 : dst);
-    if (n < 0 || n >= (int)sizeof(tmp)) {
-        return DRIVE_ERR_EXISTS;
-    }
-    drive_result_t r = drive_move(dst, tmp);
-    if (r != DRIVE_OK) {
-        return r == DRIVE_ERR_BAD_NAME ? DRIVE_ERR_EXISTS : r;   // e.g. temporary name too long/deep
-    }
-    r = copy ? drive_copy(src, dst) : drive_move(src, dst);
-    if (r == DRIVE_OK) {
-        const drive_result_t d = drive_delete(tmp, true);
-        if (d != DRIVE_OK) {
-            ESP_LOGW(TAG, "replaced '%s', but '%s' could not be removed: %s", dst, tmp, drive_result_str(d));
-        }
-        return DRIVE_OK;
-    }
-    const drive_result_t b = drive_move(tmp, dst);
-    if (b != DRIVE_OK) {
-        ESP_LOGE(TAG, "could not rename '%s' back to '%s': %s", tmp, dst, drive_result_str(b));
-    }
-    *same = r == DRIVE_ERR_NOT_FOUND;   // the source existed a moment ago: it was the target
-    return r;
-}
-
 static esp_err_t move_copy(httpd_req_t *req, bool copy)
 {
     char src[PATH_BUF], dst[PATH_BUF];
@@ -1102,18 +1191,22 @@ static esp_err_t move_copy(httpd_req_t *req, bool copy)
         return send_text(req, "403 Forbidden", "Ein Ordner kann nicht in sich selbst oder seinen Inhalt.");
     }
 
+    if (!overwrite && ph_find(dst)) {
+        return send_text(req, "412 Precondition Failed", "Das Ziel gibt es schon (Overwrite: F).");
+    }
+
     anim_set_busy(copy);   // display: copying blocks the HTTP task until it is done
     r = copy ? drive_copy(src, dst) : drive_move(src, dst);
     bool replaced = false;
     if (r == DRIVE_ERR_EXISTS && overwrite) {
-        // EXISTS comes after the source checks of the drive layer: the source exists.
-        bool same = false;
+        // EXISTS comes after the source, name, type and depth checks of the drive layer: the source
+        // exists, so BAD_NAME from drive_replace() can only mean "target is the source itself or
+        // contains it".
         anim_set_busy(true);
-        r = replace_target(src, dst, copy, &same);
-        replaced = r == DRIVE_OK;
+        r = drive_replace(src, dst, copy, &replaced);
         anim_set_busy(false);
-        if (same) {
-            return send_text(req, "403 Forbidden", "Quelle und Ziel sind dieselbe Datei.");
+        if (r == DRIVE_ERR_BAD_NAME) {
+            return send_text(req, "403 Forbidden", "Quelle und Ziel sind dieselbe Datei, oder das Ziel enthält die Quelle.");
         }
     }
     anim_set_busy(false);
@@ -1121,23 +1214,22 @@ static esp_err_t move_copy(httpd_req_t *req, bool copy)
         return send_text(req, "412 Precondition Failed", "Das Ziel gibt es schon.");
     }
     if (r == DRIVE_ERR_NOT_FOUND && ph_find(src)) {
-        // The source is an empty file that only exists as a placeholder.
-        drive_result_t v = drive_upload_begin(dst, 1, false);
-        if (v == DRIVE_OK) {
-            drive_upload_abort();
-        } else if (v == DRIVE_ERR_EXISTS && overwrite) {
-            v = drive_delete(dst, false);
-            replaced = v == DRIVE_OK;
-        } else if (v == DRIVE_ERR_EXISTS) {
-            return send_text(req, "412 Precondition Failed", "Das Ziel gibt es schon (Overwrite: F).");
+        // The source is an empty file that only exists as a placeholder: checks of a new file at
+        // the target, nothing is touched (a kept interrupted upload survives).
+        const drive_result_t v = drive_upload_check(dst, 1, false);
+        if (v == DRIVE_ERR_EXISTS || v == DRIVE_ERR_IS_DIR) {
+            return overwrite ? send_text(req, "409 Conflict",
+                                         "Eine leere Datei kann eine vorhandene Datei oder einen Ordner nicht ersetzen.")
+                             : send_text(req, "412 Precondition Failed", "Das Ziel gibt es schon (Overwrite: F).");
         }
         if (v != DRIVE_OK) {
             return v == DRIVE_ERR_NOT_FOUND ? send_text(req, "409 Conflict", MSG_PARENT) : send_result(req, v);
         }
+        replaced = ph_find(dst) != NULL;   // a placeholder replaces a placeholder (Overwrite: T, see above)
         if (!copy) {
             ph_remove_tree(src);
         }
-        ph_add(dst);
+        ph_add(dst, NULL);
         return send_empty(req, replaced ? "204 No Content" : "201 Created");
     }
     if (r == DRIVE_ERR_NOT_FOUND) {
@@ -1150,6 +1242,7 @@ static esp_err_t move_copy(httpd_req_t *req, bool copy)
     if (!copy) {
         ph_remove_tree(src);
     }
+    replaced = replaced || ph_find(dst) != NULL;   // a placeholder at the target counts as replaced
     ph_remove_tree(dst);
     return send_empty(req, replaced ? "204 No Content" : "201 Created");
 }
@@ -1202,16 +1295,26 @@ static esp_err_t h_lock(httpd_req_t *req)
     if (parse_path(req->uri, path, sizeof(path)) != P_DAV) {
         return send_text(req, "400 Bad Request", MSG_BAD_PATH);
     }
-    // Headers first: If (token of a refresh) and Depth.
+    // Headers first: If (token of a refresh) and Depth. The token is echoed into the XML answer:
+    // only our own form (hex digits and '-' after "opaquelocktoken:") is taken over; anything else
+    // gets a fresh token below.
+    static const char TOKEN_PREFIX[] = "opaquelocktoken:";
     char token[80] = "";
+    bool have_if_token = false;
     {
         char ifh[160];
         if (httpd_req_get_hdr_value_len(req, "If") < sizeof(ifh) &&
             httpd_req_get_hdr_value_str(req, "If", ifh, sizeof(ifh)) == ESP_OK) {
-            const char *t = strstr(ifh, "opaquelocktoken:");
+            const char *t = strstr(ifh, TOKEN_PREFIX);
             if (t) {
+                have_if_token = true;
+                const size_t pl = sizeof(TOKEN_PREFIX) - 1;
                 const size_t n = strcspn(t, ">) ");
-                if (n < sizeof(token)) {
+                bool ok = n > pl && n < sizeof(token);
+                for (size_t i = pl; ok && i < n; i++) {
+                    ok = hexval(t[i]) >= 0 || t[i] == '-';
+                }
+                if (ok) {
                     memcpy(token, t, n);
                     token[n] = '\0';
                 }
@@ -1226,7 +1329,7 @@ static esp_err_t h_lock(httpd_req_t *req)
     }
     const bool refresh = req->content_len == 0;   // no body: refresh of an existing lock (RFC 4918 9.10.2)
     bool shared = false;
-    if (refresh && !token[0]) {
+    if (refresh && !have_if_token) {
         return send_text(req, "400 Bad Request", "LOCK ohne Inhalt braucht ein If mit Lock-Token.");
     }
     if (!refresh) {
@@ -1254,10 +1357,11 @@ static esp_err_t h_lock(httpd_req_t *req)
     const char *status = "200 OK";
     if (path[0] != '\0' && !refresh && !ph_find(path)) {
         // LOCK on a new name creates an empty file (RFC 4918 9.10.4): a placeholder here.
-        r = drive_upload_begin(path, 1, false);
+        // drive_upload_check(): the checks of a new file without touching anything (Windows sends
+        // such a LOCK for every file it creates; a kept interrupted upload must survive it).
+        r = drive_upload_check(path, 1, false);
         if (r == DRIVE_OK) {
-            drive_upload_abort();
-            ph_add(path);
+            ph_add(path, NULL);
             status = "201 Created";
         } else if (r != DRIVE_ERR_EXISTS && r != DRIVE_ERR_IS_DIR) {
             entry_t e;   // e.g. an existing name that the rules for new names refuse
@@ -1518,23 +1622,12 @@ bool web_dav_authorize(httpd_req_t *req, web_role_t min_role)
         send_text(req, "403 Forbidden", MSG_OFF);
         return false;
     }
-    // Basic only: without an Authorization header a session cookie is NOT looked at (CSRF, see
-    // the head comment). auth_identify() then checks it with the failure counting and lock-out
-    // of auth.c. Note: if a request carries a valid session cookie AND a Basic header, auth.c
-    // takes the cookie's identity; such a request cannot come from a foreign site.
-    char scheme[8] = "";
-    if (httpd_req_get_hdr_value_len(req, "Authorization") == 0) {
-        send_401(req);
-        return false;
-    }
-    httpd_req_get_hdr_value_str(req, "Authorization", scheme, sizeof(scheme));   // truncated on purpose
-    if (strncasecmp(scheme, "Basic ", 6) != 0) {
-        send_401(req);
-        return false;
-    }
-    const auth_result_t r = auth_identify(req);
+    // Basic only: a session cookie is never looked at, not even next to a Basic header (CSRF, see
+    // the head comment). auth_identify_basic_only() checks the credentials of this request with
+    // the failure counting, lock-out and cache of auth.c; missing, other scheme or wrong: 401.
+    const auth_result_t r = auth_identify_basic_only(req);
     if (r == AUTH_ERR_UNAUTHORIZED) {
-        send_401(req);   // wrong user or password: the client asks again
+        send_401(req);   // the client asks for (other) credentials
         return false;
     }
     if (r != AUTH_OK) {

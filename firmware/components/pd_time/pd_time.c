@@ -33,6 +33,8 @@ static const char *NVS_KEY_TZ = "tz";
 static char s_tz[PD_TIME_TZ_MAX + 1] = PD_TIME_TZ_DEFAULT;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile bool s_synced;
+static volatile bool s_admin_set;    // set by an admin (pd_time_set_admin()) since power-up
+static bool s_setting;               // a client/admin set is in progress (guarded by s_mux)
 static uint32_t s_build_epoch;       // UTC midnight of the build date (__DATE__ of this file)
 
 /** Days since 1970-01-01 of a civil date (proleptic Gregorian; H. Hinnant's algorithm). */
@@ -194,20 +196,54 @@ esp_err_t pd_time_set_tz(const char *tz)
     return ESP_OK;
 }
 
-esp_err_t pd_time_set_client(uint32_t epoch)
+/** Common part of pd_time_set_client() / pd_time_set_admin(). */
+static esp_err_t set_clock(uint32_t epoch, bool admin)
 {
-    if (s_synced) {
-        return ESP_ERR_INVALID_STATE;
-    }
     if (epoch < s_build_epoch || epoch >= EPOCH_MAX) {
         return ESP_ERR_INVALID_ARG;
     }
-    const struct timeval tv = {.tv_sec = (time_t)epoch};
-    if (settimeofday(&tv, NULL) != 0) {
-        return ESP_FAIL;
+    // One setter at a time, so two clients cannot both see "unknown" and both set the clock.
+    bool busy;
+    taskENTER_CRITICAL(&s_mux);
+    busy = s_setting;
+    s_setting = true;
+    taskEXIT_CRITICAL(&s_mux);
+    if (busy) {
+        return ESP_ERR_INVALID_STATE;
     }
-    ESP_LOGI(TAG, "clock set by a client: %lu", (unsigned long)epoch);
-    return ESP_OK;
+    esp_err_t err = ESP_OK;
+    if (s_synced || (!admin && pd_time_now() != 0)) {
+        err = ESP_ERR_INVALID_STATE;     // NTP is in charge, or the clock is already known
+    } else {
+        const struct timeval tv = {.tv_sec = (time_t)epoch};
+        if (settimeofday(&tv, NULL) != 0) {
+            err = ESP_FAIL;
+        } else {
+            if (admin) {
+                s_admin_set = true;
+            }
+            ESP_LOGI(TAG, "clock set by %s: %lu", admin ? "an admin" : "a client", (unsigned long)epoch);
+        }
+    }
+    taskENTER_CRITICAL(&s_mux);
+    s_setting = false;
+    taskEXIT_CRITICAL(&s_mux);
+    return err;
+}
+
+esp_err_t pd_time_set_client(uint32_t epoch)
+{
+    return set_clock(epoch, false);
+}
+
+esp_err_t pd_time_set_admin(uint32_t epoch)
+{
+    return set_clock(epoch, true);
+}
+
+bool pd_time_trusted(void)
+{
+    return s_synced || (s_admin_set && pd_time_now() != 0);
 }
 
 uint32_t pd_time_from_fat(uint16_t fdate, uint16_t ftime)

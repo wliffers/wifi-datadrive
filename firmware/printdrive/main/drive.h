@@ -39,10 +39,11 @@ extern "C" {
 #define DRIVE_PATH_DEPTH_MAX  8       // max number of segments of any path
 #define DRIVE_SRC_PATH_MAX    765     // max total length of an existing path accepted as input
 
-// drive_list(): every entry in the packed buffer is a header of DRIVE_LIST_HDR bytes -
-// uint32_t size, uint32_t mtime (native byte order, copy with memcpy), uint8_t type
+// drive_list() / drive_list_page(): every entry in the packed buffer is a header of DRIVE_LIST_HDR
+// bytes - uint32_t size, uint32_t mtime (native byte order, copy with memcpy), uint8_t type
 // (DRIVE_ENTRY_*) - followed by the NUL-terminated name.
 #define DRIVE_LIST_HDR        9
+#define DRIVE_LIST_ENTRY_MAX  (DRIVE_LIST_HDR + DRIVE_FILE_NAME_MAX + 1)   // largest packed entry
 #define DRIVE_ENTRY_FILE      0
 #define DRIVE_ENTRY_DIR       1
 
@@ -176,9 +177,28 @@ drive_result_t drive_check_path(const char *path, bool for_new);
  * List the folder `dir` (existing path, "" = root; APP only) into a packed buffer, see
  * DRIVE_LIST_HDR. Names with a leading dot and "System Volume Information" are skipped.
  * Folders have size and mtime 0. mtime is unix seconds (pd_time_from_fat()), 0 = unknown.
- * DRIVE_ERR_NOT_FOUND if the folder does not exist. Built on drive_list_each().
+ * DRIVE_ERR_NOT_FOUND if the folder does not exist. Entries that do not fit are skipped and set
+ * info->truncated (a later, shorter name may still fit). Heap: about 1.1 KiB during the call.
  */
 drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list_info_t *info);
+
+/**
+ * One page of a listing, for answers that are sent over the network: fills buf like drive_list(),
+ * but starting at the visible entry number start_index (0 = first; hidden names are not counted)
+ * and only as far as whole entries fit. The drive lock is held only while the folder is read -
+ * send the page afterwards, then ask for the next one with start_index = *next_index while *more
+ * is true. There is nothing to close in between: every page is a complete, independent read.
+ *  - *next_index: visible entry number after the last one written (or skipped, see below).
+ *  - *more: true if at least one more entry follows (it did not fit into this page).
+ *  - info: count / used of THIS page; info->truncated only if an entry could not fit even into
+ *    the empty buffer (never with buf_len >= DRIVE_LIST_ENTRY_MAX) - it is then skipped.
+ * Each page re-opens the folder and skips start_index entries. If the folder changes between
+ * pages, entries may be missed or repeated (by as many as were added/removed before the current
+ * position); nothing else happens. Results as drive_list(), NOT_FOUND also if the folder was
+ * removed between pages. *next_index > start_index whenever *more is true.
+ */
+drive_result_t drive_list_page(const char *dir, uint32_t start_index, char *buf, size_t buf_len,
+                               drive_list_info_t *info, uint32_t *next_index, bool *more);
 
 /** Called by drive_list_each() for every visible entry (folders: size and mtime 0). name is only
  *  valid during the call. Return false to stop the walk early. */
@@ -188,10 +208,8 @@ typedef bool (*drive_list_cb_t)(void *ctx, const char *name, bool is_dir, uint32
  * Listing without a buffer: cb is called for every visible entry, in directory order, while the
  * folder is read. Same checks and results as drive_list() (BAD_NAME, LOCKED, CRYPT_DAMAGED,
  * WRONG_OWNER, NO_FS, NOT_FOUND, IO); DRIVE_OK also when cb stopped the walk.
- * The drive lock is held for the whole walk, as during a folder copy: drive_get_status() returns
- * the state from the start, owner changes / lock / format get DRIVE_ERR_BUSY meanwhile, the drive
- * task waits. cb may block (e.g. send over the network) but must not call drive_* functions.
- * Heap: about 1.1 KiB during the call.
+ * cb runs with the drive lock held: it must be quick and must NOT block - no network I/O (use
+ * drive_list_page() for that), no drive_* calls. Heap: about 1.1 KiB during the call.
  */
 drive_result_t drive_list_each(const char *dir, drive_list_cb_t cb, void *ctx);
 
@@ -214,6 +232,22 @@ drive_result_t drive_move(const char *from, const char *to);
  * if anything fails. Blocks all other file operations while it runs.
  */
 drive_result_t drive_copy(const char *from, const char *to);
+
+/**
+ * Move (copy = false) or copy (copy = true) `from` to `to`, replacing an existing target (file or
+ * folder, WebDAV "Overwrite: T"). Everything happens under ONE acquisition of the drive lock, as a
+ * long operation (status snapshot, BUSY for owner changes / lock / format), so neither the USB
+ * host nor the auto-lock ever sees an intermediate state. The old target is renamed to a hidden
+ * temporary name next to it and only removed after the new object took its place; a copy is made
+ * under a hidden temporary name first. On failure the old target is restored. Without an existing
+ * target the result is a plain drive_move()/drive_copy(). *replaced is set if a target was
+ * replaced. Results as drive_move()/drive_copy(), plus: BAD_NAME also when the target is a folder
+ * that contains the source, or for a copy onto the source itself under another spelling (case,
+ * 8.3 alias; a move onto itself is a plain rename, as drive_move()); EXISTS when the
+ * target is a hidden entry (reached through an alias); IO for a read-only target file. Copy needs
+ * the full size of the source as free space (the old target is removed last).
+ */
+drive_result_t drive_replace(const char *from, const char *to, bool copy, bool *replaced);
 
 /**
  * Re-create an empty FAT file system (APP only, erases all files).
@@ -409,8 +443,12 @@ void drive_autolock_get(uint16_t *minutes, bool *on_detach);
 /**
  * Store and apply the auto-lock settings; the inactivity period restarts. minutes 0 (off) ..
  * DRIVE_AUTOLOCK_MINUTES_MAX, else ESP_ERR_INVALID_ARG. Inactivity = no host READ/WRITE, no local
- * file operation, no upload/download. The lock is never forced past DRIVE_ERR_BUSY or
- * DRIVE_ERR_HOST_WRITING (retried every few seconds instead).
+ * file operation, no upload/download. A USB host that holds the drive (awake or suspended < 5 min,
+ * not ejected) only loses it to the timer if minutes >= 10 and it had no READ/WRITE for the whole
+ * period; with 1..9 minutes the timer waits until no host holds the drive. on_detach: host not
+ * configured for 10 s, or suspended for 5 min without READ/WRITE. Full rules in drive.c
+ * ("auto-lock"). The lock is never forced past DRIVE_ERR_BUSY or DRIVE_ERR_HOST_WRITING (retried
+ * every few seconds instead).
  */
 esp_err_t drive_autolock_set(uint16_t minutes, bool on_detach);
 

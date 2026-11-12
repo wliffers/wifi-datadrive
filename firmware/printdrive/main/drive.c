@@ -206,6 +206,9 @@ static drive_crypt_state_t crypt_state_public(void)
 // mkdir, ...) and counts as activity. drive_get_status() does not use lock(), so status polls
 // do not keep the drive unlocked.
 static volatile uint32_t s_app_activity_ms;
+// Incremented (under s_lock) by every successful unlock / setup: the auto-lock poll restarts all
+// its periods when it changes, even if lock and unlock both happened between two polls.
+static volatile uint32_t s_al_gen;
 
 static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); s_app_activity_ms = now_ms(); }
 static void unlock(void) { xSemaphoreGive(s_lock); }
@@ -659,7 +662,7 @@ static bool host_keeps_drive(bool force, drive_result_t *r)
         *r = DRIVE_ERR_HOST_ACTIVE;
         return true;
     }
-    ESP_LOGW(TAG, "taking the drive from the host (confirmed by user)");
+    ESP_LOGW(TAG, "taking the drive from the host (confirmed by user or auto-lock rule)");
     return false;
 }
 
@@ -683,6 +686,30 @@ static void autolock_load(void);
 static void autolock_poll(void);
 #define AUTOLOCK_POLL_MS   5000             // drive_task wakes up at least this often for the auto-lock
 
+/**
+ * PROVIDE_ON_ATTACH: a host attached while an upload/download ran (the drive could not be handed
+ * over then). Provide it now if that transfer has ended and nothing else changed (host still
+ * attached, app still owner with a file system). Returns true while it stays pending. Uses
+ * lock_unless_long_op(), so the retries do not count as app activity for the auto-lock.
+ */
+static bool attach_retry(void)
+{
+    if (!lock_unless_long_op()) {
+        return true;                             // long folder operation: next round
+    }
+    bool pending = false;
+    if (usb_dev_connected() && s_st.owner == DRIVE_OWNER_APP && s_st.fs_ok && crypt_blocked() == DRIVE_OK) {
+        if (s_st.upload_active || s_open_downloads > 0) {
+            pending = true;
+        } else {
+            ESP_LOGI(TAG, "transfer finished -> providing drive to the host attached meanwhile");
+            do_mount_usb(REPLUG_ON_PROVIDE || s_host_ejected);   // as drive_set_owner(USB)
+        }
+    }
+    unlock();
+    return pending;
+}
+
 static void drive_task(void *arg)
 {
     autolock_load();
@@ -701,43 +728,52 @@ static void drive_task(void *arg)
     unlock();
 
     drive_event_t ev;
+    bool attach_pending = false;                 // see attach_retry()
     while (true) {
         const bool got = xQueueReceive(s_events, &ev, pdMS_TO_TICKS(AUTOLOCK_POLL_MS)) == pdTRUE;
         autolock_poll();                         // rate-limited inside; s_lock not held here
-        if (!got) {
-            continue;
-        }
-        lock();
-        const bool busy = s_st.upload_active || s_open_downloads > 0;
-        switch (ev) {
-        case EV_USB_ATTACHED:
-            ESP_LOGI(TAG, "USB host attached");
-            if ((int64_t)(esp_timer_get_time() / 1000) < s_replug_until_ms) {
-                // Re-enumeration after our own soft re-plug: the owner was decided before it.
-                // Without this, a take-over within the re-plug second was undone here.
+        if (got) {
+            lock();
+            const bool busy = s_st.upload_active || s_open_downloads > 0;
+            switch (ev) {
+            case EV_USB_ATTACHED:
+                ESP_LOGI(TAG, "USB host attached");
+                if ((int64_t)(esp_timer_get_time() / 1000) < s_replug_until_ms) {
+                    // Re-enumeration after our own soft re-plug: the owner was decided before it.
+                    // Without this, a take-over within the re-plug second was undone here.
+                    break;
+                }
+                if (PROVIDE_ON_ATTACH && s_st.owner == DRIVE_OWNER_APP && s_st.fs_ok) {
+                    if (busy) {
+                        attach_pending = true;   // provided when the transfer has ended
+                        ESP_LOGI(TAG, "transfer running: drive goes to the host when it has ended");
+                    } else {
+                        do_mount_usb(false);
+                    }
+                }
+                break;
+            case EV_USB_DETACHED:
+                if ((int64_t)(esp_timer_get_time() / 1000) < s_replug_until_ms) {
+                    break;   // caused by our own soft re-plug
+                }
+                ESP_LOGW(TAG, "USB host detached");
+                attach_pending = false;
+                if (s_st.owner == DRIVE_OWNER_USB) {
+                    do_mount_app();   // host is gone, nobody else can write
+                }
+                break;
+            case EV_HOST_EJECT:
+                ESP_LOGI(TAG, "host ejected the drive");
+                if (EJECT_TO_APP && s_st.owner == DRIVE_OWNER_USB) {
+                    do_mount_app();
+                }
                 break;
             }
-            if (PROVIDE_ON_ATTACH && s_st.owner == DRIVE_OWNER_APP && s_st.fs_ok && !busy) {
-                do_mount_usb(false);
-            }
-            break;
-        case EV_USB_DETACHED:
-            if ((int64_t)(esp_timer_get_time() / 1000) < s_replug_until_ms) {
-                break;   // caused by our own soft re-plug
-            }
-            ESP_LOGW(TAG, "USB host detached");
-            if (s_st.owner == DRIVE_OWNER_USB) {
-                do_mount_app();   // host is gone, nobody else can write
-            }
-            break;
-        case EV_HOST_EJECT:
-            ESP_LOGI(TAG, "host ejected the drive");
-            if (EJECT_TO_APP && s_st.owner == DRIVE_OWNER_USB) {
-                do_mount_app();
-            }
-            break;
+            unlock();
         }
-        unlock();
+        if (attach_pending) {
+            attach_pending = attach_retry();
+        }
     }
 }
 
@@ -1574,7 +1610,12 @@ static drive_result_t check_src_dst(const char *from, const char *to)
 
 // ---- file operations
 
-drive_result_t drive_list_each(const char *dir, drive_list_cb_t cb, void *ctx)
+/**
+ * Read the folder dir and call cb for every visible entry from visible entry number `skip` on.
+ * The whole walk runs under s_lock, so cb must not block (never network I/O under the drive lock:
+ * the drive task, owner changes, lock and the button would wait for the slowest client).
+ */
+static drive_result_t list_walk(const char *dir, uint32_t skip, drive_list_cb_t cb, void *ctx)
 {
     drive_result_t r = drive_check_path(dir, false);
     if (r != DRIVE_OK) {
@@ -1600,13 +1641,14 @@ drive_result_t drive_list_each(const char *dir, drive_list_cb_t cb, void *ctx)
         r = fr_result(f_opendir(&c->dir, c->path));   // a file instead of a folder: NOT_FOUND
     }
     if (r == DRIVE_OK) {
-        // cb may block on the network while we hold the lock: like a folder copy, give the
-        // display/button a status snapshot and BUSY instead of freezing them.
-        long_op_begin();
         FRESULT fr;
+        uint32_t index = 0;                           // visible entries seen so far
         while ((fr = f_readdir(&c->dir, &c->fno)) == FR_OK && c->fno.fname[0] != '\0') {
-            if (name_hidden(c->fno.fname)) {
-                continue;
+            if (name_hidden(c->fno.fname) || (c->fno.fattrib & AM_SYS)) {
+                continue;                             // also system entries such as $RECYCLE.BIN
+            }
+            if (index++ < skip) {
+                continue;                             // delivered by an earlier page
             }
             const bool is_dir = (c->fno.fattrib & AM_DIR) != 0;
             const uint32_t size = is_dir ? 0 : (uint32_t)c->fno.fsize;
@@ -1616,7 +1658,6 @@ drive_result_t drive_list_each(const char *dir, drive_list_cb_t cb, void *ctx)
             }
         }
         f_closedir(&c->dir);
-        long_op_end();
         if (fr != FR_OK) {
             r = DRIVE_ERR_IO;
         }
@@ -1626,10 +1667,18 @@ drive_result_t drive_list_each(const char *dir, drive_list_cb_t cb, void *ctx)
     return r;
 }
 
+drive_result_t drive_list_each(const char *dir, drive_list_cb_t cb, void *ctx)
+{
+    return list_walk(dir, 0, cb, ctx);
+}
+
 typedef struct {
     char *buf;
     size_t buf_len;
     drive_list_info_t *info;
+    bool page;          // drive_list_page(): stop at the first entry that does not fit
+    bool more;          // page: an entry did not fit, the next page starts with it
+    uint32_t seen;      // page: entries written or skipped
 } list_pack_t;
 
 static bool list_pack(void *ctx, const char *name, bool is_dir, uint32_t size, uint32_t mtime)
@@ -1638,7 +1687,12 @@ static bool list_pack(void *ctx, const char *name, bool is_dir, uint32_t size, u
     drive_list_info_t *info = p->info;
     const size_t name_len = strlen(name) + 1;
     if (info->used + DRIVE_LIST_HDR + name_len > p->buf_len) {
+        if (p->page && info->count > 0) {
+            p->more = true;
+            return false;  // the next page starts with this entry
+        }
         info->truncated = true;
+        p->seen++;
         return true;   // a shorter name may still fit
     }
     char *e = p->buf + info->used;
@@ -1648,6 +1702,7 @@ static bool list_pack(void *ctx, const char *name, bool is_dir, uint32_t size, u
     memcpy(e + DRIVE_LIST_HDR, name, name_len);
     info->used += DRIVE_LIST_HDR + name_len;
     info->count++;
+    p->seen++;
     return true;
 }
 
@@ -1655,7 +1710,19 @@ drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list
 {
     memset(info, 0, sizeof(*info));
     list_pack_t p = {.buf = buf, .buf_len = buf_len, .info = info};
-    return drive_list_each(dir, list_pack, &p);
+    return list_walk(dir, 0, list_pack, &p);
+}
+
+drive_result_t drive_list_page(const char *dir, uint32_t start_index, char *buf, size_t buf_len,
+                               drive_list_info_t *info, uint32_t *next_index, bool *more)
+{
+    memset(info, 0, sizeof(*info));
+    list_pack_t p = {.buf = buf, .buf_len = buf_len, .info = info, .page = true};
+    const drive_result_t r = list_walk(dir, start_index, list_pack, &p);
+    // p.more implies p.seen >= 1 (only set after a written entry), so the index always advances.
+    *next_index = start_index + p.seen;
+    *more = r == DRIVE_OK && p.more;
+    return r;
 }
 
 drive_result_t drive_mkdir(const char *path)
@@ -1816,6 +1883,222 @@ drive_result_t drive_copy(const char *from, const char *to)
         ESP_LOGI(TAG, "copy '%s' -> '%s' (%llu bytes, %lld ms): %s", from, to, (unsigned long long)c->bytes,
                  (esp_timer_get_time() - t0) / 1000, drive_result_str(r));
     }
+    tree_end(c);
+    unlock();
+    return r;
+}
+
+// ---- move/copy onto an existing target (drive_replace)
+
+/** First cluster of the folder that contains the FatFs path in buf (0 = root; buf is modified
+ *  temporarily). False if it cannot be opened. */
+static bool parent_cluster(char *buf, FF_DIR *d, DWORD *clust)
+{
+    char *slash = strrchr(buf + FAT_REL_OFF, '/');
+    char *cut = slash ? slash : buf + FAT_REL_OFF;   // root: "N:/"
+    const char saved = *cut;
+    *cut = '\0';
+    const FRESULT fr = f_opendir(d, buf);
+    *cut = saved;
+    if (fr != FR_OK) {
+        return false;
+    }
+    *clust = d->obj.sclust;
+    f_closedir(d);
+    return true;
+}
+
+/** A hidden name next to the FatFs path dst that does not exist yet: "<folder>/.pd_<tag>XXXXXXXX"
+ *  (hidden in every listing, short enough for any target). False if none was found. */
+static bool replace_tmp_path(char *out, size_t size, const char *dst, char tag, FILINFO *fno)
+{
+    const char *slash = strrchr(dst + FAT_REL_OFF, '/');
+    const int plen = slash ? (int)(slash - dst) : FAT_REL_OFF - 1;   // "N:" for the root
+    for (int i = 0; i < 4; i++) {
+        const int n = snprintf(out, size, "%.*s/.pd_%c%08lx", plen, dst, tag,
+                               (unsigned long)(esp_timer_get_time() + i * 7919));
+        if (n <= 0 || (size_t)n >= size) {
+            return false;
+        }
+        if (f_stat(out, fno) == FR_NO_FILE) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** Remove the file or the folder with everything in it at the FatFs path p (uses c->path). */
+static drive_result_t remove_fat_path(tree_ctx_t *c, const char *p, bool is_dir)
+{
+    const size_t len = strlen(p);
+    if (len + 1 > TREE_PATH_SIZE) {
+        return DRIVE_ERR_IO;
+    }
+    memcpy(c->path, p, len + 1);
+    drive_result_t r = is_dir ? delete_tree(c, len, 0) : DRIVE_OK;
+    if (r == DRIVE_OK && f_unlink(c->path) != FR_OK) {
+        r = DRIVE_ERR_IO;
+    }
+    return r;
+}
+
+drive_result_t drive_replace(const char *from, const char *to, bool copy, bool *replaced)
+{
+    *replaced = false;
+    drive_result_t r = check_src_dst(from, to);
+    if (r != DRIVE_OK) {
+        return r;
+    }
+    struct {
+        char dst[FAT_REL_OFF + DRIVE_PATH_MAX + 1];   // FatFs path of the target
+        char old[FAT_REL_OFF + DRIVE_PATH_MAX + 16];  // the old target, renamed away
+        char tmp[FAT_REL_OFF + DRIVE_PATH_MAX + 16];  // copy: the new copy until it takes the place
+        FILINFO fs, fd;
+    } *x = NULL;
+    lock();
+    tree_ctx_t *c;
+    bool is_dir = false, have_old = false, dst_dir = false, tmp_made = false;
+    r = tree_begin(&c);   // the lock is held to the end: nobody (printer, auto-lock) sees a half state
+    if (r == DRIVE_OK && !(x = malloc(sizeof(*x)))) {
+        r = DRIVE_ERR_IO;
+    }
+    if (r == DRIVE_OK) {
+        r = prepare_move_copy(c, from, to, &is_dir);   // source, target folder, into itself, depth
+    }
+#if !CONFIG_PD_UPLOAD_ALL_TYPES
+    if (r == DRIVE_OK && !copy && !is_dir) {
+        r = drive_check_name(last_segment(to));        // BAD_TYPE, as drive_move()
+    }
+#endif
+    if (r == DRIVE_OK && strlcpy(x->dst, c->path2, sizeof(x->dst)) >= sizeof(x->dst)) {
+        r = DRIVE_ERR_IO;
+    }
+    if (r == DRIVE_OK) {
+        // The target: missing (plain move/copy), visible (replaced) or hidden (EXISTS: a hidden
+        // entry reached through an alias is never overwritten).
+        const drive_result_t v = check_visible(x->dst, &x->fd);
+        if (v == DRIVE_OK) {
+            have_old = true;
+            dst_dir = (x->fd.fattrib & AM_DIR) != 0;
+        } else if (v == DRIVE_ERR_NOT_FOUND) {
+            const FRESULT fr = f_stat(x->dst, &x->fd);
+            r = fr == FR_OK ? DRIVE_ERR_EXISTS : (fr == FR_NO_FILE ? DRIVE_OK : fr_result(fr));
+        } else {
+            r = v;
+        }
+    }
+    if (r == DRIVE_OK && have_old) {
+        // The target must not be the source under another spelling (case, 8.3 alias) nor a folder
+        // that contains the source: compare what FatFs resolves (see prepare_move_copy()).
+        FF_DIR *d = &c->dirs[0];
+        DWORD ps = 0, pd = 0;
+        if (f_stat(c->path, &x->fs) != FR_OK || !parent_cluster(c->path, d, &ps) || !parent_cluster(x->dst, d, &pd)) {
+            r = DRIVE_ERR_IO;
+        } else if (ps == pd && strcmp(x->fs.fname, x->fd.fname) == 0) {
+            // The same object: a move is a plain rename (FatFs allows changing the spelling of a
+            // name onto itself), a copy onto itself is refused.
+            if (copy) {
+                r = DRIVE_ERR_BAD_NAME;
+            } else {
+                have_old = false;
+            }
+        } else if (dst_dir) {
+            DWORD dc = 0;
+            if (f_opendir(d, x->dst) != FR_OK) {
+                r = DRIVE_ERR_IO;
+            } else {
+                dc = d->obj.sclust;
+                f_closedir(d);
+            }
+            for (char *p = strchr(c->path + FAT_REL_OFF, '/'); r == DRIVE_OK && p; p = strchr(p + 1, '/')) {
+                *p = '\0';   // every proper prefix of the source path
+                const FRESULT fr = f_opendir(d, c->path);
+                const DWORD clust = d->obj.sclust;
+                if (fr == FR_OK) {
+                    f_closedir(d);
+                }
+                *p = '/';
+                if (fr == FR_OK && clust == dc) {
+                    r = DRIVE_ERR_BAD_NAME;
+                }
+            }
+        } else if (x->fd.fattrib & AM_RDO) {
+            r = DRIVE_ERR_IO;   // a read-only file could not be removed afterwards (as drive_delete())
+        }
+    }
+    const int64_t t0 = esp_timer_get_time();
+    if (r == DRIVE_OK && copy) {
+        // The copy is made under a temporary name first: the old target stays untouched until the
+        // copy is complete, so it needs the full size of the source (as drive_copy()).
+        refresh_fs_info();
+        if (c->bytes + FREE_RESERVE_BYTES > s_st.free_bytes) {
+            r = DRIVE_ERR_NO_SPACE;
+        }
+        if (r == DRIVE_OK) {
+            c->fsrc = malloc(sizeof(FIL));
+            c->fdst = malloc(sizeof(FIL));
+            c->buf = malloc(COPY_BUF_SIZE);
+            if (!c->fsrc || !c->fdst || !c->buf) {
+                ESP_LOGE(TAG, "no memory for copy buffers");
+                r = DRIVE_ERR_IO;
+            }
+        }
+        if (r == DRIVE_OK) {
+            if (!have_old) {
+                strlcpy(x->tmp, x->dst, sizeof(x->tmp));   // nothing to replace: copy in place
+            } else if (!replace_tmp_path(x->tmp, sizeof(x->tmp), x->dst, 'n', &x->fs)) {
+                r = DRIVE_ERR_IO;
+            }
+        }
+        if (r == DRIVE_OK) {
+            strlcpy(c->path2, x->tmp, TREE_PATH_SIZE);
+            if (!is_dir) {
+                r = copy_file(c);   // removes its partial target itself
+            } else {
+                const FRESULT fr = f_mkdir(c->path2);
+                r = fr == FR_OK ? copy_tree(c, strlen(c->path), strlen(c->path2), 0)
+                                : (fr == FR_DENIED ? DRIVE_ERR_NO_SPACE : fr_result(fr));
+                if (r != DRIVE_OK && fr == FR_OK && remove_fat_path(c, x->tmp, true) != DRIVE_OK) {
+                    ESP_LOGE(TAG, "could not remove the incomplete copy '%s'", x->tmp);
+                }
+            }
+            tmp_made = r == DRIVE_OK && have_old;
+        }
+    }
+    if (r == DRIVE_OK && have_old) {
+        // Swap: old target away, new object into its place; on failure the old one comes back.
+        FRESULT fr = FR_INT_ERR;
+        if (replace_tmp_path(x->old, sizeof(x->old), x->dst, 'o', &x->fs)) {
+            fr = f_rename(x->dst, x->old);
+        }
+        if (fr == FR_OK) {
+            fr = f_rename(copy ? x->tmp : c->path, x->dst);
+            if (fr != FR_OK && f_rename(x->old, x->dst) != FR_OK) {
+                ESP_LOGE(TAG, "replace '%s': the old target could not be restored from '%s'", to, x->old);
+            }
+        }
+        r = fr == FR_OK ? DRIVE_OK : (fr == FR_DENIED ? DRIVE_ERR_NO_SPACE : (fr == FR_INT_ERR ? DRIVE_ERR_IO : fr_result(fr)));
+        if (r == DRIVE_OK) {
+            *replaced = true;
+            tmp_made = false;   // the copy is the target now
+            const drive_result_t d = remove_fat_path(c, x->old, dst_dir);
+            if (d != DRIVE_OK) {
+                ESP_LOGW(TAG, "replaced '%s', but the old version '%s' could not be removed: %s", to, x->old,
+                         drive_result_str(d));
+            }
+        }
+    } else if (r == DRIVE_OK && !copy) {
+        const FRESULT fr = f_rename(c->path, x->dst);   // no target: a plain move
+        r = fr == FR_DENIED ? DRIVE_ERR_NO_SPACE : fr_result(fr);
+    }
+    if (tmp_made && remove_fat_path(c, x->tmp, is_dir) != DRIVE_OK) {
+        ESP_LOGE(TAG, "could not remove the unused copy '%s'", x->tmp);
+    }
+    if (c && x) {
+        ESP_LOGI(TAG, "%s '%s' -> '%s'%s (%lld ms): %s", copy ? "copy" : "move", from, to,
+                 have_old ? " replacing the target" : "", (esp_timer_get_time() - t0) / 1000, drive_result_str(r));
+    }
+    free(x);
     tree_end(c);
     unlock();
     return r;
@@ -2171,8 +2454,19 @@ drive_result_t drive_upload_validate(const char *path, uint64_t size)
  * folder exists and is visible (NOT_FOUND), the target is no folder (IS_DIR), EXISTS unless
  * overwrite.
  */
+/** true for 8.3 aliases of our hidden temp files in the root ("PD_UPL~1.TMP", "PD_OLD~1.TMP"). */
+static bool temp_alias_name(const char *path)
+{
+    const size_t n = strlen(path);
+    return strchr(path, '/') == NULL && n >= 8 && strncasecmp(path, "PD_", 3) == 0 &&
+           strchr(path, '~') != NULL && strcasecmp(path + n - 4, ".TMP") == 0;
+}
+
 static drive_result_t upload_target_locked(const char *path, bool overwrite)
 {
+    if (temp_alias_name(path)) {
+        return DRIVE_ERR_BAD_NAME;   // would be renamed onto the upload temp file itself
+    }
     // New paths are at most DRIVE_PATH_MAX (< VFS_REL_MAX) bytes: safe for the VFS.
     char full[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_PATH_MAX + 1];
     make_path(full, sizeof(full), path);
@@ -2700,6 +2994,9 @@ drive_result_t drive_crypt_setup(const char *password, char *recovery_out, size_
             }
         }
     }
+    if (pd_crypt_state() == PD_CRYPT_UNLOCKED) {
+        s_al_gen++;                              // auto-lock periods start now (see drive_crypt_unlock)
+    }
     long_op_end();
     unlock();
     return r;
@@ -2723,6 +3020,9 @@ drive_result_t drive_crypt_unlock(const char *secret, uint32_t *retry_after_s)
     long_op_begin();
     const pd_crypt_err_t e = pd_crypt_unlock(secret, retry_after_s);
     if (e == PD_CRYPT_OK) {
+        // Auto-lock: every period starts again now, even if the poll never saw the drive locked.
+        s_al_gen++;
+        s_app_activity_ms = now_ms();
         // Same path as an owner change: app first, then the host if one is attached.
         if (do_mount_app() == DRIVE_ERR_NO_FS) {
             s_st.needs_format = true;            // unlocked, but the volume has no file system
@@ -2740,24 +3040,21 @@ out:
     return r;
 }
 
-drive_result_t drive_crypt_lock(bool force)
+/** drive_crypt_lock() with s_lock already held (also used by the auto-lock). */
+static drive_result_t crypt_lock_locked(bool force)
 {
-    if (!lock_unless_long_op()) {
-        return DRIVE_ERR_BUSY;
-    }
     drive_result_t r = DRIVE_OK;
     switch (crypt_state_public()) {
     case DRIVE_CRYPT_UNLOCKED: break;
-    case DRIVE_CRYPT_LOCKED:   goto out;
-    case DRIVE_CRYPT_DAMAGED:  r = DRIVE_ERR_CRYPT_DAMAGED; goto out;
-    default:                   r = DRIVE_ERR_NOT_ENCRYPTED; goto out;
+    case DRIVE_CRYPT_LOCKED:   return DRIVE_OK;
+    case DRIVE_CRYPT_DAMAGED:  return DRIVE_ERR_CRYPT_DAMAGED;
+    default:                   return DRIVE_ERR_NOT_ENCRYPTED;
     }
     if (s_st.upload_active || s_open_downloads > 0) {
-        r = DRIVE_ERR_BUSY;
-        goto out;
+        return DRIVE_ERR_BUSY;
     }
     if (host_keeps_drive(force, &r)) {
-        goto out;
+        return r;
     }
     r = release_medium();
     if (r == DRIVE_OK) {
@@ -2765,36 +3062,73 @@ drive_result_t drive_crypt_lock(bool force)
         s_st.needs_format = false;
         ESP_LOGI(TAG, "drive locked");
     }
-out:
+    return r;
+}
+
+drive_result_t drive_crypt_lock(bool force)
+{
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
+    const drive_result_t r = crypt_lock_locked(force);
     unlock();
     return r;
 }
 
 // ---- auto-lock ------------------------------------------------------------------------------
-// Locks an unlocked encrypted drive (1) after `minutes` without activity and/or (2) with
-// `on_detach` when the USB host goes away while the stick stays powered: host no longer
-// configured (detached / port reset) for AUTOLOCK_DETACH_MS, or suspended for AUTOLOCK_SUSPEND_MS
-// (PC asleep, printer in standby). Pulling the stick out cuts its power, and an encrypted drive is
-// locked after every power-up anyway - on_detach covers hosts that keep VBUS on.
-// Activity = host READ/WRITE, any local file operation (lock(), see s_app_activity_ms), a running
-// upload/download/long operation, the unlock itself and a change of these settings.
-// The poll runs in drive_task (AUTOLOCK_POLL_MS). It calls drive_crypt_lock(AUTOLOCK_FORCE): its
-// safety rules always hold - DRIVE_ERR_BUSY (upload/download/long operation) and
-// DRIVE_ERR_HOST_WRITING (host wrote within CONFIG_PD_HOST_WRITE_GUARD_MS) are never overridden,
-// the next poll simply tries again. force only takes the drive from a host that holds it without
-// I/O for the whole period (otherwise a printer that never ejects would keep it unlocked forever).
+// Locks an unlocked encrypted drive automatically. Pulling the stick out cuts its power, and an
+// encrypted drive is locked after every power-up anyway - these rules cover a stick that stays
+// powered. All periods start again with every unlock; the timer also with every settings change.
+//
+// (1) on_detach - the USB host goes away (only once a host was seen awake since the unlock):
+//     - host no longer configured (unplugged from a powered hub, port reset, re-enumeration that
+//       never completes) for AUTOLOCK_DETACH_MS (10 s); our own soft re-plug is ignored;
+//     - host suspended (PC asleep, printer in standby) for AUTOLOCK_SUSPEND_MS (5 min) AND no host
+//       READ/WRITE during those 5 min. 5 min, not less: hosts may selectively suspend an attached
+//       but idle drive in the middle of a session and must not lose it for that.
+//     Local web activity does not delay (1).
+// (2) minutes (timer) - "inactive" = no host READ/WRITE (TEST UNIT READY polling does not count),
+//     no local file operation (anything that takes the drive lock: list, upload, download, mkdir,
+//     WebDAV, ...), no running upload/download/long operation, for the whole period. Then:
+//     - no host holds the drive (drive owned by the app, host absent, host ejected it, or host
+//       suspended for at least AUTOLOCK_SUSPEND_MS): the drive is locked;
+//     - a host holds the drive (owner USB, host configured, not ejected, awake or suspended for
+//       less than 5 min): locked - i.e. taken from the host - only if the period is at least
+//       AUTOLOCK_TAKE_MIN_MINUTES (10 min). With 1..9 minutes the timer waits until no host holds
+//       the drive any more. (Without the >= 10 min exception a host that never ejects, e.g. a
+//       printer, would keep the drive unlocked forever.)
+// The poll runs in drive_task (AUTOLOCK_POLL_MS) and only pre-checks without the lock; the final
+// decision is made by autolock_try() under s_lock, which re-checks every condition right before
+// locking (activity between the poll and the lock always wins). The rules of drive_crypt_lock()
+// hold as well: DRIVE_ERR_BUSY (upload/download/long operation) and DRIVE_ERR_HOST_WRITING (host
+// wrote within CONFIG_PD_HOST_WRITE_GUARD_MS) are never overridden, the next poll tries again.
 
-#define AUTOLOCK_FORCE         true
-#define AUTOLOCK_DETACH_MS     10000        // host not configured this long (> our own re-plug)
-#define AUTOLOCK_SUSPEND_MS    60000        // host suspended this long
+#define AUTOLOCK_DETACH_MS        10000        // host not configured this long (> our own re-plug)
+#define AUTOLOCK_SUSPEND_MS       300000       // host suspended this long (5 min)
+#define AUTOLOCK_TAKE_MIN_MINUTES 10           // shortest timer that may take the drive from a host
+
+typedef enum {
+    AL_HOST_AWAKE,                          // configured and not suspended
+    AL_HOST_SUSPENDED,                      // configured, suspended
+    AL_HOST_GONE,                           // not configured
+} al_host_t;
+
+typedef enum {
+    AL_WHY_DETACH,
+    AL_WHY_SUSPEND,
+    AL_WHY_IDLE,
+} al_why_t;
 
 static volatile uint16_t s_al_minutes;      // 0 = off
 static volatile bool s_al_on_detach;
 static volatile uint32_t s_al_touch_ms;     // activity noted by the poll / settings
+// Poll state (drive_task only).
 static uint32_t s_al_last_poll_ms;
 static bool s_al_unlocked;                  // state at the previous poll
+static uint32_t s_al_seen_gen;              // s_al_gen at the previous poll
 static bool s_al_host_seen;                 // host was present (configured, awake) since the unlock
-static uint32_t s_al_host_ms;               // last poll that saw the host present
+static al_host_t s_al_host;                 // host state at the last poll ...
+static uint32_t s_al_host_since_ms;         // ... and since when (poll time)
 static drive_result_t s_al_last_result;     // logged only when it changes
 
 static void autolock_load(void)
@@ -2816,8 +3150,106 @@ static uint32_t min_u32(uint32_t a, uint32_t b)
     return a < b ? a : b;
 }
 
+/** Milliseconds from t to now; 0 if t is later (written by another task after now was read). */
+static uint32_t ms_since(uint32_t now, uint32_t t)
+{
+    const int32_t d = (int32_t)(now - t);
+    return d < 0 ? 0 : (uint32_t)d;
+}
+
+static al_host_t autolock_host_now(void)
+{
+    if (!usb_dev_connected()) {
+        return AL_HOST_GONE;
+    }
+    return usb_dev_suspended() ? AL_HOST_SUSPENDED : AL_HOST_AWAKE;
+}
+
+/** Since when the host is in state `host` (0 if that is not the state the poll last saw). */
+static uint32_t autolock_host_for(uint32_t now, al_host_t host)
+{
+    return host == s_al_host ? ms_since(now, s_al_host_since_ms) : 0;
+}
+
+/** Host READ/WRITE idle time (UINT32_MAX if neither was seen since the drive was provided). */
+static uint32_t autolock_host_io_idle(void)
+{
+    return min_u32(idle_ms(s_host_read_seen, &s_last_host_read_ms),
+                   idle_ms(s_host_write_seen, &s_last_host_write_ms));
+}
+
+/**
+ * Timer rule (2), see the block comment. Authoritative only with s_lock held (autolock_try():
+ * owner, eject flag and app activity cannot change then); the poll uses it as a pre-check.
+ */
+static bool autolock_idle_due(uint32_t now, al_host_t host, uint32_t host_for)
+{
+    const uint32_t minutes = s_al_minutes;
+    if (minutes == 0) {
+        return false;
+    }
+    uint32_t idle = min_u32(ms_since(now, s_al_touch_ms), ms_since(now, s_app_activity_ms));
+    idle = min_u32(idle, autolock_host_io_idle());
+    if (idle < minutes * 60000UL) {
+        return false;
+    }
+    const bool host_holds = s_st.owner == DRIVE_OWNER_USB && host != AL_HOST_GONE && !s_host_ejected &&
+                            !(host == AL_HOST_SUSPENDED && host_for >= AUTOLOCK_SUSPEND_MS);
+    return !host_holds || minutes >= AUTOLOCK_TAKE_MIN_MINUTES;
+}
+
+typedef enum {
+    AL_LOCKED,
+    AL_NOT_DUE,                             // a condition no longer holds (activity, host back, ...)
+    AL_POSTPONED,                           // due, but drive_crypt_lock()'s rules refused (*r)
+} al_outcome_t;
+
+/**
+ * Final auto-lock decision with s_lock held: re-checks the rule for `why` (and that the drive was
+ * not unlocked again since the poll read gen) right before locking. Uses lock_unless_long_op(),
+ * which - unlike lock() - does not count as app activity.
+ */
+static al_outcome_t autolock_try(al_why_t why, uint32_t gen, drive_result_t *r)
+{
+    *r = DRIVE_OK;
+    if (!lock_unless_long_op()) {
+        *r = DRIVE_ERR_BUSY;
+        return AL_POSTPONED;
+    }
+    const uint32_t now = now_ms();          // read under the lock: no lock() can move activity past it
+    const al_host_t host = autolock_host_now();
+    const uint32_t host_for = autolock_host_for(now, host);
+    bool due = false;
+    if (crypt_state_public() == DRIVE_CRYPT_UNLOCKED && s_al_gen == gen && !s_st.upload_active &&
+        s_open_downloads == 0) {
+        switch (why) {
+        case AL_WHY_DETACH:
+            due = s_al_on_detach && host == AL_HOST_GONE && host_for >= AUTOLOCK_DETACH_MS &&
+                  (int64_t)(esp_timer_get_time() / 1000) >= s_replug_until_ms;
+            break;
+        case AL_WHY_SUSPEND:
+            due = s_al_on_detach && host == AL_HOST_SUSPENDED && host_for >= AUTOLOCK_SUSPEND_MS &&
+                  autolock_host_io_idle() >= AUTOLOCK_SUSPEND_MS;
+            break;
+        case AL_WHY_IDLE:
+            due = autolock_idle_due(now, host, host_for);
+            break;
+        }
+    }
+    al_outcome_t o = AL_NOT_DUE;
+    if (due) {
+        // force: the rule above decided that the host may lose the drive; the write guard
+        // (DRIVE_ERR_HOST_WRITING) and BUSY still apply inside.
+        *r = crypt_lock_locked(true);
+        o = *r == DRIVE_OK ? AL_LOCKED : AL_POSTPONED;
+    }
+    unlock();
+    return o;
+}
+
 static void autolock_poll(void)
 {
+    static const char *const why_str[] = {"host gone", "host suspended", "inactivity"};
     const uint32_t now = now_ms();
     if ((uint32_t)(now - s_al_last_poll_ms) < AUTOLOCK_POLL_MS - 500) {
         return;
@@ -2827,47 +3259,61 @@ static void autolock_poll(void)
         s_al_unlocked = false;
         return;
     }
-    if (!s_al_unlocked) {                   // just unlocked (or set up): all periods start now
+    const uint32_t gen = s_al_gen;
+    const al_host_t host = autolock_host_now();
+    if (!s_al_unlocked || gen != s_al_seen_gen) {
+        // Just unlocked or set up - also when lock and unlock both happened since the last poll
+        // (s_al_gen): all periods start now.
         s_al_unlocked = true;
+        s_al_seen_gen = gen;
         s_al_touch_ms = now;
-        s_al_host_seen = false;
+        s_al_host_seen = host == AL_HOST_AWAKE;
+        s_al_host = host;
+        s_al_host_since_ms = now;
         s_al_last_result = DRIVE_OK;
         return;
     }
-    const bool connected = usb_dev_connected(), suspended = usb_dev_suspended();
-    if (connected && !suspended) {
-        s_al_host_seen = true;
-        s_al_host_ms = now;
+    if (host != s_al_host) {
+        s_al_host = host;
+        s_al_host_since_ms = now;
     }
-    // Unlocked reads of these flags are fine here: drive_crypt_lock() checks them again under s_lock.
+    if (host == AL_HOST_AWAKE) {
+        s_al_host_seen = true;
+    }
+    // Unlocked reads of these flags are fine here: autolock_try() checks them again under s_lock.
     if (s_long_op || s_st.upload_active || s_open_downloads > 0) {
         s_al_touch_ms = now;                // never now, and the idle period starts afterwards
         return;
     }
-    const char *why = NULL;
-    if (s_al_on_detach && s_al_host_seen && (int64_t)(esp_timer_get_time() / 1000) >= s_replug_until_ms &&
-        (uint32_t)(now - s_al_host_ms) >= (connected ? AUTOLOCK_SUSPEND_MS : AUTOLOCK_DETACH_MS)) {
-        why = connected ? "host suspended" : "host gone";
-    }
-    if (!why && s_al_minutes) {
-        uint32_t idle = min_u32((uint32_t)(now - s_al_touch_ms), (uint32_t)(now - s_app_activity_ms));
-        idle = min_u32(idle, idle_ms(s_host_read_seen, &s_last_host_read_ms));
-        idle = min_u32(idle, idle_ms(s_host_write_seen, &s_last_host_write_ms));
-        if (idle >= (uint32_t)s_al_minutes * 60000UL) {
-            why = "inactivity";
-        }
-    }
-    if (!why) {
+    const uint32_t host_for = autolock_host_for(now, host);
+    al_why_t why;
+    if (s_al_on_detach && s_al_host_seen && host == AL_HOST_GONE && host_for >= AUTOLOCK_DETACH_MS &&
+        (int64_t)(esp_timer_get_time() / 1000) >= s_replug_until_ms) {
+        why = AL_WHY_DETACH;
+    } else if (s_al_on_detach && s_al_host_seen && host == AL_HOST_SUSPENDED && host_for >= AUTOLOCK_SUSPEND_MS &&
+               autolock_host_io_idle() >= AUTOLOCK_SUSPEND_MS) {
+        why = AL_WHY_SUSPEND;
+    } else if (autolock_idle_due(now, host, host_for)) {
+        why = AL_WHY_IDLE;
+    } else {
         return;
     }
-    const drive_result_t r = drive_crypt_lock(AUTOLOCK_FORCE);
-    if (r == DRIVE_OK) {
-        ESP_LOGI(TAG, "auto-lock: drive locked (%s)", why);
+    drive_result_t r;
+    switch (autolock_try(why, gen, &r)) {
+    case AL_LOCKED:
+        ESP_LOGI(TAG, "auto-lock: drive locked (%s)", why_str[why]);
         s_al_unlocked = false;
-    } else if (r != s_al_last_result) {
-        ESP_LOGI(TAG, "auto-lock (%s) postponed: %s", why, drive_result_str(r));
+        s_al_last_result = DRIVE_OK;
+        break;
+    case AL_POSTPONED:
+        if (r != s_al_last_result) {
+            ESP_LOGI(TAG, "auto-lock (%s) postponed: %s", why_str[why], drive_result_str(r));
+        }
+        s_al_last_result = r;
+        break;
+    case AL_NOT_DUE:
+        break;
     }
-    s_al_last_result = r;
 }
 
 void drive_autolock_get(uint16_t *minutes, bool *on_detach)

@@ -20,6 +20,10 @@ static const char *TAG = "web";
 #define LIST_BUF_SIZE (32 * 1024)                 // listing limit ("truncated"), see list_entry(); no buffer
 #define PATH_BUF_SIZE (DRIVE_SRC_PATH_MAX + 1)    // any path parameter (checked by drive_check_path())
 #define ITEM_BUF_SIZE (2 * PATH_BUF_SIZE + 96)    // one JSON entry or the head with "dir" (escaped)
+#define LIST_PAGE_SIZE 4096                       // packed entries read per drive_list_page() call
+#define LIST_OUT_SIZE (WEB_IO_BUF_SIZE - PATH_BUF_SIZE - ITEM_BUF_SIZE - LIST_PAGE_SIZE)
+_Static_assert(LIST_PAGE_SIZE >= DRIVE_LIST_ENTRY_MAX, "a page must hold the longest entry");
+_Static_assert(LIST_OUT_SIZE >= 4 * ITEM_BUF_SIZE, "listing output part too small");
 
 // ------------------------------------------------------------------ parameters
 
@@ -86,11 +90,14 @@ static bool drain_body(httpd_req_t *req, size_t remaining)
 // ------------------------------------------------------------------ listing, download
 
 /**
- * Streamed listing. The answer is collected in the shared I/O buffer (no buffer of its own) and
- * only sent when that part is full, so a folder of up to ~120 typical entries goes out in one
- * piece after the folder was read completely - every error can still be answered normally.
- * Larger folders are sent in parts while being read; a read error after the first part can only
- * abort the connection (like a failed download).
+ * Streamed listing in the shared I/O buffer (no buffer of its own): the folder is read in pages
+ * (drive_list_page(), LIST_PAGE_SIZE of packed entries); the drive lock is held only while a page
+ * is read and NEVER while sending, so a slow client cannot stall the drive task, owner changes,
+ * lock or the button. The JSON is collected in the output part (LIST_OUT_SIZE) and only sent when
+ * that part is full, so a folder of up to ~90 typical entries goes out in one piece after it was
+ * read completely - every error can still be answered normally. Larger folders are sent in parts;
+ * an error after the first part can only abort the connection (like a failed download). If the
+ * folder changes between two pages, entries may be missed or repeated (see drive_list_page()).
  */
 typedef struct {
     httpd_req_t *req;
@@ -127,9 +134,9 @@ static bool list_put(list_ctx_t *c, const char *s, size_t n)
     return true;
 }
 
-static bool list_entry(void *ctx, const char *name, bool is_dir, uint32_t size, uint32_t mtime)
+/** One entry into the answer. false only if sending failed (c->err). */
+static bool list_entry(list_ctx_t *c, const char *name, bool is_dir, uint32_t size, uint32_t mtime)
 {
-    list_ctx_t *c = ctx;
     // Same limit as the former 32 KiB packed list (DRIVE_LIST_HDR + name + NUL per entry), so the
     // entries and "truncated" stay exactly as before.
     const size_t need = DRIVE_LIST_HDR + strlen(name) + 1;
@@ -158,12 +165,12 @@ static esp_err_t h_files(httpd_req_t *req)
     if (!mem) {
         return web_send_error(req, "500 Internal Server Error", "NO_MEM", "Zu wenig Arbeitsspeicher.");
     }
-    char *const dir = mem, *const item = dir + PATH_BUF_SIZE;
+    char *const dir = mem, *const item = dir + PATH_BUF_SIZE, *const page = item + ITEM_BUF_SIZE;
     list_ctx_t c = {
         .req = req,
         .item = item,
-        .out = item + ITEM_BUF_SIZE,
-        .cap = WEB_IO_BUF_SIZE - PATH_BUF_SIZE - ITEM_BUF_SIZE,
+        .out = page + LIST_PAGE_SIZE,
+        .cap = LIST_OUT_SIZE,
     };
     const param_t p = path_param(req, "dir", dir);
     if (p == PARAM_MISSING) {
@@ -177,9 +184,39 @@ static esp_err_t h_files(httpd_req_t *req)
     web_json_str(item, ITEM_BUF_SIZE, dir);
     web_appendf(item, ITEM_BUF_SIZE, ",\"entries\":[");
     list_put(&c, item, strlen(item));   // nothing collected yet: always fits, never sends
-    const drive_result_t r = drive_list_each(dir, list_entry, &c);
-    if (c.err != ESP_OK) {
-        return ESP_FAIL;   // client gone while sending
+    drive_result_t r = DRIVE_OK;
+    uint32_t index = 0;
+    bool more = true;
+    while (more) {
+        drive_list_info_t info;
+        uint32_t next = index;
+        r = drive_list_page(dir, index, page, LIST_PAGE_SIZE, &info, &next, &more);   // lock only in here
+        if (r != DRIVE_OK) {
+            break;
+        }
+        c.truncated |= info.truncated;   // never with LIST_PAGE_SIZE >= DRIVE_LIST_ENTRY_MAX
+        // The drive lock is released: sending may block as long as the client wants.
+        size_t pos = 0;
+        for (uint32_t i = 0; i < info.count; i++) {
+            const char *const e = page + pos;
+            uint32_t size, mtime;
+            memcpy(&size, e, sizeof(size));
+            memcpy(&mtime, e + 4, sizeof(mtime));
+            const char *const name = e + DRIVE_LIST_HDR;
+            pos += DRIVE_LIST_HDR + strlen(name) + 1;
+            if (!list_entry(&c, name, e[8] == DRIVE_ENTRY_DIR, size, mtime)) {
+                return ESP_FAIL;   // client gone while sending
+            }
+        }
+        if (more && next <= index) {
+            r = DRIVE_ERR_IO;      // no progress (cannot happen): never loop forever
+            break;
+        }
+        if (more && c.used + DRIVE_LIST_HDR + 2 > LIST_BUF_SIZE) {
+            c.truncated = true;    // not even a one-character name fits any more: stop reading
+            break;
+        }
+        index = next;
     }
     if (r != DRIVE_OK) {
         if (!c.sent) {
@@ -364,7 +401,7 @@ static esp_err_t receive_body(httpd_req_t *req, const char *path, bool keep_part
         }
     }
     // Optional: original modification time of the file, and the client's clock (both real unix
-    // seconds). The clock is only taken while NTP has not set it (pd_time decides).
+    // seconds). The clock is only taken while it is still unknown (pd_time decides).
     char num[16];
     const uint32_t mtime =
         web_query_param(req, "mtime", num, sizeof(num)) ? (uint32_t)strtoul(num, NULL, 10) : 0;

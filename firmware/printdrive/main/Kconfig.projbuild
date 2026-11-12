@@ -72,5 +72,13 @@ menu "DataDrive"
             30 MB upload 864 kB/s, download 389 kB/s, 66 KiB heap free when idle, lowest
             22 KiB during the upload, no TLS buffer misses. The record buffers are reserved
             once at start (tls.c) and only one TLS connection is served at a time.
+            Residual risk of the single connection: any device in the LAN (no login needed)
+            can occupy the HTTPS server - a stalled handshake for up to 3 s per attempt, or
+            request headers sent very slowly (esp_http_server has no total header deadline,
+            only the 10 s per-receive timeout) - and so make the web UI unresponsive for as
+            long as it keeps doing that. It cannot read or change anything. A second
+            connection would need a second reserved buffer pair (~21 KiB), which the heap
+            does not allow (22 KiB lowest during an upload). Plain HTTP has the same
+            exposure with more sockets; the USB drive itself is never affected.
 
 endmenu
