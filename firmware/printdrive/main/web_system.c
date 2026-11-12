@@ -9,6 +9,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "ota.h"
 #include "pd_wifi.h"
 #include "sdkconfig.h"
 #include "web_common.h"
@@ -71,7 +72,12 @@ static esp_err_t h_status(httpd_req_t *req)
     web_json_str(buf, sizeof(buf), w.ap_ssid);
     web_appendf(buf, sizeof(buf), ",\"ap_ip\":\"%s\",\"hostname\":", w.ap_ip);
     web_json_str(buf, sizeof(buf), w.hostname);
-    web_appendf(buf, sizeof(buf), "}}");
+    web_appendf(buf, sizeof(buf), "}");
+    char part[17];
+    bool pending;
+    ota_get_info(part, sizeof(part), &pending);
+    web_appendf(buf, sizeof(buf), ",\"ota\":{\"partition\":\"%s\",\"pending_verify\":%s}}", part,
+                pending ? "true" : "false");
     return web_send_json(req, "200 OK", buf);
 }
 

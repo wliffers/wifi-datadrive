@@ -18,8 +18,13 @@ Then open http://127.0.0.1:8080/ . The HTML file is re-read from disk on every r
 current directory does not matter. `--bind 0.0.0.0` makes the mock reachable from a
 phone in the same network. Stop with Ctrl+C.
 
-Start state: scenario usb_active, one account admin / admin (the session reports
-default_password: true). Every scenario starts with exactly that, `two_users` adds more.
+Start state: scenario usb_active, one account admin / admin123 (the delivery password
+was "already changed", default_password: false). Only the scenario `default_login` starts
+with admin / admin: then every request except GET /api/session, POST /api/login,
+POST /api/logout and POST /api/users/password (own account) answers 403
+MUST_CHANGE_PASSWORD, for sessions and Basic alike; the new password may not be "admin"
+(400 BAD_PASSWORD); the session keeps working after the change.
+`/mock/set?default_password=1|0` switches the admin password between admin and admin123.
 
 Examples
 --------
@@ -29,12 +34,12 @@ Examples
     python tools/mock_server.py --scenario two_users --no-auth     # old tests without login
 
     # scripts: HTTP Basic on every request (POST needs the X-PrintDrive header)
-    curl -u admin:admin "http://127.0.0.1:8080/api/status"
-    curl -u admin:admin "http://127.0.0.1:8080/api/files?dir=Projekte/Drachen"
-    curl -u admin:admin -H "X-PrintDrive: 1" -X POST "http://127.0.0.1:8080/api/mkdir?path=Neu"
-    curl -u admin:admin -H "X-PrintDrive: 1" -X POST --data-binary @Teil.3mf \\
+    curl -u admin:admin123 "http://127.0.0.1:8080/api/status"
+    curl -u admin:admin123 "http://127.0.0.1:8080/api/files?dir=Projekte/Drachen"
+    curl -u admin:admin123 -H "X-PrintDrive: 1" -X POST "http://127.0.0.1:8080/api/mkdir?path=Neu"
+    curl -u admin:admin123 -H "X-PrintDrive: 1" -X POST --data-binary @Teil.3mf \\
          "http://127.0.0.1:8080/api/push?path=Projekte/Teil.3mf"       # one step, takes over the drive
-    curl -u admin:admin -H "X-PrintDrive: 1" -X POST --data-binary @printdrive.bin \\
+    curl -u admin:admin123 -H "X-PrintDrive: 1" -X POST --data-binary @printdrive.bin \\
          "http://127.0.0.1:8080/api/ota"                                # first byte must be 0xE9
 
     # browser-like: session cookie
@@ -60,6 +65,12 @@ Behaviour mirrored from the firmware
   `admin` (403 FORBIDDEN_ROLE) exactly as in the table of section 2.3; max 8 users,
   LAST_ADMIN, USER_LIMIT, BAD_USER, BAD_PASSWORD, EXISTS; changing a password ends the
   user's other sessions. /mock/* is never authenticated.
+* Trusted devices (2.2a): POST /api/login with remember=1 and device=<label> sets a cookie
+  with Max-Age=31536000 and stores the device (max 8, the oldest is replaced). Unlike normal
+  sessions, devices survive a simulated restart and never expire. GET /api/devices (user: own,
+  admin: all), POST /api/devices/delete?id=. They end on password/role change, user deletion
+  and logout (a device that changes its own password stays). The forced password change
+  applies to them too.
 * Files and folders: tree with folders (depth <= 8, path <= 240 bytes, segment rules of
   the contract, BAD_NAME), case-insensitive names like FAT. mkdir, delete (recursive=1),
   move (also rename; case-only rename allowed), copy (recursive, NO_SPACE pre-check with
@@ -85,9 +96,8 @@ Behaviour mirrored from the firmware
 Scenarios (`--scenario NAME` or `GET /mock/scenario?name=NAME`)
 ---------------------------------------------------------------
     usb_active    default: drive provided to a connected USB host, a few files, 2 folders
-    default_login same content as usb_active; the explicit name of the start state
-                  (only admin / admin, default password still set)
-    two_users     owner app, files + folders; accounts admin/admin and role user: gast/gast123
+    default_login same content as usb_active, but admin / admin: forced password change
+    two_users     owner app, files + folders; accounts admin/admin123 and role user: gast/gast123
     usb_no_host   drive provided to USB, but no host connected (take-over needs no force)
     files         owner app, 14 varied files, nested folders (3-4 levels, umlauts and spaces,
                   an empty folder "Leerer Ordner"), 2 hidden folders
@@ -99,7 +109,7 @@ Scenarios (`--scenario NAME` or `GET /mock/scenario?name=NAME`)
     many          owner app, 300 files + folders (also an empty one), list not truncated
     truncated     owner app, 1200 files, list truncated (32 KiB list buffer like the firmware)
 A scenario switch resets all mock settings below (uptime keeps running), including users
-(back to admin/admin), sessions (everybody is logged out) and the stored Wi-Fi networks.
+(back to admin/admin123), sessions (everybody is logged out) and the stored Wi-Fi networks.
 
 Control endpoints (GET, no CSRF header, no login, exist only in the mock)
 -------------------------------------------------------------------------
@@ -133,7 +143,11 @@ Control endpoints (GET, no CSRF header, no login, exist only in the mock)
     online=0|1              0: connections are accepted and reset without an answer
     auth=0|1                0: no authentication at all, everybody is admin (old tests);
                             reset to 1 by a scenario switch unless started with --no-auth
-    login_locked=1|0        1: every login is refused with LOCKED for 30 s; 0 clears the lock
+    default_password=1|0    1: admin password is admin (forced change, MUST_CHANGE_PASSWORD);
+                            0: admin123 (sessions stay valid)
+    devices=<0..8>          replaces all remembered devices by n new ones for admin
+                            (labels iPhone, Windows-PC, iPad, ...); their cookies are unknown
+    login_locked=1|0       1: every login is refused with LOCKED for 30 s; 0 clears the lock
     session_expire=1        all sessions end, the next request answers 401 UNAUTHORIZED
     fail_next=<CODE>        the next POST fails with that error code (proper HTTP status
                             and German text; works for every POST of API v3). `CODE@/api/path`
@@ -154,6 +168,7 @@ import base64
 import binascii
 import calendar
 import collections
+import hashlib
 import hmac
 import io
 import json
@@ -207,6 +222,10 @@ WIFI_MAX = 5
 OTA_MAX = 0x1F0000                  # size of one firmware partition
 OTA_VERIFY_S = 15                   # a new firmware counts as good after this uptime
 SESSION_COOKIE = "dd_session"
+DEVICES_MAX = 8                     # remembered ("trusted") devices
+DEVICE_MAX_AGE = 31536000           # cookie lifetime of a trusted device (1 year)
+DEVICE_LABEL_MAX = 32               # bytes
+DEVICE_POOL = ["iPhone", "Windows-PC", "iPad", "Android-Handy", "MacBook", "Linux-Laptop", "Pixel", "Surface"]
 HIDDEN_DIR_NAMES = ["System Volume Information", ".Trash-1000", ".Spotlight-V100", ".fseventsd",
                     ".TemporaryItems", ".Trashes", ".DS_Store_dir", ".git_tmp"]
 WIFI_POOL = ["Werkstatt", "Büro Gast", "Handy-Hotspot", "Keller 2.4G"]
@@ -223,6 +242,7 @@ ERRORS = {
     "BAD_LOGIN": (401, "Benutzername oder Passwort ist falsch."),
     "FORBIDDEN": (403, "Anfrage nicht erlaubt."),
     "FORBIDDEN_ROLE": (403, "Dafür sind Administratorrechte nötig."),
+    "MUST_CHANGE_PASSWORD": (403, "Bitte zuerst das Passwort ändern."),
     "NOT_FOUND": (404, "Die Datei oder der Ordner wurde nicht gefunden."),
     "BUSY": (409, "Es läuft gerade eine Dateiübertragung. Bitte warten, bis sie abgeschlossen ist."),
     "HOST_ACTIVE": (409, "Das USB-Gerät verwendet das Laufwerk noch. Bitte dort zuerst auswerfen oder das Trennen bestätigen."),
@@ -241,6 +261,7 @@ ERRORS = {
     "LOCKED": (429, "Zu viele Fehlversuche. Bitte in 30 Sekunden erneut versuchen."),
     "NO_SPACE": (507, "Nicht genug freier Speicher."),
 }
+TEXT_DEFAULT_PASSWORD = "Bitte ein anderes Passwort als das Auslieferungspasswort wählen."
 TEXT_NO_USER = "Diesen Benutzer gibt es nicht."
 TEXT_USER_EXISTS = "Diesen Benutzer gibt es schon."
 TEXT_NO_WIFI = "Dieses WLAN ist nicht gespeichert."
@@ -252,8 +273,8 @@ UPLOAD_PATHS = ("/api/upload", "/api/push", "/api/ota")
 
 SCENARIO_HELP = {
     "usb_active": "default: drive provided to a connected USB host, a few files and folders",
-    "default_login": "like usb_active; explicit name for the start state: only admin/admin, default password",
-    "two_users": "owner app, files and folders; accounts admin/admin and user 'gast'/'gast123'",
+    "default_login": "like usb_active, but admin/admin: delivery password, change is forced (MUST_CHANGE_PASSWORD)",
+    "two_users": "owner app, files and folders; accounts admin/admin123 and user 'gast'/'gast123'",
     "usb_no_host": "drive provided to USB, but no host connected",
     "files": "owner app, 14 varied files + nested folders (umlauts, empty folder), 2 hidden folders",
     "empty": "owner app, no files",
@@ -287,6 +308,8 @@ SET_HELP = {
     "fail_next": "error CODE for the next POST, optional CODE@/api/path (then GET of that path too), 'none' clears",
     "upload_fail_at": "percent at which the next upload connection is reset, 'none' clears",
     "other_upload": "0|1",
+    "default_password": "1|0 (1: admin password is admin, every request except the password change gets MUST_CHANGE_PASSWORD; 0: admin123)",
+    "devices": "0..8 (creates that many remembered devices for admin: iPhone, Windows-PC, ...)",
     "auth": "0|1 (0: no authentication at all, everybody is admin; reset by a scenario switch)",
     "login_locked": "0|1 (1: logins are refused with LOCKED for 30 s)",
     "session_expire": "1 (all sessions end, the next request gets 401)",
@@ -589,8 +612,10 @@ class Device:
         self.clock_offset = None          # set by the firmware's undocumented upload param `now`
         # authentication
         self.auth_enabled = self.default_auth
-        self.users = [{"name": "admin", "role": "admin", "pw": "admin"}]
+        # The mock starts with the delivery password already changed; only `default_login` keeps admin/admin.
+        self.users = [{"name": "admin", "role": "admin", "pw": "admin123"}]
         self.sessions = collections.OrderedDict()    # token -> {"user": name, "last": monotonic}
+        self.devices = collections.OrderedDict()     # sha256(token) hex -> {"user", "label"}; survive restarts
         self.fails = 0
         self.lock_until = 0.0
         # mock controls
@@ -695,6 +720,7 @@ class Device:
 
     def _sc_default_login(self):
         self._sc_usb_active()
+        self.users[0]["pw"] = "admin"          # delivery state: password change is forced
 
     def _sc_two_users(self):
         self._as_app()
@@ -1180,7 +1206,25 @@ class Device:
         self.sessions[token] = {"user": u["name"], "last": time.monotonic()}
         return token
 
+    @staticmethod
+    def token_hash(token) -> str:
+        return hashlib.sha256((token or "").encode("utf-8", "surrogatepass")).hexdigest()
+
+    def new_device(self, u, label: str, token=None) -> str:
+        while len(self.devices) >= DEVICES_MAX:
+            self.devices.popitem(last=False)          # the oldest one is displaced
+        token = token or secrets.token_hex(32)
+        self.devices[self.token_hash(token)] = {"user": u["name"], "label": label}
+        return token
+
+    def end_devices(self, name, keep=None):
+        for h in [h for h, d in self.devices.items() if d["user"].lower() == name.lower() and h != keep]:
+            del self.devices[h]
+
     def session_user(self, token):
+        if token and token not in self.sessions:
+            d = self.devices.get(self.token_hash(token))
+            return self.find_user(d["user"]) if d else None
         s = self.sessions.get(token) if token else None
         if s is None:
             return None
@@ -1284,6 +1328,7 @@ class Device:
             "users": [{"name": u["name"], "role": u["role"], "default_password": self.is_default_password(u)}
                       for u in self.users],
             "sessions": len(self.sessions),
+            "devices": [{"id": h[:8], "user": d["user"], "label": d["label"]} for h, d in self.devices.items()],
             "login_locked": round(self.lock_until - time.monotonic(), 1) if self.locked() else False,
             "failed_logins": self.fails,
             "wifi_networks": [{"ssid": n, "active": self.wifi_mode == "sta" and n == self.ssid}
@@ -1307,7 +1352,7 @@ class Device:
             raise ValueError("a value could not be URL-decoded")
         v = {}
         for key in ("usb_connected", "usb_suspended", "host_ejected", "host_writable", "fs_ok", "needs_format",
-                    "online", "other_upload", "reset", "host_reading", "auth", "login_locked", "session_expire"):
+                    "online", "other_upload", "reset", "host_reading", "auth", "default_password", "login_locked", "session_expire"):
             if key in q:
                 v[key] = parse_bool(q[key])
         if "sd" in q:
@@ -1319,6 +1364,11 @@ class Device:
         for key in ("dirs", "upload_kbps", "delay_ms", "copy_kbps"):
             if key in q:
                 v[key] = int(parse_nonneg(q[key]))
+        if "devices" in q:
+            n = int(parse_nonneg(q["devices"]))
+            if n > DEVICES_MAX:
+                raise ValueError(f"devices must be 0..{DEVICES_MAX}")
+            v["devices"] = n
         if "wifi_count" in q:
             n = int(parse_nonneg(q["wifi_count"]))
             if n > WIFI_MAX:
@@ -1454,6 +1504,11 @@ class Device:
             self.networks = ([first] + [x for x in WIFI_POOL if x != first])[:n]
             if n and self.wifi_mode != "ap":
                 self.ssid = self.networks[0]
+        if "devices" in v:
+            self.devices.clear()
+            admin = next((u for u in self.users if u["role"] == "admin"), self.users[0])
+            for i in range(v["devices"]):
+                self.new_device(admin, DEVICE_POOL[i % len(DEVICE_POOL)])
         if "copy_kbps" in v:
             self.copy_kbps = v["copy_kbps"]
         if "ota_fail" in v:
@@ -1462,6 +1517,10 @@ class Device:
             self.next_version = v["next_version"]
         if "auth" in v:
             self.auth_enabled = v["auth"]
+        if "default_password" in v:
+            self.users[0]["pw"] = "admin" if v["default_password"] else "admin123"
+            self.users[0]["name"] = "admin"
+            notes.append("admin password is now " + ("admin (change forced)" if v["default_password"] else "admin123"))
         if "login_locked" in v:
             self.fails = 0
             self.lock_until = time.monotonic() + LOCK_S if v["login_locked"] else 0.0
@@ -1589,6 +1648,8 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/login"): (self._api_login, None),
             ("POST", "/api/logout"): (self._api_logout, "user"),
             ("GET", "/api/users"): (self._api_users, "admin"),
+            ("GET", "/api/devices"): (self._api_devices, "user"),
+            ("POST", "/api/devices/delete"): (self._api_devices_delete, "user"),
             ("POST", "/api/users/add"): (self._api_users_add, "admin"),
             ("POST", "/api/users/delete"): (self._api_users_delete, "admin"),
             ("POST", "/api/users/role"): (self._api_users_role, "admin"),
@@ -1629,6 +1690,11 @@ class Handler(BaseHTTPRequestHandler):
             if self._user is None:
                 self._drain(clen)
                 self._error("LOCKED" if self._locked else "UNAUTHORIZED")
+                return
+            if (dev.auth_enabled and dev.is_default_password(self._user)
+                    and path not in ("/api/logout", "/api/users/password")):
+                self._drain(clen)
+                self._error("MUST_CHANGE_PASSWORD")
                 return
             if role == "admin" and self._user["role"] != "admin":
                 self._drain(clen)
@@ -1871,17 +1937,46 @@ class Handler(BaseHTTPRequestHandler):
         if u is None:
             self._error("BAD_LOGIN", info=f"({dev.fails} failed)" if dev.fails else "(now locked)")
             return
-        token = dev.new_session(u)
         self._user = u
-        self._json(200, self._session_json(u), f"session {token[:6]}... ({len(dev.sessions)} of {SESSIONS_MAX})",
-                   headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict")])
+        cookie = "Path=/; HttpOnly; SameSite=Strict"
+        if flag(form, "remember"):
+            label = (form.get("device") or "").strip().encode("utf-8", "ignore")[:DEVICE_LABEL_MAX].decode("utf-8", "ignore")
+            token = dev.new_device(u, label or "Gerät")
+            cookie += f"; Max-Age={DEVICE_MAX_AGE}"
+            info = f"trusted device '{label}' ({len(dev.devices)} of {DEVICES_MAX})"
+        else:
+            token = dev.new_session(u)
+            info = f"session {token[:6]}... ({len(dev.sessions)} of {SESSIONS_MAX})"
+        self._json(200, self._session_json(u), info,
+                   headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; {cookie}")])
 
     def _api_logout(self, q, clen):
         self._drain(clen)
         if self._token:
             self.dev.sessions.pop(self._token, None)
+            self.dev.devices.pop(self.dev.token_hash(self._token), None)
         self._json(200, {"ok": True}, headers=[
             ("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")])
+
+    def _api_devices(self, q):
+        me, cur = self._user, self.dev.token_hash(self._token) if self._token else None
+        self._json(200, {"ok": True, "max": DEVICES_MAX, "devices": [
+            {"id": h[:8], "user": d["user"], "label": d["label"], "current": h == cur}
+            for h, d in self.dev.devices.items() if me["role"] == "admin" or d["user"].lower() == me["name"].lower()]})
+
+    def _api_devices_delete(self, q, clen):
+        self._drain(clen)
+        if not self._need(q, "id"):
+            return
+        dev, me = self.dev, self._user
+        match = [h for h in dev.devices if h[:8] == q["id"].lower()]
+        if not match:
+            self._error("NOT_FOUND", "Dieses Gerät gibt es nicht.")
+        elif me["role"] != "admin" and dev.devices[match[0]]["user"].lower() != me["name"].lower():
+            self._error("FORBIDDEN_ROLE")
+        else:
+            del dev.devices[match[0]]
+            self._json(200, {"ok": True})
 
     def _api_users_add(self, q, clen):
         dev = self.dev
@@ -1915,6 +2010,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             dev.users.remove(u)
             dev.end_sessions(u["name"])
+            dev.end_devices(u["name"])
             self._json(200, {"ok": True})
 
     def _api_users_role(self, q, clen):
@@ -1931,6 +2027,8 @@ class Handler(BaseHTTPRequestHandler):
         elif u["role"] == "admin" and q["role"] == "user" and dev.admin_count() <= 1:
             self._error("LAST_ADMIN")
         else:
+            if u["role"] != q["role"]:
+                dev.end_devices(u["name"])
             u["role"] = q["role"]
             self._json(200, {"ok": True})
 
@@ -1960,8 +2058,13 @@ class Handler(BaseHTTPRequestHandler):
         if not valid_password(form["pass"]):
             self._error("BAD_PASSWORD")
             return
+        if form["pass"] == "admin":
+            self._error("BAD_PASSWORD", TEXT_DEFAULT_PASSWORD)
+            return
         target["pw"] = form["pass"]
         dev.end_sessions(target["name"], keep=self._token if own else None)
+        # trusted devices of the user end too; the device that changed its own password stays
+        dev.end_devices(target["name"], keep=dev.token_hash(self._token) if own and self._token else None)
         self._json(200, {"ok": True}, f"password of '{target['name']}' changed")
 
     # ---------------------------------------------------------- POST: drive
@@ -2405,7 +2508,7 @@ def main(argv=None) -> int:
           f"  UI:        {base}/\n"
           f"  HTML file: {html_path}{'' if html_path.is_file() else '   <-- NOT FOUND'}\n"
           f"  scenario:  {a.scenario}   upload limit: {dev.upload_kbps or 'none'} KiB/s\n"
-          f"  login:     {'DISABLED (--no-auth)' if a.no_auth else 'admin / admin'}   next OTA version: {a.next_version}\n"
+          f"  login:     {'DISABLED (--no-auth)' if a.no_auth else 'admin / admin123'}   next OTA version: {a.next_version}\n"
           f"  control:  {base}/mock   {base}/mock/state\n"
           f"Ctrl+C stops the server.", flush=True)
     try:

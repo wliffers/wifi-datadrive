@@ -24,6 +24,15 @@ Alles andere antwortet ohne gültige Anmeldung mit `401` und `code: "UNAUTHORIZE
 
 Fehlversuche: Nach 5 falschen Passwörtern in Folge wird jede Anmeldung 30 Sekunden lang mit `429` und `code: "LOCKED"` abgewiesen.
 
+### 2.2a Vertraute Geräte
+
+- `POST /api/login` nimmt zusätzlich `remember=1` und `device=<Bezeichnung>` (höchstens 32 Bytes, z. B. „iPhone“, „Windows-PC“; von der Oberfläche aus dem Browser abgeleitet). Dann wird die Sitzung als **vertrautes Gerät** dauerhaft gespeichert: Das Cookie bekommt `Max-Age=31536000`, und im Einstellungsspeicher liegt der SHA-256-Wert des Sitzungsschlüssels samt Benutzer und Bezeichnung (nie der Schlüssel selbst). Vertraute Geräte überstehen einen Neustart und haben keinen Zeitablauf (das Gerät hat keine Uhr).
+- Höchstens 8 vertraute Geräte insgesamt; ein weiteres verdrängt das älteste. Ohne `remember` gilt die flüchtige Sitzung aus 2.2 (12 Stunden, endet mit dem Neustart).
+- Vertraute Geräte eines Benutzers werden entfernt, wenn sein Passwort geändert, seine Rolle geändert oder er gelöscht wird, ebenso alle beim Benutzer-Reset per Taste. Ausnahme: Ändert ein Benutzer sein eigenes Passwort, bleibt genau die Sitzung bzw. das Gerät gültig, von dem die Änderung kam. `POST /api/logout` entfernt das eigene.
+- `GET /api/devices` (Rolle `user`): `{"ok":true,"devices":[{"id":"3f9a1c2e","user":"admin","label":"iPhone","current":true}],"max":8}`. `user` sieht nur die eigenen, `admin` alle. `id` sind die ersten 8 Hex-Zeichen des gespeicherten Hash-Werts.
+- `POST /api/devices/delete?id=…` (Rolle `user`): eigenes Gerät, als `admin` jedes. `404 NOT_FOUND`, `403 FORBIDDEN_ROLE` bei fremdem Gerät.
+- Der erzwungene Passwortwechsel (2.4) gilt auch für vertraute Geräte; `/api/devices` gehört nicht zu den dort erlaubten Anfragen.
+
 ### 2.3 Rollen
 
 | Rolle | Darf |
@@ -39,6 +48,7 @@ Reicht die Rolle nicht: `403` mit `code: "FORBIDDEN_ROLE"`.
 - Gespeichert wird je Benutzer: Name, Rolle, 16 Byte Salz, PBKDF2-HMAC-SHA256 (2000 Runden, 32 Byte). Nie das Klartext-Passwort.
 - Gibt es keinen Benutzer (erster Start, Reset per Taste), wird `admin` / `admin` mit Rolle `admin` angelegt. Solange dieses Passwort gilt, meldet die Sitzung `default_password: true`.
 - Der letzte Administrator kann weder gelöscht noch zur Rolle `user` herabgestuft werden (`409 LAST_ADMIN`).
+- **Erzwungener Passwortwechsel:** Solange ein Konto das Auslieferungspasswort hat (`default_password: true`, also `admin` mit Passwort `admin`), sind für dieses Konto nur `GET /api/session`, `POST /api/login`, `POST /api/logout` und `POST /api/users/password` (eigenes Konto) erlaubt. Jede andere geschützte Anfrage antwortet mit `403` und `code: "MUST_CHANGE_PASSWORD"`, auch bei Anmeldung per HTTP Basic. Das neue Passwort darf nicht `admin` sein (`400 BAD_PASSWORD`).
 
 ### 2.5 Endpunkte
 
@@ -120,13 +130,18 @@ Rückkehr zur alten Version: Die neue Firmware gilt erst als gut, wenn sie 15 Se
 | 401 | `UNAUTHORIZED` | nicht angemeldet |
 | 401 | `BAD_LOGIN` | Benutzername oder Passwort falsch |
 | 403 | `FORBIDDEN_ROLE` | Rolle reicht nicht |
+| 403 | `MUST_CHANGE_PASSWORD` | Auslieferungspasswort muss zuerst geändert werden |
 | 409 | `DIR_NOT_EMPTY` | Ordner ist nicht leer |
 | 409 | `LAST_ADMIN` | letzter Administrator |
 | 409 | `USER_LIMIT` | 8 Benutzer vorhanden |
 | 409 | `WIFI_LIMIT` | 5 WLANs gespeichert |
 | 429 | `LOCKED` | zu viele Fehlversuche, 30 Sekunden gesperrt |
 
-## 8. Taste am Gerät (zur Einordnung, keine HTTP-Schnittstelle)
+## 8. Sprache
+
+Die Weboberfläche ist zweisprachig (Deutsch und Englisch): Sie wählt beim ersten Aufruf nach der Browsersprache und lässt sich in den Einstellungen umstellen (gespeichert je Browser). Fehlertexte übersetzt die Oberfläche anhand des Feldes `code`; das Feld `error` des Geräts bleibt deutsch und dient als Rückfall für unbekannte Codes. Skripte sollen sich nur auf `code` verlassen. Die Texte auf dem Display des Geräts bleiben deutsch.
+
+## 9. Taste am Gerät (zur Einordnung, keine HTTP-Schnittstelle)
 
 | Bedienung | Wirkung |
 |---|---|

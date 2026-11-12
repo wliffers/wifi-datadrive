@@ -12,15 +12,22 @@
 //     READY reports UNIT ATTENTION "medium may have changed" so the host drops its
 //     cached FAT; optionally the device additionally re-enumerates (soft re-plug).
 //  5. Uploads go to a temp file and are renamed only after size + content checks.
+//
+// Folder operations (list, mkdir, delete, move, copy) call FatFs directly instead of going
+// through the VFS: the VFS silently truncates paths longer than 255 bytes (fixed buffer in
+// vfs_fat.c), and only FatFs can tell whether two paths name the same folder (case folding,
+// short-name aliases). Uploads and downloads keep using the VFS (file descriptors).
 #include "drive.h"
 
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include <utime.h>
 #include "board.h"
@@ -64,6 +71,16 @@ _Static_assert(CONFIG_PD_FAT_CLUSTER_KB == 2 || CONFIG_PD_FAT_CLUSTER_KB == 4, "
 #define FMT_REQ_FLASH      1                // NVS fmt_req values: which medium to format
 #define FMT_REQ_SD         2
 
+// Folder operations
+#define VFS_REL_MAX        254              // longest relative path the VFS passes on untruncated
+#define FAT_REL_OFF        3                // FatFs paths are "N:/" + relative path
+#define TREE_DEPTH_MAX     16               // recursion levels of delete/copy (deeper -> DRIVE_ERR_IO)
+#define TREE_PATH_SIZE     (FAT_REL_OFF + DRIVE_SRC_PATH_MAX + TREE_DEPTH_MAX * (DRIVE_FILE_NAME_MAX + 1) + 1)
+#define DEL_BATCH_SIZE     2048             // names collected per round before deleting them
+#define COPY_BUF_SIZE      8192
+#define YIELD_INTERVAL_US  100000           // long operations let the idle tasks run (task watchdog)
+#define STATUS_WAIT_MS     100              // drive_get_status(): retry interval while the lock is busy
+
 // Boolean Kconfig options are undefined (not 0) when disabled.
 #ifdef CONFIG_PD_PROVIDE_ON_ATTACH
 #define PROVIDE_ON_ATTACH true
@@ -101,9 +118,16 @@ static drive_status_t s_st;
 static int s_open_downloads;
 static int64_t s_replug_until_ms;           // ignore DETACHED caused by our own re-plug
 
+// Status snapshot for drive_get_status() while a long folder operation holds s_lock
+// (copy, recursive delete). Ownership cannot change during such an operation.
+static volatile bool s_long_op;
+static drive_status_t s_snap;
+static portMUX_TYPE s_snap_mux = portMUX_INITIALIZER_UNLOCKED;
+
 // Upload session (only one at a time)
 static int s_up_fd = -1;
 static bool s_up_overwrite;
+static char s_up_path[DRIVE_PATH_MAX + 1];  // target path relative to the root
 static uint8_t s_up_head[4];
 static uint8_t s_up_tail[TAIL_SIZE];
 
@@ -155,6 +179,8 @@ const char *drive_result_str(drive_result_t r)
     case DRIVE_ERR_INCOMPLETE:   return "Die Übertragung war unvollständig.";
     case DRIVE_ERR_TOO_LARGE:    return "Die Datei ist zu groß – möglich sind höchstens 4 GB pro Datei.";
     case DRIVE_ERR_IO:           return "Lese- oder Schreibfehler auf dem Speicher.";
+    case DRIVE_ERR_DIR_NOT_EMPTY: return "Der Ordner ist nicht leer.";
+    case DRIVE_ERR_IS_DIR:       return "Das ist ein Ordner, keine Datei.";
     default:                     return "Unbekannter Fehler.";
     }
 }
@@ -224,7 +250,7 @@ uint32_t tud_msc_inquiry2_cb(uint8_t lun, scsi_inquiry_resp_t *resp, uint32_t bu
     }
     memcpy(resp->vendor_id, "DataDrv ", 8);
     memcpy(resp->product_id, "WiFi DataDrive  ", 16);
-    memcpy(resp->product_rev, "0.2 ", 4);
+    memcpy(resp->product_rev, "0.3 ", 4);
     return sizeof(*resp);
 }
 
@@ -634,9 +660,20 @@ esp_err_t drive_init(void)
 
 void drive_get_status(drive_status_t *out)
 {
-    lock();
-    *out = s_st;
-    unlock();
+    // Blocks like a plain lock() - except while a long folder operation (copy, recursive
+    // delete) holds the lock: then the state from its start is returned, so the display and
+    // the button keep working. The owner cannot change while such an operation runs.
+    bool locked;
+    while (!(locked = xSemaphoreTake(s_lock, pdMS_TO_TICKS(STATUS_WAIT_MS)) == pdTRUE) && !s_long_op) {
+    }
+    if (locked) {
+        *out = s_st;
+        unlock();
+    } else {
+        taskENTER_CRITICAL(&s_snap_mux);
+        *out = s_snap;
+        taskEXIT_CRITICAL(&s_snap_mux);
+    }
     out->usb_connected = usb_dev_connected();
     out->usb_suspended = usb_dev_suspended();
     out->host_ejected = s_host_ejected;
@@ -735,6 +772,7 @@ drive_result_t drive_check_name(const char *name)
 #endif
 }
 
+/** VFS path of a relative path (upload/download only; see VFS_REL_MAX). */
 static void make_path(char *out, size_t len, const char *name)
 {
     snprintf(out, len, "%s/%s", DRIVE_BASE_PATH, name);
@@ -748,108 +786,731 @@ static drive_result_t require_app_fs(void)
     return s_st.fs_ok ? DRIVE_OK : DRIVE_ERR_NO_FS;
 }
 
-// ---- file operations
-
-drive_result_t drive_list(char *buf, size_t buf_len, drive_list_info_t *info)
+static const char *last_segment(const char *path)
 {
-    memset(info, 0, sizeof(*info));
-    lock();
-    drive_result_t r = require_app_fs();
-    if (r == DRIVE_OK) {
-        DIR *d = opendir(DRIVE_BASE_PATH);
-        if (!d) {
-            r = DRIVE_ERR_IO;
+    const char *s = strrchr(path, '/');
+    return s ? s + 1 : path;
+}
+
+static int path_segments(const char *path)
+{
+    int n = path[0] ? 1 : 0;
+    for (const char *p = path; *p; p++) {
+        n += *p == '/';
+    }
+    return n;
+}
+
+// ---- path validation
+
+/** Strict UTF-8: no overlong forms, no surrogates, nothing above U+10FFFF. */
+static bool utf8_valid(const unsigned char *s, size_t len)
+{
+    size_t i = 0;
+    while (i < len) {
+        const unsigned char c = s[i];
+        if (c < 0x80) {
+            i++;
+            continue;
+        }
+        size_t n;
+        uint32_t cp, min;
+        if ((c & 0xE0) == 0xC0) {
+            n = 1, cp = c & 0x1F, min = 0x80;
+        } else if ((c & 0xF0) == 0xE0) {
+            n = 2, cp = c & 0x0F, min = 0x800;
+        } else if ((c & 0xF8) == 0xF0) {
+            n = 3, cp = c & 0x07, min = 0x10000;
         } else {
-            struct dirent *e;
-            char path[sizeof(DRIVE_BASE_PATH) + 1 + 256];
-            while ((e = readdir(d)) != NULL) {
-                if (e->d_name[0] == '.') {
-                    continue;
-                }
-                if (e->d_type == DT_DIR) {
-                    if (strcasecmp(e->d_name, "System Volume Information") != 0) {
-                        info->dirs++;
-                    }
-                    continue;
-                }
-                if (e->d_type != DT_REG) {
-                    continue;
-                }
-                const size_t name_len = strlen(e->d_name) + 1;
-                if (info->used + 2 * sizeof(uint32_t) + name_len > buf_len) {
-                    info->truncated = true;
-                    continue;   // keep counting folders
-                }
-                struct stat st = {0};
-                make_path(path, sizeof(path), e->d_name);
-                const bool ok = stat(path, &st) == 0;
-                const uint32_t size = ok ? (uint32_t)st.st_size : 0;
-                const uint32_t mtime = ok && st.st_mtime >= MTIME_MIN ? (uint32_t)st.st_mtime : 0;
-                memcpy(buf + info->used, &size, sizeof(size));
-                memcpy(buf + info->used + sizeof(size), &mtime, sizeof(mtime));
-                memcpy(buf + info->used + 2 * sizeof(uint32_t), e->d_name, name_len);
-                info->used += 2 * sizeof(uint32_t) + name_len;
-                info->count++;
+            return false;   // continuation byte without a lead byte, or 0xF8..0xFF
+        }
+        if (len - i <= n) {
+            return false;   // sequence cut off
+        }
+        for (size_t k = 1; k <= n; k++) {
+            if ((s[i + k] & 0xC0) != 0x80) {
+                return false;
             }
-            closedir(d);
+            cp = cp << 6 | (s[i + k] & 0x3F);
+        }
+        if (cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+            return false;
+        }
+        i += n + 1;
+    }
+    return true;
+}
+
+/** One path segment of n bytes (not NUL-terminated). strict: rules for a new name. */
+static bool segment_ok(const char *s, size_t n, bool strict)
+{
+    // n == 0 is an empty segment: leading '/', trailing '/' or "//".
+    if (n == 0 || n > (strict ? DRIVE_NAME_MAX : DRIVE_FILE_NAME_MAX)) {
+        return false;
+    }
+    // No leading dot: rules out "." and ".." (FatFs itself has no relative paths, but never rely
+    // on that), hidden names and our own temp files (.pd_upload.tmp, .pd_old.tmp).
+    if (s[0] == '.') {
+        return false;
+    }
+    if (strict && (s[0] == ' ' || s[n - 1] == '.' || s[n - 1] == ' ')) {
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        const unsigned char c = (unsigned char)s[i];
+        // Also for existing names (FAT cannot store any of these, so no real name is refused):
+        // a control character silently ENDS a path inside FatFs ("a\x01b" would mean "a"),
+        // '\\' is a second separator, ':' selects a drive, '*' '?' are wildcards.
+        if (c < 0x20 || c == 0x7F || strchr("\\:*?\"<>|", c)) {
+            return false;
         }
     }
-    unlock();
+    return true;
+}
+
+drive_result_t drive_check_path(const char *path, bool for_new)
+{
+    // This is the only gate between paths from the network and the file system. Every public
+    // file operation calls it before the path is combined with the volume prefix. Rules:
+    //  - relative to the root: no leading '/', so "N:/" + path can never name another volume
+    //    or an absolute location; no ':' at all (drive selector), no '\\' (second separator)
+    //  - no empty segment (no leading/trailing '/', no "//"), no segment with a leading dot
+    //    (".", "..", hidden files, temp files), no control characters (FatFs would cut the
+    //    path there), valid UTF-8 only (no overlong encodings of '/' or '.')
+    //  - bounded length and depth, so every buffer below has a fixed, checked size
+    // Case variants and FAT short-name aliases are legal names; operations that must not treat
+    // two paths as different (folder into itself) compare what FatFs resolves, not strings.
+    if (!path) {
+        return DRIVE_ERR_BAD_NAME;
+    }
+    const size_t max = for_new ? DRIVE_PATH_MAX : DRIVE_SRC_PATH_MAX;
+    const size_t total = strnlen(path, max + 1);
+    if (total == 0) {
+        return for_new ? DRIVE_ERR_BAD_NAME : DRIVE_OK;   // root: exists, cannot be created
+    }
+    if (total > max || !utf8_valid((const unsigned char *)path, total)) {
+        return DRIVE_ERR_BAD_NAME;
+    }
+    int depth = 0;
+    const char *seg = path;
+    while (true) {
+        const char *end = strchr(seg, '/');
+        const size_t n = end ? (size_t)(end - seg) : strlen(seg);
+        if (++depth > DRIVE_PATH_DEPTH_MAX || !segment_ok(seg, n, for_new)) {
+            return DRIVE_ERR_BAD_NAME;
+        }
+        if (!end) {
+            return DRIVE_OK;
+        }
+        seg = end + 1;
+    }
+}
+
+// ---- FatFs helpers (call with s_lock held while the app owns the drive)
+
+/** FatFs drive prefix "N:" of our volume - the same lookup esp_tinyusb uses to unmount it. */
+static bool fat_drive(char drv[3])
+{
+    const BYTE pdrv = s_card ? ff_diskio_get_pdrv_card(s_card) : ff_diskio_get_pdrv_wl(s_wl);
+    if (pdrv >= FF_VOLUMES) {
+        return false;
+    }
+    drv[0] = (char)('0' + pdrv);
+    drv[1] = ':';
+    drv[2] = '\0';
+    return true;
+}
+
+/** "N:/" + rel (rel has passed drive_check_path()). Returns the length, 0 on error. */
+static size_t fat_path(char *out, size_t size, const char *rel)
+{
+    char drv[3];
+    if (!fat_drive(drv)) {
+        return 0;
+    }
+    const int n = snprintf(out, size, "%s/%s", drv, rel);
+    return (n > 0 && (size_t)n < size) ? (size_t)n : 0;
+}
+
+static drive_result_t fr_result(FRESULT fr)
+{
+    switch (fr) {
+    case FR_OK:           return DRIVE_OK;
+    case FR_NO_FILE:
+    case FR_NO_PATH:      return DRIVE_ERR_NOT_FOUND;
+    case FR_INVALID_NAME: return DRIVE_ERR_BAD_NAME;
+    case FR_EXIST:        return DRIVE_ERR_EXISTS;
+    default:              return DRIVE_ERR_IO;
+    }
+}
+
+/** FAT date/time -> seconds since 1970 (local time), exactly like the VFS stat(); 0 = unknown. */
+static uint32_t fat_mtime(WORD fdate, WORD ftime)
+{
+    struct tm tm = {
+        .tm_mday = fdate & 0x1F,
+        .tm_mon = ((fdate >> 5) & 0x0F) - 1,
+        .tm_year = (fdate >> 9) + 80,
+        .tm_hour = ftime >> 11,
+        .tm_min = (ftime >> 5) & 0x3F,
+        .tm_sec = (ftime & 0x1F) * 2,
+        .tm_isdst = -1,
+    };
+    const time_t t = mktime(&tm);
+    return t >= MTIME_MIN ? (uint32_t)t : 0;
+}
+
+/** NOT_FOUND unless the parent folder of the FatFs path in buf exists (root always does). */
+static drive_result_t check_parent(char *buf, FILINFO *fno)
+{
+    char *slash = strrchr(buf + FAT_REL_OFF, '/');
+    if (!slash) {
+        return DRIVE_OK;
+    }
+    *slash = '\0';
+    const FRESULT fr = f_stat(buf, fno);
+    *slash = '/';
+    if (fr == FR_OK) {
+        return (fno->fattrib & AM_DIR) ? DRIVE_OK : DRIVE_ERR_NOT_FOUND;
+    }
+    return fr_result(fr);
+}
+
+// ---- recursive folder operations
+//
+// Stack safety (HTTP task, 10 KiB): everything sizeable lives in one heap context - the path
+// buffers that the recursive helpers extend and truncate in place, one FatFs directory object
+// per level, the FILINFO scratch and the copy buffers. A recursive frame only holds a few
+// scalars, and recursion stops at TREE_DEPTH_MAX levels (deeper trees -> DRIVE_ERR_IO).
+
+typedef struct {
+    char path[TREE_PATH_SIZE];          // FatFs path being worked on (source for copy)
+    char path2[TREE_PATH_SIZE];         // copy/move target
+    FF_DIR dirs[TREE_DEPTH_MAX];        // open directory of each recursion level
+    FILINFO fno;                        // scratch, overwritten by every recursion level
+    char sub[DRIVE_FILE_NAME_MAX + 1];  // delete: sub folder found in the current round
+    char batch[DEL_BATCH_SIZE];         // delete: file names collected in the current round
+    uint64_t bytes;                     // scan: sum of the file sizes
+    int base_segs;                      // scan: segments of the target path
+    int64_t last_yield_us;
+    FIL *fsrc, *fdst;                   // copy only (FIL embeds a 4 KiB sector buffer)
+    uint8_t *buf;
+} tree_ctx_t;
+
+static void tree_yield(tree_ctx_t *c)
+{
+    const int64_t now = esp_timer_get_time();
+    if (now - c->last_yield_us >= YIELD_INTERVAL_US) {
+        vTaskDelay(1);
+        c->last_yield_us = esp_timer_get_time();
+    }
+}
+
+/** Append "/name" to the path of length len. Returns the new length, 0 if it does not fit. */
+static size_t path_push(char *buf, size_t len, const char *name)
+{
+    const size_t n = strlen(name);
+    if (len + 1 + n + 1 > TREE_PATH_SIZE) {
+        return 0;
+    }
+    buf[len] = '/';
+    memcpy(buf + len + 1, name, n + 1);
+    return len + 1 + n;
+}
+
+/**
+ * Walk the folder c->path (length len): add up the file sizes in c->bytes and refuse with
+ * BAD_NAME if an entry would end up deeper than DRIVE_PATH_DEPTH_MAX segments below a target
+ * path of c->base_segs segments (the folder itself takes the target's place).
+ */
+static drive_result_t scan_tree(tree_ctx_t *c, size_t len, int depth)
+{
+    if (depth >= TREE_DEPTH_MAX) {
+        return DRIVE_ERR_IO;
+    }
+    FF_DIR *d = &c->dirs[depth];
+    if (f_opendir(d, c->path) != FR_OK) {
+        return DRIVE_ERR_IO;
+    }
+    drive_result_t r = DRIVE_OK;
+    while (r == DRIVE_OK) {
+        tree_yield(c);
+        if (f_readdir(d, &c->fno) != FR_OK) {
+            r = DRIVE_ERR_IO;
+        } else if (c->fno.fname[0] == '\0') {
+            break;
+        } else if (c->base_segs + depth + 1 > DRIVE_PATH_DEPTH_MAX) {
+            r = DRIVE_ERR_BAD_NAME;
+        } else if (c->fno.fattrib & AM_DIR) {
+            const size_t nl = path_push(c->path, len, c->fno.fname);
+            r = nl ? scan_tree(c, nl, depth + 1) : DRIVE_ERR_IO;
+            c->path[len] = '\0';
+        } else {
+            c->bytes += c->fno.fsize;
+        }
+    }
+    f_closedir(d);
     return r;
 }
 
-drive_result_t drive_rename(const char *name, const char *to)
+/**
+ * Delete everything inside the folder c->path (length len), not the folder itself.
+ * Entries are never deleted while the folder is being read: each round collects file names
+ * (until the batch is full or a sub folder turns up), closes the folder, deletes the files,
+ * then empties and removes the sub folder. Every round removes at least one entry.
+ */
+static drive_result_t delete_tree(tree_ctx_t *c, size_t len, int depth)
 {
-    if (!name || strlen(name) > DRIVE_FILE_NAME_MAX || strchr(name, '/') || strchr(name, '\\') ||
-        name[0] == '.' || name[0] == '\0') {
+    if (depth >= TREE_DEPTH_MAX) {
+        return DRIVE_ERR_IO;
+    }
+    FF_DIR *d = &c->dirs[depth];
+    while (true) {
+        if (f_opendir(d, c->path) != FR_OK) {
+            return DRIVE_ERR_IO;
+        }
+        size_t used = 0;
+        bool have_sub = false;
+        FRESULT fr;
+        while ((fr = f_readdir(d, &c->fno)) == FR_OK && c->fno.fname[0] != '\0') {
+            if (c->fno.fattrib & AM_DIR) {
+                strlcpy(c->sub, c->fno.fname, sizeof(c->sub));
+                have_sub = true;
+                break;
+            }
+            const size_t n = strlen(c->fno.fname) + 1;
+            if (used + n > sizeof(c->batch)) {
+                break;   // next round
+            }
+            memcpy(c->batch + used, c->fno.fname, n);
+            used += n;
+        }
+        f_closedir(d);
+        if (fr != FR_OK) {
+            return DRIVE_ERR_IO;
+        }
+        if (used == 0 && !have_sub) {
+            return DRIVE_OK;   // empty
+        }
+        for (size_t pos = 0; pos < used; pos += strlen(c->batch + pos) + 1) {
+            tree_yield(c);
+            if (!path_push(c->path, len, c->batch + pos)) {
+                return DRIVE_ERR_IO;
+            }
+            fr = f_unlink(c->path);
+            c->path[len] = '\0';
+            if (fr != FR_OK) {
+                return DRIVE_ERR_IO;   // e.g. a read-only file
+            }
+        }
+        if (have_sub) {
+            const size_t nl = path_push(c->path, len, c->sub);
+            drive_result_t r = nl ? delete_tree(c, nl, depth + 1) : DRIVE_ERR_IO;
+            if (r == DRIVE_OK && f_unlink(c->path) != FR_OK) {
+                r = DRIVE_ERR_IO;
+            }
+            c->path[len] = '\0';
+            if (r != DRIVE_OK) {
+                return r;
+            }
+        }
+    }
+}
+
+/** Copy the file c->path to the new file c->path2 (removed again on failure). */
+static drive_result_t copy_file(tree_ctx_t *c)
+{
+    if (f_open(c->fsrc, c->path, FA_READ) != FR_OK) {
+        return DRIVE_ERR_IO;
+    }
+    FRESULT fr = f_open(c->fdst, c->path2, FA_WRITE | FA_CREATE_NEW);
+    if (fr != FR_OK) {
+        f_close(c->fsrc);
+        return fr == FR_EXIST ? DRIVE_ERR_EXISTS : (fr == FR_DENIED ? DRIVE_ERR_NO_SPACE : DRIVE_ERR_IO);
+    }
+    drive_result_t r = DRIVE_OK;
+    while (true) {
+        tree_yield(c);
+        UINT got = 0, put = 0;
+        if (f_read(c->fsrc, c->buf, COPY_BUF_SIZE, &got) != FR_OK) {
+            r = DRIVE_ERR_IO;
+            break;
+        }
+        if (got == 0) {
+            break;
+        }
+        fr = f_write(c->fdst, c->buf, got, &put);
+        if (fr != FR_OK || put != got) {
+            r = (fr == FR_OK || fr == FR_DENIED) ? DRIVE_ERR_NO_SPACE : DRIVE_ERR_IO;   // put < got: disk full
+            break;
+        }
+    }
+    if (f_close(c->fdst) != FR_OK && r == DRIVE_OK) {
+        r = DRIVE_ERR_IO;
+    }
+    f_close(c->fsrc);
+    if (r != DRIVE_OK) {
+        f_unlink(c->path2);
+    } else if (f_stat(c->path, &c->fno) == FR_OK) {
+        f_utime(c->path2, &c->fno);   // best effort: keep the modification time
+    }
+    return r;
+}
+
+/** Copy the contents of folder c->path (length slen) into the existing folder c->path2 (dlen). */
+static drive_result_t copy_tree(tree_ctx_t *c, size_t slen, size_t dlen, int depth)
+{
+    if (depth >= TREE_DEPTH_MAX) {
+        return DRIVE_ERR_IO;
+    }
+    FF_DIR *d = &c->dirs[depth];
+    if (f_opendir(d, c->path) != FR_OK) {
+        return DRIVE_ERR_IO;
+    }
+    drive_result_t r = DRIVE_OK;
+    while (r == DRIVE_OK) {
+        tree_yield(c);
+        if (f_readdir(d, &c->fno) != FR_OK) {
+            r = DRIVE_ERR_IO;
+            break;
+        }
+        if (c->fno.fname[0] == '\0') {
+            break;
+        }
+        const bool is_dir = (c->fno.fattrib & AM_DIR) != 0;
+        const size_t snl = path_push(c->path, slen, c->fno.fname);
+        const size_t dnl = snl ? path_push(c->path2, dlen, c->fno.fname) : 0;
+        if (!dnl) {
+            r = DRIVE_ERR_IO;
+        } else if (is_dir) {
+            const FRESULT fr = f_mkdir(c->path2);
+            r = fr == FR_OK ? copy_tree(c, snl, dnl, depth + 1)
+                            : (fr == FR_DENIED ? DRIVE_ERR_NO_SPACE : DRIVE_ERR_IO);
+        } else {
+            r = copy_file(c);
+        }
+        c->path[slen] = '\0';
+        c->path2[dlen] = '\0';
+    }
+    f_closedir(d);
+    return r;
+}
+
+/** Start of every folder operation (caller holds s_lock): owner, busy, heap context. */
+static drive_result_t tree_begin(tree_ctx_t **out)
+{
+    *out = NULL;
+    drive_result_t r = require_app_fs();
+    if (r == DRIVE_OK && (s_st.upload_active || s_open_downloads > 0)) {
+        r = DRIVE_ERR_BUSY;
+    }
+    if (r == DRIVE_OK) {
+        *out = calloc(1, sizeof(tree_ctx_t));
+        if (!*out) {
+            ESP_LOGE(TAG, "no memory for a folder operation (%u bytes)", (unsigned)sizeof(tree_ctx_t));
+            r = DRIVE_ERR_IO;
+        }
+    }
+    if (r == DRIVE_OK) {
+        (*out)->last_yield_us = esp_timer_get_time();
+        taskENTER_CRITICAL(&s_snap_mux);
+        s_snap = s_st;
+        taskEXIT_CRITICAL(&s_snap_mux);
+        s_long_op = true;
+    }
+    return r;
+}
+
+/** End of a folder operation (caller still holds s_lock). */
+static void tree_end(tree_ctx_t *c)
+{
+    if (c) {
+        free(c->buf);
+        free(c->fdst);
+        free(c->fsrc);
+        free(c);
+        refresh_fs_info();
+        s_long_op = false;
+    }
+}
+
+/**
+ * Common checks of move and copy, in the order of the contract: NOT_FOUND (source), NOT_FOUND
+ * (target folder), BAD_NAME (folder into itself or a descendant), BAD_NAME (too deep).
+ * Afterwards c->path is the source, c->path2 the target, c->bytes the size of the source.
+ */
+static drive_result_t prepare_move_copy(tree_ctx_t *c, const char *from, const char *to, bool *is_dir)
+{
+    const size_t slen = fat_path(c->path, TREE_PATH_SIZE, from);
+    if (!slen || !fat_path(c->path2, TREE_PATH_SIZE, to)) {
+        return DRIVE_ERR_IO;
+    }
+    FRESULT fr = f_stat(c->path, &c->fno);
+    if (fr != FR_OK) {
+        return fr_result(fr);
+    }
+    *is_dir = (c->fno.fattrib & AM_DIR) != 0;
+    c->bytes = c->fno.fsize;
+    drive_result_t r = check_parent(c->path2, &c->fno);
+    if (r != DRIVE_OK || !*is_dir) {
+        return r;
+    }
+    // Folder into itself: compare what FatFs resolves, not strings - "A" and "a", "Ä" and "ä"
+    // or a short-name alias like "MEINEP~1" all name the same folder. FatFs does not check this
+    // itself; renaming a folder into its own sub folder would cut the tree off the volume.
+    FF_DIR *d = &c->dirs[0];
+    if (f_opendir(d, c->path) != FR_OK) {
+        return DRIVE_ERR_IO;
+    }
+    const DWORD src_clust = d->obj.sclust;   // first cluster identifies the folder
+    f_closedir(d);
+    if (src_clust == 0) {
+        return DRIVE_ERR_IO;                 // only the root has none, and it is never a source
+    }
+    for (char *p = strchr(c->path2 + FAT_REL_OFF, '/'); p; p = strchr(p + 1, '/')) {
+        *p = '\0';                            // every proper prefix of the target path
+        fr = f_opendir(d, c->path2);
+        const DWORD clust = d->obj.sclust;
+        if (fr == FR_OK) {
+            f_closedir(d);
+        }
+        *p = '/';
+        if (fr == FR_OK && clust == src_clust) {
+            return DRIVE_ERR_BAD_NAME;
+        }
+    }
+    c->bytes = 0;
+    c->base_segs = path_segments(to);
+    return scan_tree(c, slen, 0);
+}
+
+static drive_result_t check_src_dst(const char *from, const char *to)
+{
+    if (drive_check_path(from, false) != DRIVE_OK || from[0] == '\0' ||
+        drive_check_path(to, true) != DRIVE_OK) {
         return DRIVE_ERR_BAD_NAME;
     }
-    drive_result_t r = drive_check_name(to);
+    return DRIVE_OK;
+}
+
+// ---- file operations
+
+drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list_info_t *info)
+{
+    memset(info, 0, sizeof(*info));
+    drive_result_t r = drive_check_path(dir, false);
+    if (r != DRIVE_OK) {
+        return r;
+    }
+    struct {
+        char path[FAT_REL_OFF + DRIVE_SRC_PATH_MAX + 1];
+        FF_DIR dir;
+        FILINFO fno;
+    } *c = NULL;
+    lock();
+    r = require_app_fs();
+    if (r == DRIVE_OK && !(c = malloc(sizeof(*c)))) {
+        r = DRIVE_ERR_IO;
+    }
+    if (r == DRIVE_OK && !fat_path(c->path, sizeof(c->path), dir)) {
+        r = DRIVE_ERR_IO;
+    }
+    if (r == DRIVE_OK) {
+        r = fr_result(f_opendir(&c->dir, c->path));   // a file instead of a folder: NOT_FOUND
+    }
+    if (r == DRIVE_OK) {
+        FRESULT fr;
+        while ((fr = f_readdir(&c->dir, &c->fno)) == FR_OK && c->fno.fname[0] != '\0') {
+            const char *name = c->fno.fname;
+            if (name[0] == '.' || strcasecmp(name, "System Volume Information") == 0) {
+                continue;
+            }
+            const size_t name_len = strlen(name) + 1;
+            if (info->used + DRIVE_LIST_HDR + name_len > buf_len) {
+                info->truncated = true;
+                continue;   // a shorter name may still fit
+            }
+            const bool is_dir = (c->fno.fattrib & AM_DIR) != 0;
+            const uint32_t size = is_dir ? 0 : (uint32_t)c->fno.fsize;
+            const uint32_t mtime = is_dir ? 0 : fat_mtime(c->fno.fdate, c->fno.ftime);
+            const uint8_t type = is_dir ? DRIVE_ENTRY_DIR : DRIVE_ENTRY_FILE;
+            char *e = buf + info->used;
+            memcpy(e, &size, sizeof(size));
+            memcpy(e + 4, &mtime, sizeof(mtime));
+            e[8] = (char)type;
+            memcpy(e + DRIVE_LIST_HDR, name, name_len);
+            info->used += DRIVE_LIST_HDR + name_len;
+            info->count++;
+        }
+        f_closedir(&c->dir);
+        if (fr != FR_OK) {
+            r = DRIVE_ERR_IO;
+        }
+    }
+    unlock();
+    free(c);
+    return r;
+}
+
+drive_result_t drive_mkdir(const char *path)
+{
+    drive_result_t r = drive_check_path(path, true);
     if (r != DRIVE_OK) {
         return r;
     }
     lock();
-    r = require_app_fs();
-    if (r == DRIVE_OK && (s_st.upload_active || s_open_downloads > 0)) {
-        r = DRIVE_ERR_BUSY;
+    tree_ctx_t *c;
+    r = tree_begin(&c);
+    if (r == DRIVE_OK && !fat_path(c->path, TREE_PATH_SIZE, path)) {
+        r = DRIVE_ERR_IO;
     }
-    if (r == DRIVE_OK && strcmp(name, to) != 0) {
-        char from[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
-        char dest[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
-        make_path(from, sizeof(from), name);
-        make_path(dest, sizeof(dest), to);
-        struct stat st;
-        if (stat(from, &st) != 0 || !S_ISREG(st.st_mode)) {
-            r = DRIVE_ERR_NOT_FOUND;
-        } else if (rename(from, dest) != 0) {
-            // FatFs refuses an existing target itself (and allows changing only the case).
-            r = errno == EEXIST ? DRIVE_ERR_EXISTS : (errno == ENOENT ? DRIVE_ERR_NOT_FOUND : DRIVE_ERR_IO);
-        } else {
-            ESP_LOGI(TAG, "renamed '%s' -> '%s'", name, to);
-        }
+    if (r == DRIVE_OK) {
+        r = check_parent(c->path, &c->fno);
     }
+    if (r == DRIVE_OK) {
+        const FRESULT fr = f_mkdir(c->path);
+        r = fr == FR_DENIED ? DRIVE_ERR_NO_SPACE : fr_result(fr);
+    }
+    if (r == DRIVE_OK) {
+        ESP_LOGI(TAG, "mkdir '%s'", path);
+    }
+    tree_end(c);
     unlock();
     return r;
 }
 
-drive_result_t drive_delete(const char *name)
+drive_result_t drive_delete(const char *path, bool recursive)
 {
-    if (!name || strlen(name) > DRIVE_FILE_NAME_MAX || strchr(name, '/') || strchr(name, '\\') ||
-        name[0] == '.' || name[0] == '\0') {
-        return DRIVE_ERR_BAD_NAME;
+    if (drive_check_path(path, false) != DRIVE_OK || path[0] == '\0') {
+        return DRIVE_ERR_BAD_NAME;   // the root cannot be deleted
     }
     lock();
-    drive_result_t r = require_app_fs();
+    tree_ctx_t *c;
+    drive_result_t r = tree_begin(&c);
+    size_t len = 0;
+    if (r == DRIVE_OK && !(len = fat_path(c->path, TREE_PATH_SIZE, path))) {
+        r = DRIVE_ERR_IO;
+    }
     if (r == DRIVE_OK) {
-        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
-        make_path(path, sizeof(path), name);
-        if (unlink(path) != 0) {
-            r = errno == ENOENT ? DRIVE_ERR_NOT_FOUND : DRIVE_ERR_IO;
+        r = fr_result(f_stat(c->path, &c->fno));
+    }
+    if (r == DRIVE_OK && (c->fno.fattrib & AM_DIR)) {
+        FF_DIR *d = &c->dirs[0];
+        bool empty = false;
+        if (f_opendir(d, c->path) != FR_OK) {
+            r = DRIVE_ERR_IO;
         } else {
-            ESP_LOGI(TAG, "deleted '%s'", name);
-            refresh_fs_info();
+            const FRESULT fr = f_readdir(d, &c->fno);   // hidden entries count as content, too
+            empty = fr == FR_OK && c->fno.fname[0] == '\0';
+            f_closedir(d);
+            if (fr != FR_OK) {
+                r = DRIVE_ERR_IO;
+            }
+        }
+        if (r == DRIVE_OK && !empty) {
+            r = recursive ? delete_tree(c, len, 0) : DRIVE_ERR_DIR_NOT_EMPTY;
         }
     }
+    if (r == DRIVE_OK && f_unlink(c->path) != FR_OK) {
+        r = DRIVE_ERR_IO;   // e.g. read-only file
+    }
+    if (r == DRIVE_OK) {
+        ESP_LOGI(TAG, "deleted '%s'", path);
+    } else if (c) {
+        ESP_LOGW(TAG, "delete '%s': %s", path, drive_result_str(r));
+    }
+    tree_end(c);
+    unlock();
+    return r;
+}
+
+drive_result_t drive_move(const char *from, const char *to)
+{
+    drive_result_t r = check_src_dst(from, to);
+    if (r != DRIVE_OK) {
+        return r;
+    }
+    lock();
+    tree_ctx_t *c;
+    bool is_dir = false;
+    r = tree_begin(&c);
+    if (r == DRIVE_OK) {
+        r = prepare_move_copy(c, from, to, &is_dir);
+    }
+#if !CONFIG_PD_UPLOAD_ALL_TYPES
+    if (r == DRIVE_OK && !is_dir) {
+        r = drive_check_name(last_segment(to));   // BAD_TYPE
+    }
+#endif
+    if (r == DRIVE_OK) {
+        // FatFs moves across folders of the volume, refuses an existing target (FR_EXIST) and
+        // allows renaming an object onto itself (changing only the case).
+        const FRESULT fr = f_rename(c->path, c->path2);
+        r = fr == FR_DENIED ? DRIVE_ERR_NO_SPACE : fr_result(fr);
+    }
+    if (r == DRIVE_OK) {
+        ESP_LOGI(TAG, "moved '%s' -> '%s'", from, to);
+    }
+    tree_end(c);
+    unlock();
+    return r;
+}
+
+drive_result_t drive_copy(const char *from, const char *to)
+{
+    drive_result_t r = check_src_dst(from, to);
+    if (r != DRIVE_OK) {
+        return r;
+    }
+    lock();
+    tree_ctx_t *c;
+    bool is_dir = false, created = false;
+    r = tree_begin(&c);
+    if (r == DRIVE_OK) {
+        r = prepare_move_copy(c, from, to, &is_dir);
+    }
+    if (r == DRIVE_OK) {
+        FILINFO *fno = &c->fno;
+        const FRESULT fr = f_stat(c->path2, fno);
+        r = fr == FR_OK ? DRIVE_ERR_EXISTS : (fr == FR_NO_FILE ? DRIVE_OK : fr_result(fr));
+    }
+    if (r == DRIVE_OK) {
+        refresh_fs_info();
+        if (c->bytes + FREE_RESERVE_BYTES > s_st.free_bytes) {
+            r = DRIVE_ERR_NO_SPACE;
+        }
+    }
+    if (r == DRIVE_OK) {
+        c->fsrc = malloc(sizeof(FIL));
+        c->fdst = malloc(sizeof(FIL));
+        c->buf = malloc(COPY_BUF_SIZE);
+        if (!c->fsrc || !c->fdst || !c->buf) {
+            ESP_LOGE(TAG, "no memory for copy buffers");
+            r = DRIVE_ERR_IO;
+        }
+    }
+    if (r == DRIVE_OK) {
+        const int64_t t0 = esp_timer_get_time();
+        if (!is_dir) {
+            r = copy_file(c);                     // removes its partial target itself
+        } else {
+            const FRESULT fr = f_mkdir(c->path2);
+            created = fr == FR_OK;
+            r = created ? copy_tree(c, strlen(c->path), strlen(c->path2), 0)
+                        : (fr == FR_DENIED ? DRIVE_ERR_NO_SPACE : fr_result(fr));
+        }
+        if (r != DRIVE_OK && created) {
+            // Remove the incomplete copy again (it did not exist before: EXISTS was checked).
+            const size_t dlen = strlen(c->path2);
+            memcpy(c->path, c->path2, dlen + 1);
+            if (delete_tree(c, dlen, 0) != DRIVE_OK || f_unlink(c->path) != FR_OK) {
+                ESP_LOGE(TAG, "could not remove the incomplete copy '%s'", to);
+            }
+        }
+        ESP_LOGI(TAG, "copy '%s' -> '%s' (%llu bytes, %lld ms): %s", from, to, (unsigned long long)c->bytes,
+                 (esp_timer_get_time() - t0) / 1000, drive_result_str(r));
+    }
+    tree_end(c);
     unlock();
     return r;
 }
@@ -877,26 +1538,38 @@ drive_result_t drive_format(void)
     return DRIVE_OK;
 }
 
-drive_result_t drive_download_open(const char *name, int *fd, uint32_t *size)
+drive_result_t drive_download_open(const char *path, int *fd, uint32_t *size)
 {
-    if (!name || name[0] == '.' || strchr(name, '/') || strchr(name, '\\') || strlen(name) > DRIVE_FILE_NAME_MAX) {
+    *fd = -1;
+    // The VFS would silently cut a longer path (and could open another file).
+    if (drive_check_path(path, false) != DRIVE_OK || strlen(path) > VFS_REL_MAX) {
         return DRIVE_ERR_BAD_NAME;
     }
     lock();
     drive_result_t r = require_app_fs();
+    if (r == DRIVE_OK && path[0] == '\0') {
+        r = DRIVE_ERR_IS_DIR;
+    }
     if (r == DRIVE_OK) {
-        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
-        make_path(path, sizeof(path), name);
+        char full[sizeof(DRIVE_BASE_PATH) + 1 + VFS_REL_MAX + 1];
+        make_path(full, sizeof(full), path);
         struct stat st;
-        *fd = open(path, O_RDONLY);
-        if (*fd < 0 || fstat(*fd, &st) != 0) {
-            if (*fd >= 0) {
-                close(*fd);
-            }
+        if (stat(full, &st) != 0) {
             r = DRIVE_ERR_NOT_FOUND;
+        } else if (S_ISDIR(st.st_mode)) {
+            r = DRIVE_ERR_IS_DIR;
         } else {
-            *size = (uint32_t)st.st_size;
-            s_open_downloads++;
+            *fd = open(full, O_RDONLY);
+            if (*fd < 0 || fstat(*fd, &st) != 0) {
+                if (*fd >= 0) {
+                    close(*fd);
+                    *fd = -1;
+                }
+                r = DRIVE_ERR_NOT_FOUND;
+            } else {
+                *size = (uint32_t)st.st_size;
+                s_open_downloads++;
+            }
         }
     }
     unlock();
@@ -915,14 +1588,26 @@ void drive_download_close(int fd)
 
 // ---- upload
 
-drive_result_t drive_upload_begin(const char *name, uint32_t size, bool overwrite)
+drive_result_t drive_upload_validate(const char *path, uint64_t size)
 {
-    drive_result_t r = drive_check_name(name);
+    if (drive_check_path(path, true) != DRIVE_OK) {
+        return DRIVE_ERR_BAD_NAME;
+    }
+    const drive_result_t r = drive_check_name(last_segment(path));   // BAD_TYPE
     if (r != DRIVE_OK) {
         return r;
     }
-    if (size == 0) {
-        return DRIVE_ERR_INVALID_FILE;
+    if (size > UINT32_MAX) {
+        return DRIVE_ERR_TOO_LARGE;
+    }
+    return size == 0 ? DRIVE_ERR_INVALID_FILE : DRIVE_OK;
+}
+
+drive_result_t drive_upload_begin(const char *path, uint32_t size, bool overwrite)
+{
+    drive_result_t r = drive_upload_validate(path, size);
+    if (r != DRIVE_OK) {
+        return r;
     }
     lock();
     if ((r = require_app_fs()) != DRIVE_OK) {
@@ -932,12 +1617,29 @@ drive_result_t drive_upload_begin(const char *name, uint32_t size, bool overwrit
         r = DRIVE_ERR_BUSY;
         goto out;
     }
-    char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
-    make_path(path, sizeof(path), name);
+    // New paths are at most DRIVE_PATH_MAX (< VFS_REL_MAX) bytes: safe for the VFS.
+    char full[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_PATH_MAX + 1];
+    make_path(full, sizeof(full), path);
     struct stat st;
-    if (stat(path, &st) == 0 && !overwrite) {
-        r = DRIVE_ERR_EXISTS;
-        goto out;
+    char *slash = strrchr(full + sizeof(DRIVE_BASE_PATH), '/');
+    if (slash) {   // target folder must exist (the root always does)
+        *slash = '\0';
+        const bool folder = stat(full, &st) == 0 && S_ISDIR(st.st_mode);
+        *slash = '/';
+        if (!folder) {
+            r = DRIVE_ERR_NOT_FOUND;
+            goto out;
+        }
+    }
+    if (stat(full, &st) == 0) {
+        if (S_ISDIR(st.st_mode)) {
+            r = DRIVE_ERR_IS_DIR;
+            goto out;
+        }
+        if (!overwrite) {
+            r = DRIVE_ERR_EXISTS;
+            goto out;
+        }
     }
     cleanup_temp_file();
     refresh_fs_info();
@@ -954,11 +1656,12 @@ drive_result_t drive_upload_begin(const char *name, uint32_t size, bool overwrit
     s_up_overwrite = overwrite;
     memset(s_up_head, 0, sizeof(s_up_head));
     memset(s_up_tail, 0, sizeof(s_up_tail));
+    strlcpy(s_up_path, path, sizeof(s_up_path));
     s_st.upload_active = true;
-    strlcpy(s_st.upload_name, name, sizeof(s_st.upload_name));
+    strlcpy(s_st.upload_name, last_segment(path), sizeof(s_st.upload_name));
     s_st.upload_received = 0;
     s_st.upload_total = size;
-    ESP_LOGI(TAG, "upload start '%s' (%lu bytes)", name, (unsigned long)size);
+    ESP_LOGI(TAG, "upload start '%s' (%lu bytes)", path, (unsigned long)size);
 out:
     unlock();
     return r;
@@ -1050,11 +1753,14 @@ drive_result_t drive_upload_finish(uint32_t mtime)
         }
     }
     if (r == DRIVE_OK) {
-        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_FILE_NAME_MAX + 1];
-        make_path(path, sizeof(path), s_st.upload_name);
+        // Target in its folder; the temp files stay in the root (rename moves across folders).
+        char path[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_PATH_MAX + 1];
+        make_path(path, sizeof(path), s_up_path);
         struct stat st;
         const bool exists = stat(path, &st) == 0;
-        if (exists && !s_up_overwrite) {
+        if (exists && S_ISDIR(st.st_mode)) {
+            r = DRIVE_ERR_IS_DIR;   // never rename a folder away as "previous version"
+        } else if (exists && !s_up_overwrite) {
             r = DRIVE_ERR_EXISTS;
         } else if (exists) {
             // Keep the previous version until the new file is in place.
@@ -1068,7 +1774,7 @@ drive_result_t drive_upload_finish(uint32_t mtime)
                 unlink(OLD_PATH);
             }
         } else if (rename(TMP_PATH, path) != 0) {
-            r = DRIVE_ERR_IO;
+            r = errno == ENOENT ? DRIVE_ERR_NOT_FOUND : DRIVE_ERR_IO;
         }
         if (r == DRIVE_OK && mtime >= MTIME_MIN) {
             const struct utimbuf times = {.actime = mtime, .modtime = mtime};
@@ -1076,9 +1782,9 @@ drive_result_t drive_upload_finish(uint32_t mtime)
         }
     }
     if (r == DRIVE_OK) {
-        ESP_LOGI(TAG, "upload ok '%s'", s_st.upload_name);
+        ESP_LOGI(TAG, "upload ok '%s'", s_up_path);
     } else {
-        ESP_LOGW(TAG, "upload failed '%s': %s", s_st.upload_name, drive_result_str(r));
+        ESP_LOGW(TAG, "upload failed '%s': %s", s_up_path, drive_result_str(r));
     }
     upload_reset_locked();
     unlock();

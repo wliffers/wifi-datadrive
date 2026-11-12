@@ -6,6 +6,12 @@
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#121416" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="DataDrive">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon-180.png">
 <title>WiFi DataDrive</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b7a75'/%3E%3Cg fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round'%3E%3Cpath d='M9.5 13a9.2 9.2 0 0 1 13 0'/%3E%3Cpath d='M12.7 16.2a4.7 4.7 0 0 1 6.6 0'/%3E%3C/g%3E%3Crect x='8' y='19.5' width='16' height='6' rx='2' fill='%23fff'/%3E%3Ccircle cx='20.5' cy='22.5' r='1.1' fill='%230b7a75'/%3E%3C/svg%3E">
 <style>
@@ -18,6 +24,7 @@
   --danger:#bd3328;--danger-soft:#fbe8e6;--on-danger:#fff;
   --shadow:0 8px 30px rgba(20,24,28,.16);
   --r:10px;--r-lg:16px;
+  --top:calc(60px + env(safe-area-inset-top));
   color-scheme:light;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
@@ -50,7 +57,9 @@ h2{font-size:16px;font-weight:650}
 h3{font-size:15px;font-weight:600}
 svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;flex:none}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
-.wrap{max-width:960px;margin:0 auto;padding:0 16px}
+.wrap{max-width:960px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-right)) 0 max(16px,env(safe-area-inset-left))}
+.muted{color:var(--muted)}
+.small{font-size:13px;color:var(--muted)}
 
 /* ---------- Controls ---------- */
 button,input,select{font:inherit;color:inherit}
@@ -60,8 +69,9 @@ button,input,select{font:inherit;color:inherit}
 .btn.danger{background:var(--danger);color:var(--on-danger)}
 .btn.outline-danger{background:none;color:var(--danger);box-shadow:inset 0 0 0 1.5px var(--danger)}
 .btn:disabled{opacity:.55;cursor:default;filter:none}
-.icon-btn{width:44px;height:44px;display:inline-grid;place-items:center;border:0;border-radius:50%;background:none;cursor:pointer;color:var(--muted)}
+.icon-btn{width:44px;height:44px;display:inline-grid;place-items:center;border:0;border-radius:50%;background:none;cursor:pointer;color:var(--muted);flex:none}
 .icon-btn:hover{background:var(--hover);color:var(--text)}
+.linkbtn{background:none;border:0;min-height:40px;padding:0 8px;color:var(--accent);font-weight:600;cursor:pointer;border-radius:8px}
 .field{width:100%;min-height:44px;padding:0 12px;border:1.5px solid var(--line);border-radius:var(--r);background:var(--surface)}
 .field:focus{outline:0;border-color:var(--accent)}
 label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
@@ -71,13 +81,24 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 
 /* ---------- Header ---------- */
 .top{position:sticky;top:0;z-index:20;background:var(--bg);padding-top:env(safe-area-inset-top)}
-.top .wrap{display:flex;align-items:center;gap:10px;height:60px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:16px;color:inherit;text-decoration:none;margin-right:auto;letter-spacing:-.01em}
-.brand svg{width:30px;height:30px}
+.top .wrap{display:flex;align-items:center;gap:6px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;font-size:16px;color:inherit;text-decoration:none;margin-right:auto;letter-spacing:-.01em;min-width:0;white-space:nowrap}
+.brand svg{width:30px;height:30px;flex:none}
+.av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--accent-soft);color:var(--accent);font-weight:700;font-size:14px;text-transform:uppercase;flex:none}
 .notice{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:var(--r);background:var(--warn-soft);color:var(--warn);margin:4px 0 12px;font-size:14px}
 .notice.info{background:var(--accent-soft);color:var(--text)}
 .notice.info svg,.notice.info .spin{color:var(--accent)}
 .notice .spin{margin-top:3px}
+
+/* ---------- Sign-in and forced password change ---------- */
+.authv .top,.authv #app,.authv .fab{display:none!important}
+.auth{min-height:100vh;display:grid;place-items:center;padding:calc(24px + env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+.card{width:min(400px,100%);background:var(--surface);border-radius:var(--r-lg);padding:28px 24px 18px;display:grid;gap:14px}
+.card .logo{width:48px;height:48px}
+.card .notice{margin:0}
+.card .btn{width:100%;margin-top:4px}
+.card .linkbtn{justify-self:center}
+.card .small{text-align:center}
 
 /* ---------- Status strip ---------- */
 .status{display:grid;grid-template-columns:1.25fr 1fr;background:var(--surface);border-radius:var(--r-lg);margin:4px 0 26px}
@@ -95,30 +116,69 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 .bar.high>i{background:var(--warn)}
 .bar.full>i{background:var(--danger)}
 
-/* ---------- Files ---------- */
+/* ---------- Breadcrumb, toolbar, selection and clipboard bars ---------- */
+.crumbs{display:flex;flex-wrap:wrap;align-items:center;margin:-6px 0 0 -6px;font-size:14px;color:var(--muted);min-width:0}
+.cr{display:inline-flex;align-items:center;min-width:0;max-width:100%}
+.cr+.cr::before{content:"›";padding:0 1px;flex:none}
+.crumbs a,.crumbs .ell,.crumbs [aria-current]{color:inherit;text-decoration:none;font-weight:600;padding:9px 6px;border-radius:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px}
+.crumbs a:hover,.crumbs .ell:hover{color:var(--text);background:var(--hover)}
+.crumbs [aria-current]{color:var(--text)}
+.crumbs .ell{border:0;background:none;cursor:pointer;font:inherit;font-weight:700;min-width:32px}
+.cr.ellc{display:none}
 .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
-.toolbar h1{margin-right:auto}
+.toolbar h1{margin-right:auto;min-width:0;overflow-wrap:anywhere}
 .count{font-size:13px;color:var(--muted);font-weight:400;margin-left:8px;letter-spacing:0}
 .search{position:relative;flex:0 1 240px}
 .search svg{position:absolute;left:12px;top:12px;color:var(--muted);pointer-events:none}
 .search input{padding-left:40px;border-color:transparent;background:var(--surface)}
 .sort-m{display:none}
+.bars{position:sticky;top:var(--top);z-index:15;background:var(--bg)}
+.selbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px;min-height:56px;padding:6px;margin-bottom:10px;border-radius:var(--r-lg);background:var(--surface);box-shadow:inset 0 0 0 1.5px var(--accent-soft)}
+.selbar strong{margin-right:auto;padding:0 6px 0 2px}
+.sacts{display:flex;gap:2px;flex-wrap:wrap}
+.sb{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;min-width:40px;padding:0 12px;border:0;border-radius:var(--r);background:none;color:var(--text);font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap}
+.sb:hover{background:var(--hover)}
+.sb.danger{color:var(--danger)}
+.sb:disabled{opacity:.4;cursor:default;background:none}
+.clipbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:8px 8px 8px 14px;margin-bottom:10px;border-radius:var(--r-lg);background:var(--accent-soft)}
+.clipbar>svg{color:var(--accent)}
+.clipbar>span{flex:1 1 150px;min-width:0;font-weight:600;overflow-wrap:anywhere}
+.clipbar .btn{min-height:40px;padding:0 14px}
+.clipbar .btn:not(.primary){background:none}
+
+/* ---------- Files ---------- */
 .cols,.row{display:grid;grid-template-columns:40px minmax(0,1fr) 110px 150px 44px;gap:14px;align-items:center}
 .cols{padding:8px 8px 8px 10px;font-size:13px;color:var(--muted);border-bottom:1px solid var(--line)}
+.cols .lead{height:28px}
 .cols button{background:none;border:0;padding:4px 0;cursor:pointer;color:inherit;font-weight:600;display:inline-flex;gap:4px;align-items:center;text-align:left}
 .cols button svg{width:14px;height:14px}
 .cols button.on{color:var(--text)}
 .cols .num,.row .num{text-align:right;justify-content:flex-end}
 .row{padding:8px 8px 8px 10px;border-radius:var(--r);cursor:pointer;min-height:60px}
-.row:hover,.row.open{background:var(--surface)}
-.row .name{display:flex;font-weight:550;min-width:0}
+.row.open{background:var(--surface)}
+.row.sel,.row.sel:hover{background:var(--accent-soft)}
+.row .name{display:flex;font-weight:550;min-width:0;color:inherit;text-decoration:none}
 .name .nb{overflow:hidden;text-overflow:ellipsis;white-space:pre}
 .name .ne{flex:none;white-space:pre}
 .row .meta{display:none;font-size:13px;color:var(--muted)}
 .row .num,.row .date{font-size:14px;color:var(--muted);white-space:nowrap}
+.lead{position:relative;width:40px;height:40px}
+.ck{position:absolute;inset:0;width:100%;height:100%;margin:0;-webkit-appearance:none;appearance:none;border-radius:10px;background:var(--hover);cursor:pointer;opacity:0;display:grid;place-items:center}
+.row.sel .ck{background:transparent}
+.ck::before,.ck::after{content:"";grid-area:1/1}
+.ck::before{width:20px;height:20px;border-radius:6px;box-shadow:inset 0 0 0 2px var(--muted)}
+.ck:checked::before,.ck:indeterminate::before{background:var(--accent);box-shadow:none}
+.ck::after{width:5px;height:10px;border:solid var(--on-accent);border-width:0 2.5px 2.5px 0;transform:translateY(-1px) rotate(45deg);opacity:0}
+.ck:checked::after{opacity:1}
+.ck:indeterminate::after{opacity:1;width:10px;height:0;border-width:0 0 2.5px;transform:none}
+.selmode .ck,.ck:checked,.ck:focus-visible{opacity:1}
+@media (hover:hover){.row:hover{background:var(--surface)}a.name:hover .nb{text-decoration:underline}.row:hover .ck,.cols:hover .ck{opacity:1}}
+@media (hover:none){.ck{pointer-events:none}.selmode .ck{pointer-events:auto}.row{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}}
 .ficon{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:10px;font-weight:750;letter-spacing:.02em;background:var(--hover);color:var(--muted)}
 .ficon.long{font-size:8.5px}
 .ficon svg{width:18px;height:18px}
+.ficon.dir{color:var(--accent);background:var(--accent-soft)}
+.ficon.dir svg{width:21px;height:21px;fill:currentColor;fill-opacity:.2}
 .ficon.model{color:var(--accent);background:var(--accent-soft)}
 .ficon.image{color:#9c2a6e;background:color-mix(in srgb,#9c2a6e 13%,transparent)}
 .ficon.doc{color:#2857ab;background:color-mix(in srgb,#2857ab 13%,transparent)}
@@ -140,11 +200,20 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 
 /* ---------- Menu / sheet ---------- */
 .scrim{position:fixed;inset:0;z-index:40}
-.menu{position:fixed;z-index:41;min-width:220px;background:var(--surface);border-radius:14px;box-shadow:var(--shadow);padding:6px}
+.menu{position:fixed;z-index:41;min-width:220px;max-width:calc(100vw - 16px);background:var(--surface);border-radius:14px;box-shadow:var(--shadow);padding:6px}
 .menu .mhead{display:none}
+.menu .mhead.uhead{display:block;padding:8px 12px 10px;margin-bottom:4px;border-bottom:1px solid var(--line);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mhead small{display:block;color:var(--muted);font-size:13px;font-weight:400}
 .menu button{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:0 12px;border:0;background:none;border-radius:8px;cursor:pointer;text-align:left}
 .menu button:hover{background:var(--hover)}
 .menu button.danger{color:var(--danger)}
+
+/* ---------- Busy overlay (copying blocks the device) ---------- */
+.busy{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:16px;background:rgba(10,12,14,.45)}
+.busy>div{display:flex;gap:14px;align-items:flex-start;max-width:420px;padding:20px 22px;border-radius:var(--r-lg);background:var(--surface);box-shadow:var(--shadow)}
+.busy .spin{width:22px;height:22px;color:var(--accent)}
+.busy strong{display:block;overflow-wrap:anywhere}
+.busy p{color:var(--muted);font-size:14px;margin-top:4px}
 
 /* ---------- Uploads panel ---------- */
 .uploads{position:fixed;right:20px;bottom:20px;z-index:30;width:380px;max-width:calc(100vw - 32px);background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--shadow);overflow:hidden}
@@ -161,7 +230,7 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 .uploads .bar{margin-top:4px}
 
 /* ---------- Toasts ---------- */
-.toasts{position:fixed;left:24px;bottom:24px;z-index:60;display:flex;flex-direction:column;align-items:flex-start;gap:8px;pointer-events:none;max-width:min(440px,calc(100vw - 444px))}
+.toasts{position:fixed;left:24px;bottom:24px;z-index:80;display:flex;flex-direction:column;align-items:flex-start;gap:8px;pointer-events:none;max-width:min(440px,calc(100vw - 444px))}
 .toast{max-width:520px;padding:12px 16px;border-radius:12px;background:var(--text);color:var(--bg);box-shadow:var(--shadow);font-size:14px;animation:tin .18s ease-out}
 .toast.err{background:var(--danger);color:var(--on-danger)}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
@@ -173,9 +242,15 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 dialog{border:0;border-radius:var(--r-lg);background:var(--surface);color:var(--text);padding:0;width:min(440px,calc(100vw - 32px));box-shadow:var(--shadow)}
 dialog form{padding:24px}
 dialog::backdrop{background:rgba(10,12,14,.5)}
-dialog h2{font-size:18px;margin-bottom:8px}
+dialog h2{font-size:18px;margin-bottom:8px;overflow-wrap:anywhere}
 dialog p{color:var(--muted);margin-bottom:10px;overflow-wrap:anywhere}
 dialog .derr{color:var(--danger);font-size:13px;margin-top:8px}
+#dFields>*+*{margin-top:12px}
+.chk{display:flex;gap:10px;align-items:center;min-height:40px;cursor:pointer;font-size:14px}
+.chk input{width:20px;height:20px;margin:0;accent-color:var(--accent);flex:none}
+.chk small{display:block;font-size:13px;color:var(--muted)}
+.card .chk{align-items:flex-start;min-height:0}
+.card .chk input{margin-top:1px}
 .derr:empty,.formmsg:empty{display:none}
 dialog .dacts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
 
@@ -188,17 +263,24 @@ dialog .dacts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;fle
 .sec{padding:26px 0 8px;scroll-margin-top:70px}
 .sec>h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px}
 .group{background:var(--surface);border-radius:var(--r-lg)}
+.group>*+*{border-top:1px solid var(--line)}
 .item{display:flex;gap:16px;align-items:center;padding:16px 18px}
-.item + .item{border-top:1px solid var(--line)}
 .item .txt{flex:1 1 170px;min-width:0}
 .item.col>.txt{flex:none}
 .item .txt p{font-size:13px;color:var(--muted);margin-top:2px}
 .item.col{flex-direction:column;align-items:stretch;gap:12px}
 .item .inner{display:flex;gap:16px;align-items:center}
+.item .notice{margin:0}
+.item .acts{display:flex;gap:10px;flex-wrap:wrap}
 .kv{display:flex;justify-content:space-between;gap:16px}
 .kv span:last-child{color:var(--muted);text-align:right;overflow-wrap:anywhere}
-.form{display:grid;gap:14px;grid-template-columns:1fr 1fr;align-items:end}
-.form .full{grid-column:1/-1}
+.li{display:flex;align-items:center;gap:12px;min-height:60px;padding:8px 8px 8px 18px}
+.li+.li{border-top:1px solid var(--line)}
+.li .txt{flex:1;min-width:0;overflow-wrap:anywhere}
+.li .txt small{display:block;color:var(--muted);font-size:13px}
+.li>svg{color:var(--muted)}
+.pill{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:99px;background:var(--accent-soft);color:var(--accent);font-size:12px;font-weight:650}
+.foot{display:flex;align-items:center;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;padding:12px 18px}
 .formmsg{font-size:13px}
 .formmsg.ok{color:var(--accent)}.formmsg.err{color:var(--danger)}
 .switch{position:relative;width:50px;height:30px;flex:none}
@@ -214,6 +296,7 @@ dialog .dacts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;fle
 pre.log{margin:0;padding:14px;border-radius:var(--r);background:var(--bg);font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow:auto;max-height:340px}
 .dangerzone .group{box-shadow:inset 0 0 0 1.5px var(--danger-soft)}
 .dangerzone>h2{color:var(--danger)}
+.role-user .adm{display:none!important}
 footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));font-size:13px;color:var(--muted)}
 
 /* ---------- Phone ---------- */
@@ -223,23 +306,32 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
   .cell + .cell{border-left:0;border-top:1px solid var(--line)}
   .cell.mode{flex-wrap:wrap}
   .cell.mode .btn{width:100%;margin-top:2px}
+  .cr.mid{display:none}
+  .cr.ellc{display:inline-flex}
+  .crumbs a,.crumbs [aria-current]{max-width:150px}
   .search{flex:1 1 100%;order:3}
   .sort-m{display:block;order:2;flex:0 1 auto;width:auto;min-height:40px;padding:0 4px;border-color:transparent;background:transparent;color:var(--muted);font-size:14px;font-weight:600}
+  .toolbar .mk{order:2;width:44px;padding:0;background:none;color:var(--muted)}
+  .toolbar .mk .bl{display:none}
   .cols{display:none}
   .row{grid-template-columns:40px minmax(0,1fr) 44px;padding-left:4px;padding-right:0}
   .row .num,.row .date{display:none}
   .row .meta{display:block}
   .toolbar .up{display:none}
-  .fab{display:inline-flex;position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom) + var(--ph,0px));z-index:25;min-height:54px;padding:0 20px;border-radius:27px;box-shadow:var(--shadow)}
+  .sacts{width:100%;display:grid;grid-auto-flow:column;grid-auto-columns:1fr}
+  .sacts .sb{flex-direction:column;gap:2px;font-size:12px;min-height:52px;padding:4px 2px}
+  .sacts .bl{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  .fab{display:inline-flex;position:fixed;right:max(16px,env(safe-area-inset-right));bottom:calc(16px + env(safe-area-inset-bottom) + var(--ph,0px));z-index:25;min-height:54px;padding:0 20px;border-radius:27px;box-shadow:var(--shadow)}
   .uploads{right:0;left:0;bottom:0;width:auto;max-width:none;border-radius:var(--r-lg) var(--r-lg) 0 0;padding-bottom:env(safe-area-inset-bottom)}
   .scrim{background:rgba(10,12,14,.45)}
-  .menu{left:0!important;right:0;top:auto!important;bottom:0;border-radius:var(--r-lg) var(--r-lg) 0 0;padding:8px 8px calc(12px + env(safe-area-inset-bottom))}
+  .menu{left:0!important;right:0;top:auto!important;bottom:0;max-width:none;border-radius:var(--r-lg) var(--r-lg) 0 0;padding:8px 8px calc(12px + env(safe-area-inset-bottom))}
   .menu .mhead{display:block;padding:10px 12px 8px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .menu button{min-height:52px}
-  .form{grid-template-columns:1fr}
   .list{padding-bottom:calc(var(--ph,0px) + 96px)}
   .item{padding:14px 16px;flex-wrap:wrap}
   .item .inner{flex-wrap:wrap}
+  .li{padding-left:16px}
+  .foot{padding:12px 16px}
   .toasts{left:16px;right:16px;max-width:none;align-items:stretch;bottom:calc(86px + env(safe-area-inset-bottom))}
   .has-panel .toasts{bottom:calc(var(--ph,0px) + 12px)}
   .has-panel .fab{display:none}
@@ -248,10 +340,10 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
   .back{padding:10px 10px 10px 4px}
   .uploads .x{width:40px;height:40px}
 }
-@media (max-width:359px){.fab .fl{display:none}.fab{padding:0;width:54px}}
+@media (max-width:359px){.fab .fl,.sacts .bl{display:none}.fab{padding:0;width:54px}.seg button{padding:7px 10px}}
 </style>
 </head>
-<body>
+<body class="authv">
 <svg style="display:none" aria-hidden="true">
   <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h9.8M18.2 6H20M4 12h3.8M12.2 12H20M4 18h11.3M19.7 18H20"/><circle cx="16" cy="6" r="2.2"/><circle cx="10" cy="12" r="2.2"/><circle cx="17.5" cy="18" r="2.2"/></symbol>
   <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
@@ -263,6 +355,7 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
   <symbol id="i-usb" viewBox="0 0 24 24"><path d="M9 3h6v5H9zM7 8h10v5a5 5 0 0 1-10 0zM12 18v3"/></symbol>
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-newdir" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM12 10.5v5M9.5 13h5"/></symbol>
   <symbol id="i-card" viewBox="0 0 24 24"><path d="M7 3h7l4 4v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 7v3M12 7v3"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19zM12 9.5v4.5M12 17v.3"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
@@ -270,17 +363,58 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V6M7 11l5-5 5 5"/></symbol>
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v13M7 13l5 5 5-5"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3h7l4 4v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM14 3v4h4"/></symbol>
+  <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6.5" cy="7" r="2.5"/><circle cx="6.5" cy="17" r="2.5"/><path d="M8.6 8.4 20 17M8.6 15.6 20 7"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/><path d="M15.5 8.5V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2.5"/></symbol>
+  <symbol id="i-paste" viewBox="0 0 24 24"><rect x="5.5" y="5" width="13" height="16" rx="2"/><path d="M9 5V3.5h6V5M9 11h6M9 15h4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M8.5 12.2l2.5 2.5 4.5-5"/></symbol>
+  <symbol id="i-all" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="12" height="12" rx="2.5"/><path d="M19.5 8v9.5a2 2 0 0 1-2 2H8M6.8 9.6l1.8 1.8 3.4-3.6"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M3.5 9.5a12 12 0 0 1 17 0M6.6 12.7a7.6 7.6 0 0 1 10.8 0M9.7 15.8a3.2 3.2 0 0 1 4.6 0"/><circle cx="12" cy="19" r="1" fill="currentColor"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="M10.5 12.5 19 4M15.5 7.5 18 10"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+  <symbol id="i-device" viewBox="0 0 24 24"><rect x="2.5" y="5" width="13" height="10" rx="1.5"/><path d="M6.5 19h5M9 15v4"/><rect x="16.5" y="9" width="5" height="10" rx="1.2"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10"/></symbol>
+  <symbol id="logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="var(--accent)"/><g fill="none" stroke="var(--on-accent)" stroke-width="2.2" stroke-linecap="round"><path d="M9.5 13a9.2 9.2 0 0 1 13 0"/><path d="M12.7 16.2a4.7 4.7 0 0 1 6.6 0"/></g><rect x="8" y="19.5" width="16" height="6" rx="2" fill="var(--on-accent)"/><circle cx="20.5" cy="22.5" r="1.1" fill="var(--accent)"/></symbol>
 </svg>
 
 <header class="top"><div class="wrap">
-  <a class="brand" href="#" aria-label="WiFi DataDrive – Meine Dateien">
-    <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><g fill="none" stroke="var(--on-accent)" stroke-width="2.2" stroke-linecap="round"><path d="M9.5 13a9.2 9.2 0 0 1 13 0"/><path d="M12.7 16.2a4.7 4.7 0 0 1 6.6 0"/></g><rect x="8" y="19.5" width="16" height="6" rx="2" fill="var(--on-accent)"/><circle cx="20.5" cy="22.5" r="1.1" fill="var(--accent)"/></svg>
-    WiFi DataDrive
-  </a>
-  <a class="icon-btn" href="#einstellungen" id="navSettings" aria-label="Einstellungen" title="Einstellungen"><svg class="i"><use href="#i-settings"/></svg></a>
+  <a class="brand" href="#/" data-tl="brandHome"><svg aria-hidden="true"><use href="#logo"/></svg>WiFi DataDrive</a>
+  <button class="icon-btn" id="userBtn" aria-haspopup="menu"><span class="av" id="userAv"></span></button>
+  <a class="icon-btn" href="#einstellungen" id="navSettings" data-tt="settings"><svg class="i"><use href="#i-settings"/></svg></a>
 </div></header>
 
-<div class="wrap">
+<!-- ================= Sign-in view ================= -->
+<main class="auth" id="vLogin" hidden>
+  <form class="card" id="loginForm" novalidate>
+    <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+    <div><h1>WiFi DataDrive</h1><p class="muted" data-t="loginLead"></p></div>
+    <div class="notice" id="loginNote" role="status" hidden></div>
+    <div><label class="lbl" for="lUser" data-t="userName"></label><input class="field" id="lUser" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="24"></div>
+    <div><label class="lbl" for="lPass" data-t="password"></label><input class="field" id="lPass" type="password" autocomplete="current-password" maxlength="64"></div>
+    <label class="chk"><input type="checkbox" id="lTrust" checked><span><span data-t="trust"></span><small data-t="trustX"></small></span></label>
+    <div class="formmsg err" id="loginMsg" role="alert"></div>
+    <button class="btn primary" id="loginBtn" type="submit" data-t="signIn"></button>
+    <p class="small" data-t="loginHelp"></p>
+    <button class="linkbtn" type="button" data-lang></button>
+  </form>
+</main>
+
+<!-- ================= Forced password change ================= -->
+<main class="auth" id="vPw" hidden>
+  <form class="card" id="pwForm" novalidate>
+    <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
+    <div><h1 data-t="pwT"></h1><p class="muted" data-t="pwWhy"></p></div>
+    <input id="pwUser" autocomplete="username" hidden>
+    <div><label class="lbl" for="pwOld" data-t="pwOld"></label><input class="field" id="pwOld" type="password" autocomplete="current-password" maxlength="64"></div>
+    <div><label class="lbl" for="pwNew" data-t="pwNew"></label><input class="field" id="pwNew" type="password" autocomplete="new-password" maxlength="64"></div>
+    <div><label class="lbl" for="pwNew2" data-t="pwNew2"></label><input class="field" id="pwNew2" type="password" autocomplete="new-password" maxlength="64"></div>
+    <div class="formmsg err" id="pwMsg" role="alert"></div>
+    <button class="btn primary" id="pwBtn2" type="submit" data-t="pwSave"></button>
+    <button class="linkbtn" type="button" id="pwOut" data-t="signOut"></button>
+  </form>
+</main>
+
+<div class="wrap" id="app">
   <div class="notice" id="notice" role="status" hidden></div>
 
   <!-- ================= Files view ================= -->
@@ -288,169 +422,592 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
     <section class="status" id="status">
       <div class="cell mode" id="modeCell">
         <span class="badge"><svg class="i"><use id="modeIcon" href="#i-usb"/></svg></span>
-        <span class="txt"><span class="title" id="modeTitle">Verbindung wird hergestellt …</span><span class="sub" id="modeSub">&nbsp;</span></span>
+        <span class="txt"><span class="title" id="modeTitle" data-t="connecting"></span><span class="sub" id="modeSub">&nbsp;</span></span>
         <button class="btn" id="modeBtn" hidden></button>
       </div>
       <div class="cell">
         <span class="badge"><svg class="i"><use href="#i-card"/></svg></span>
-        <span class="txt"><span class="title" id="stoTitle">Speicher</span><span class="sub" id="stoSub">&nbsp;</span>
+        <span class="txt"><span class="title" id="stoTitle" data-t="storage"></span><span class="sub" id="stoSub">&nbsp;</span>
           <span class="bar" id="stoBar"><i></i></span></span>
       </div>
     </section>
 
-    <div class="toolbar">
-      <h1>Meine Dateien <span class="count" id="count"></span></h1>
+    <nav class="crumbs" id="crumbs" data-tl="path" hidden></nav>
+    <div class="toolbar" id="toolbar">
+      <h1><span id="title" data-t="myFiles"></span> <span class="count" id="count"></span></h1>
       <label class="search" id="searchBox" hidden><svg class="i"><use href="#i-search"/></svg>
-        <input class="field" id="search" type="search" placeholder="Dateien suchen" aria-label="Dateien suchen" autocomplete="off"></label>
-      <select class="field sort-m" id="sortM" aria-label="Sortierung" hidden>
-        <option value="name,1">Name (A–Z)</option><option value="name,-1">Name (Z–A)</option>
-        <option value="mtime,-1">Neueste zuerst</option><option value="mtime,1">Älteste zuerst</option>
-        <option value="size,-1">Größte zuerst</option><option value="size,1">Kleinste zuerst</option>
+        <input class="field" id="search" type="search" data-tp="search" data-tl="search" autocomplete="off"></label>
+      <select class="field sort-m" id="sortM" data-tl="sortL" hidden>
+        <option value="name,1" data-t="sNameA"></option><option value="name,-1" data-t="sNameZ"></option>
+        <option value="mtime,-1" data-t="sNew"></option><option value="mtime,1" data-t="sOld"></option>
+        <option value="size,-1" data-t="sBig"></option><option value="size,1" data-t="sSmall"></option>
       </select>
-      <button class="btn primary up" id="upBtn" hidden><svg class="i"><use href="#i-upload"/></svg>Hochladen</button>
+      <button class="btn mk" id="mkBtn" data-tl="newDir" hidden><svg class="i"><use href="#i-newdir"/></svg><span class="bl" data-t="newDir"></span></button>
+      <button class="btn primary up" id="upBtn" hidden><svg class="i"><use href="#i-upload"/></svg><span data-t="upload"></span></button>
+    </div>
+    <div class="bars">
+      <div class="selbar" id="selbar" role="toolbar" data-tl="selection" hidden>
+        <button class="icon-btn" id="sX" data-tt="selClear"><svg class="i"><use href="#i-x"/></svg></button>
+        <strong id="selCount" aria-live="polite"></strong>
+        <button class="sb" id="sAll"><svg class="i"><use href="#i-all"/></svg><span data-t="selectAll"></span></button>
+        <div class="sacts">
+          <button class="sb" id="sDl" data-tl="download"><svg class="i"><use href="#i-download"/></svg><span class="bl" data-t="download"></span></button>
+          <button class="sb" id="sCut" data-tl="cut"><svg class="i"><use href="#i-cut"/></svg><span class="bl" data-t="cut"></span></button>
+          <button class="sb" id="sCopy" data-tl="copy"><svg class="i"><use href="#i-copy"/></svg><span class="bl" data-t="copy"></span></button>
+          <button class="sb danger" id="sDel" data-tl="delete"><svg class="i"><use href="#i-trash"/></svg><span class="bl" data-t="delete"></span></button>
+        </div>
+      </div>
+      <div class="clipbar" id="clipbar" role="region" data-tl="clipboard" hidden>
+        <svg class="i" aria-hidden="true"><use href="#i-paste"/></svg><span id="clipTxt" aria-live="polite"></span>
+        <button class="btn primary" id="clipPaste" data-t="pasteHere"></button><button class="btn" id="clipX" data-t="cancel"></button>
+      </div>
     </div>
     <div class="list" id="list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
   </main>
 
   <!-- ================= Settings view ================= -->
   <main id="vSettings" hidden>
-    <a class="back" href="#"><svg class="i"><use href="#i-back"/></svg>Meine Dateien</a>
-    <h1>Einstellungen</h1>
-    <nav class="tabs" aria-label="Bereiche">
-      <a href="#s-net">Netzwerk</a><a href="#s-usb">Speicher &amp; USB</a><a href="#s-sec">Sicherheit</a><a href="#s-sys">System</a>
+    <a class="back" href="#/" id="backLink"><svg class="i"><use href="#i-back"/></svg><span data-t="myFiles"></span></a>
+    <h1 data-t="settings"></h1>
+    <nav class="tabs" data-tl="areas">
+      <a href="#s-gen" data-t="secGen"></a><a href="#s-dev" data-t="secDev"></a><a href="#s-net" class="adm" data-t="secNet"></a><a href="#s-usb" data-t="secUsb"></a><a href="#s-users" class="adm" data-t="secUsers"></a><a href="#s-sys" class="adm" data-t="secSys"></a>
     </nav>
 
-    <section class="sec" id="s-net"><h2>Netzwerk</h2>
+    <section class="sec" id="s-gen"><h2 data-t="secGen"></h2>
+      <div class="group">
+        <div class="item"><div class="txt"><h3 data-t="acct"></h3><p id="acctX"></p></div>
+          <div class="acts"><button class="btn" id="pwBtn" data-t="changePw"></button><button class="btn" id="outBtn" data-t="signOut"></button></div></div>
+        <div class="item"><div class="txt"><h3 data-t="theme"></h3></div>
+          <div class="seg" id="theme" role="group" data-tl="theme">
+            <button data-v="" data-t="tAuto"></button><button data-v="light" data-t="tLight"></button><button data-v="dark" data-t="tDark"></button></div></div>
+        <div class="item"><div class="txt"><h3 data-t="language"></h3></div>
+          <div class="seg" id="langSeg" role="group" data-tl="language"><button data-v="de" lang="de">Deutsch</button><button data-v="en" lang="en">English</button></div></div>
+      </div>
+    </section>
+
+    <section class="sec" id="s-dev"><h2 data-t="secDev"></h2>
+      <div class="group">
+        <div class="item"><div class="txt"><p data-t="devX"></p><p id="devCount"></p></div></div>
+        <div id="devList"></div>
+      </div>
+    </section>
+
+    <section class="sec adm" id="s-net"><h2 data-t="secNet"></h2>
       <div class="group">
         <div class="item"><div class="txt"><h3 id="netTitle">WLAN</h3><p id="netSub"></p></div></div>
-        <div class="item col"><div class="kv"><span>Adresse</span><span id="netAddr">–</span></div>
-          <div class="kv"><span>Name im Netzwerk</span><span id="netHost">–</span></div></div>
-        <div class="item col">
-          <div class="txt"><h3>Mit anderem WLAN verbinden</h3><p>Nach dem Speichern verbindet sich das Laufwerk neu. Die neue Adresse steht dann auf seinem Display.</p></div>
-          <form class="form" id="wifiForm" novalidate>
-            <div><label class="lbl" for="ssid">WLAN-Name</label><input class="field" id="ssid" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false"></div>
-            <div><label class="lbl" for="pass">Passwort</label><input class="field" id="pass" type="password" maxlength="63" autocomplete="new-password"></div>
-            <div class="formmsg full" id="wifiMsg" role="status"></div>
-            <div class="full"><button class="btn primary" id="wifiBtn" type="submit">Speichern und verbinden</button></div>
-          </form>
-        </div>
+        <div class="item col"><div class="kv"><span data-t="addr"></span><span id="netAddr">–</span></div>
+          <div class="kv"><span data-t="host"></span><span id="netHost">–</span></div></div>
+        <div class="item"><div class="txt"><h3 data-t="wifiSaved"></h3><p data-t="wifiSavedX"></p></div></div>
+        <div id="wifiList"></div>
+        <div class="foot"><span class="small" id="wifiCount"></span><button class="btn" id="wifiAdd"><svg class="i"><use href="#i-plus"/></svg><span data-t="wifiAdd"></span></button></div>
+        <div class="item"><div class="txt"><h3 data-t="apT"></h3><p id="secAp"></p></div></div>
       </div>
     </section>
 
-    <section class="sec" id="s-usb"><h2>Speicher &amp; USB</h2>
+    <section class="sec" id="s-usb"><h2 data-t="secUsb"></h2>
       <div class="group">
-        <div class="item col"><div class="kv"><span>Speichermedium</span><span id="suMedium">–</span></div>
-          <div class="kv"><span>Belegt</span><span id="suUsed">–</span></div>
-          <div class="kv"><span>Frei</span><span id="suFree">–</span></div></div>
-        <div class="item"><div class="txt"><h3>USB-Gerät darf Dateien ändern</h3><p>Ausgeschaltet kann das angeschlossene Gerät Dateien nur lesen – empfohlen für Drucker und andere Geräte, die nichts speichern müssen. Gilt ab dem nächsten Bereitstellen.</p></div>
-          <label class="switch"><input type="checkbox" id="swWrite" aria-label="USB-Gerät darf Dateien ändern"><i></i></label></div>
-        <div class="item"><div class="txt"><h3>Nach dem Hochladen wieder bereitstellen</h3><p>Wird ein Upload gestartet, während das USB-Laufwerk aktiv ist, steht es danach automatisch wieder für das USB-Gerät bereit. Gilt für diesen Browser.</p></div>
-          <label class="switch"><input type="checkbox" id="swAuto" aria-label="Nach dem Hochladen wieder bereitstellen"><i></i></label></div>
+        <div class="item col"><div class="kv"><span data-t="medium"></span><span id="suMedium">–</span></div>
+          <div class="kv"><span data-t="used"></span><span id="suUsed">–</span></div>
+          <div class="kv"><span data-t="free"></span><span id="suFree">–</span></div></div>
+        <div class="item adm"><div class="txt"><h3 data-t="usbWriteT"></h3><p data-t="usbWriteX"></p></div>
+          <label class="switch"><input type="checkbox" id="swWrite" data-tl="usbWriteT"><i></i></label></div>
+        <div class="item"><div class="txt"><h3 data-t="autoT"></h3><p data-t="autoX"></p></div>
+          <label class="switch"><input type="checkbox" id="swAuto" data-tl="autoT"><i></i></label></div>
+        <div class="item"><div class="txt"><h3 data-t="typesT"></h3><p id="secTypes">–</p></div></div>
       </div>
     </section>
 
-    <section class="sec" id="s-sec"><h2>Sicherheit</h2>
+    <section class="sec adm" id="s-users"><h2 data-t="secUsers"></h2>
       <div class="group">
-        <div class="item"><div class="txt"><h3>Zugriff auf diese Oberfläche</h3><p>Alle Geräte im selben WLAN können diese Seite öffnen und Dateien verwalten. Ein Passwortschutz ist noch nicht verfügbar – verwende das Laufwerk daher nur in einem vertrauenswürdigen Netzwerk.</p></div></div>
-        <div class="item"><div class="txt"><h3>Einrichtungs-WLAN</h3><p id="secAp"></p></div></div>
-        <div class="item"><div class="txt"><h3>Erlaubte Dateien</h3><p id="secTypes">–</p></div></div>
+        <div class="item"><div class="txt"><p data-t="usersX"></p></div></div>
+        <div id="userList"></div>
+        <div class="foot"><span class="small" id="userCount"></span><button class="btn" id="userAdd"><svg class="i"><use href="#i-plus"/></svg><span data-t="userAdd"></span></button></div>
       </div>
     </section>
 
-    <section class="sec" id="s-sys"><h2>System</h2>
+    <section class="sec adm" id="s-sys"><h2 data-t="secSys"></h2>
       <div class="group">
-        <div class="item"><div class="txt"><h3>Darstellung</h3></div>
-          <div class="seg" id="theme" role="group" aria-label="Darstellung">
-            <button data-t="">Automatisch</button><button data-t="light">Hell</button><button data-t="dark">Dunkel</button></div></div>
-        <div class="item col"><div class="kv"><span>Version</span><span id="sysVer">–</span></div>
-          <div class="kv"><span>In Betrieb seit</span><span id="sysUp">–</span></div>
-          <div class="kv"><span>Freier Arbeitsspeicher</span><span id="sysHeap">–</span></div></div>
-        <div class="item col"><div class="inner"><div class="txt"><h3>Protokoll</h3><p>Hilft bei der Fehlersuche.</p></div>
-          <button class="btn" id="logBtn">Anzeigen</button></div><pre class="log" id="log" hidden></pre></div>
-        <div class="item"><div class="txt"><h3>Neu starten</h3><p>Ein angeschlossenes USB-Gerät verliert das Laufwerk dabei für einige Sekunden.</p></div>
-          <button class="btn" id="rebootBtn">Neu starten</button></div>
+        <div class="item col"><div class="kv"><span data-t="version"></span><span id="sysVer">–</span></div>
+          <div class="kv"><span data-t="slot"></span><span id="sysSlot">–</span></div>
+          <div class="kv"><span data-t="uptime"></span><span id="sysUp">–</span></div>
+          <div class="kv"><span data-t="heap"></span><span id="sysHeap">–</span></div></div>
+        <div class="item col"><div class="inner"><div class="txt"><h3 data-t="otaT"></h3><p data-t="otaX"></p></div>
+          <button class="btn" id="otaBtn" data-t="otaPick"></button></div>
+          <div class="notice info" id="otaPend" hidden><svg class="i"><use href="#i-alert"/></svg><span data-t="otaPend"></span></div>
+          <div id="otaProg" hidden><div class="kv"><span id="otaName"></span><span id="otaPct"></span></div><span class="bar"><i id="otaBar"></i></span></div>
+          <div class="formmsg err" id="otaMsg" role="alert"></div></div>
+        <div class="item col"><div class="inner"><div class="txt"><h3 data-t="logT"></h3><p data-t="logX"></p></div>
+          <button class="btn" id="logBtn" data-t="show"></button></div><pre class="log" id="log" hidden></pre></div>
+        <div class="item"><div class="txt"><h3 data-t="rebootT"></h3><p data-t="rebootX"></p></div>
+          <button class="btn" id="rebootBtn" data-t="rebootT"></button></div>
       </div>
     </section>
 
-    <section class="sec dangerzone" id="s-danger"><h2>Gefahrenbereich</h2>
+    <section class="sec dangerzone adm" id="s-danger"><h2 data-t="secDanger"></h2>
       <div class="group">
-        <div class="item"><div class="txt"><h3>Speicher formatieren</h3><p id="fmtSub">Löscht alle Dateien unwiderruflich.</p></div>
-          <button class="btn outline-danger" id="fmtBtn">Formatieren …</button></div>
-        <div class="item"><div class="txt"><h3>Wartungsmodus</h3><p>Startet das Laufwerk so, dass neue Gerätesoftware aufgespielt werden kann. Diese Oberfläche ist danach nicht erreichbar, bis das Laufwerk aus- und wieder eingesteckt wird.</p></div>
-          <button class="btn outline-danger" id="flashBtn">Starten …</button></div>
+        <div class="item"><div class="txt"><h3 data-t="fmtT"></h3><p id="fmtSub"></p></div>
+          <button class="btn outline-danger" id="fmtBtn" data-t="fmtBtn"></button></div>
+        <div class="item"><div class="txt"><h3 data-t="maintT"></h3><p data-t="maintX"></p></div>
+          <button class="btn outline-danger" id="flashBtn" data-t="start"></button></div>
       </div>
     </section>
     <footer id="foot"></footer>
   </main>
 </div>
 
-<button class="btn primary fab" id="fab" aria-label="Hochladen" hidden><svg class="i"><use href="#i-upload"/></svg><span class="fl">Hochladen</span></button>
+<button class="btn primary fab" id="fab" data-tl="upload" hidden><svg class="i"><use href="#i-upload"/></svg><span class="fl" data-t="upload"></span></button>
 <input type="file" id="picker" multiple hidden>
+<input type="file" id="otaPick" accept=".bin,application/octet-stream" hidden>
 
-<aside class="uploads" id="uploads" aria-label="Uploads" hidden>
-  <header><strong id="upHead">Uploads</strong><button class="icon-btn" id="upMore" aria-label="Weitere Dateien hochladen" title="Weitere Dateien hochladen"><svg class="i"><use href="#i-upload"/></svg></button><button class="icon-btn" id="upClose" aria-label="Schließen" title="Schließen"><svg class="i"><use href="#i-x"/></svg></button></header>
+<aside class="uploads" id="uploads" data-tl="uploads" hidden>
+  <header><strong id="upHead">Uploads</strong><button class="icon-btn" id="upMore" data-tt="upMore"><svg class="i"><use href="#i-upload"/></svg></button><button class="icon-btn" id="upClose" data-tt="close"><svg class="i"><use href="#i-x"/></svg></button></header>
   <ul id="upList"></ul>
 </aside>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
-<div class="drop" id="drop" hidden>Dateien zum Hochladen hier ablegen</div>
+<div class="drop" id="drop" hidden></div>
 <div class="scrim" id="scrim" hidden></div>
 <div class="menu" id="menu" role="menu" hidden></div>
+<div class="busy" id="busy" hidden><div role="status" aria-live="assertive"><span class="spin"></span><div><strong id="busyT"></strong><p id="busyX"></p></div></div></div>
 
 <dialog id="dlg" aria-labelledby="dTitle">
-  <form method="dialog" id="dForm">
-    <h2 id="dTitle"></h2><div id="dBody"></div>
-    <div id="dInputWrap" hidden><label class="lbl" id="dLabel" for="dInput"></label><input class="field" id="dInput" autocomplete="off" spellcheck="false"></div>
+  <form method="dialog" id="dForm" novalidate>
+    <h2 id="dTitle"></h2><div id="dBody"></div><div id="dFields"></div>
     <div class="derr" id="dErr" role="alert"></div>
-    <div class="dacts"><button class="btn" type="button" id="dNo">Abbrechen</button><button class="btn primary" type="submit" id="dYes">OK</button></div>
+    <div class="dacts"><button class="btn" type="button" id="dNo"></button><button class="btn primary" type="submit" id="dYes"></button></div>
   </form>
 </dialog>
 
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const icon = n => `<svg class="i" aria-hidden="true"><use href="#i-${n}"/></svg>`;
 const enc = encodeURIComponent;
-const GIB4 = 4294967296;
+const bytes = s => new TextEncoder().encode(s).length;
+const join = (dir, name) => dir ? dir + "/" + name : name;
+const base = p => p.slice(p.lastIndexOf("/") + 1);
+const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+const form = o => new URLSearchParams(o).toString();
+const GIB4 = 4294967296, OTA_MIN = 65536, OTA_MAX = 0x280000;   // OTA_MAX: size of one firmware partition
 
-const S = {
-  st: null,            // last status from the device
-  files: null,         // null = not loaded, [] = empty
-  filesVer: 0,         // incremented whenever the list was reloaded
-  dirs: 0, trunc: false,
-  listKey: "",         // change detector for reloading the file list
-  q: "", sort: {k: "name", d: 1},
-  switching: "",       // "app" | "usb" while a mode change is running
-  fails: 0,            // consecutive failed status polls
-  restart: "",         // "normal" | "download" | "format" after such a request
-  sawDown: false,      // device was unreachable since the restart request
-  ups: [], working: false, upSeq: 0
-};
+/* ---------- Texts: one dictionary per language. Functions take the variable parts. E = server errors by `code` ("ctx.CODE" overrides a code in one place). ---------- */
+const L = {
+de: {
+  myFiles: "Meine Dateien", settings: "Einstellungen", cancel: "Abbrechen", ok: "OK", close: "Schließen", save: "Speichern",
+  brandHome: "WiFi DataDrive – Meine Dateien", otherLang: "English",
+  loginLead: "Melde dich an, um deine Dateien zu verwalten.", userName: "Benutzername", password: "Passwort", signIn: "Anmelden",
+  loginHelp: "Passwort vergessen? Die Taste am Laufwerk 10 Sekunden lang halten – danach gilt wieder admin / admin.",
+  loginEmpty: "Bitte Benutzername und Passwort eingeben.",
+  locked: s => `Zu viele Fehlversuche. Bitte warte noch ${s} Sekunden.`,
+  why_expired: "Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.",
+  why_restart: "Das Laufwerk wurde neu gestartet. Bitte melde dich erneut an.",
+  why_offline: "Keine Antwort vom Laufwerk. Neuer Versuch läuft …",
+  why_out: "Du hast dich abgemeldet.",
+  pwT: "Neues Passwort festlegen",
+  pwWhy: "Das Laufwerk verwendet noch das Auslieferungspasswort, das jeder nachlesen kann – lege ein eigenes fest, bevor du es benutzt.",
+  pwOld: "Aktuelles Passwort", pwNew: "Neues Passwort", pwNew2: "Neues Passwort wiederholen", pwSave: "Passwort speichern",
+  pwNoOld: "Bitte das aktuelle Passwort eingeben.",
+  pwLen: "Das neue Passwort muss 5 bis 64 Zeichen lang sein.",
+  pwDiff: "Die beiden neuen Passwörter stimmen nicht überein.",
+  pwAdmin: "Bitte ein anderes Passwort als „admin“ wählen.",
+  pwSame: "Das neue Passwort muss sich vom bisherigen unterscheiden.",
+  pwSaved: "Das Passwort wurde geändert. Andere Geräte mit diesem Konto wurden abgemeldet.",
+  trust: "Diesem Gerät vertrauen", trustX: "Bleibt auf diesem Gerät angemeldet, auch nach einem Neustart des Laufwerks.",
+  signOut: "Abmelden", changePw: "Passwort ändern",
+  roleAdmin: "Administrator", roleUser: "Benutzer", you: "du",
+  acctL: u => `Konto ${u}`, acctX: (u, r) => `Angemeldet als ${u} (${r}).`,
+  connecting: "Verbindung wird hergestellt …", storage: "Speicher",
+  search: "In diesem Ordner suchen", sortL: "Sortierung",
+  sNameA: "Name (A–Z)", sNameZ: "Name (Z–A)", sNew: "Neueste zuerst", sOld: "Älteste zuerst", sBig: "Größte zuerst", sSmall: "Kleinste zuerst",
+  upload: "Hochladen", uploadFiles: "Dateien hochladen", newDir: "Neuer Ordner", path: "Ordnerpfad", morePath: "Weitere Ordner im Pfad",
+  colName: "Name", colSize: "Größe", colDate: "Geändert", sortAsc: "aufsteigend sortiert", sortDesc: "absteigend sortiert", sortBy: "sortieren",
+  folder: "Ordner", actionsFor: n => `Aktionen für ${n}`, selectX: n => `${n} auswählen`, selectAll: "Alle auswählen",
+  nItems: n => n === 1 ? "1 Element" : `${n} Elemente`, nOf: (a, b) => `${a} von ${b}`,
+  nSel: n => `${n} ausgewählt`, selClear: "Auswahl aufheben", selection: "Auswahl", clipboard: "Zwischenablage",
+  download: "Herunterladen", rename: "Umbenennen", cut: "Ausschneiden", copy: "Kopieren", select: "Auswählen", delete: "Löschen", open: "Öffnen",
+  clipCut: n => n === 1 ? "1 Element ausgeschnitten" : `${n} Elemente ausgeschnitten`,
+  clipCopied: n => n === 1 ? "1 Element kopiert" : `${n} Elemente kopiert`,
+  pasteHere: "Hier einfügen",
+  emptyT: "Noch keine Dateien", emptyX: "Lade Dateien hoch, um sie auf dem Laufwerk zu speichern. Am Computer kannst du sie auch einfach in dieses Fenster ziehen.",
+  emptyDirT: "Dieser Ordner ist leer", emptyDirX: "Lade Dateien hierher hoch oder füge ausgeschnittene oder kopierte Elemente ein.",
+  noHits: "Keine Treffer", noHitsX: q => `Kein Name in diesem Ordner enthält „${q}“.`,
+  brokenT: "Der Speicher muss eingerichtet werden",
+  brokenX: "Das Laufwerk kann den Speicher nicht lesen. In den Einstellungen lässt er sich neu formatieren – dabei gehen alle vorhandenen Daten verloren.",
+  brokenUser: "Das Laufwerk kann den Speicher nicht lesen. Ein Administrator kann ihn in den Einstellungen neu formatieren.",
+  toFormat: "Zum Formatieren",
+  lockedT: "Die Dateien gehören gerade dem USB-Gerät",
+  lockedX: n => `Damit nichts durcheinandergerät, kann immer nur eine Seite auf das Laufwerk zugreifen. Aktiviere die Dateiverwaltung, um Dateien anzusehen, hochzuladen oder zu löschen – das USB-Gerät sieht das Laufwerk so lange nicht.${n ? ` Zuletzt ${n === 1 ? "war 1 Datei" : "waren " + n + " Dateien"} gespeichert.` : ""}`,
+  truncHint: "In diesem Ordner liegen sehr viele Dateien – die Liste zeigt nur einen Teil davon.",
+  dirGone: n => `Den Ordner „${n}“ gibt es nicht mehr.`,
+  mErrT: "Speicher nicht lesbar", mErrX: "Auf dem Speicher wurde kein lesbares Dateisystem gefunden.",
+  mUsbT: "USB-Laufwerk aktiv", mAppT: "Dateiverwaltung aktiv", mToApp: "Dateiverwaltung aktivieren", mToUsb: "USB-Laufwerk bereitstellen",
+  mActivating: "Wird aktiviert …", mProviding: "Wird bereitgestellt …",
+  hNone: "Kein USB-Gerät angeschlossen.", hWriting: "Das USB-Gerät schreibt gerade auf das Laufwerk.", hReading: "Das USB-Gerät greift gerade auf das Laufwerk zu.",
+  hRW: "Das angeschlossene USB-Gerät hat Zugriff auf die Dateien.", hRO: "Das angeschlossene USB-Gerät kann die Dateien lesen.", hHidden: "Das USB-Gerät sieht das Laufwerk im Moment nicht.",
+  sd: "microSD-Karte", flash: "Interner Speicher", usedOf: (u, n) => `${u} von ${n} belegt`, sizeUnknown: "Größe unbekannt",
+  nMaint: "Der Wartungsmodus ist aktiv. Zum Beenden das Laufwerk aus- und wieder einstecken.",
+  nRestart: "Das Laufwerk startet neu …",
+  nOffline: "Keine Antwort vom Laufwerk. Wird gerade eine große Datei übertragen, ist das normal – sonst bitte die WLAN-Verbindung prüfen. Neuer Versuch läuft …",
+  nOther: "Ein anderes Gerät lädt gerade eine Datei hoch. Bis das abgeschlossen ist, sind hier keine Änderungen möglich.",
+  ready: "Das Laufwerk ist wieder bereit.",
+  waitUpload: "Bitte warte, bis der Upload abgeschlossen ist.", waitBusy: "Bitte warte, bis der laufende Vorgang abgeschlossen ist.",
+  provided: "Das USB-Laufwerk ist bereitgestellt.",
+  hostActT: "Laufwerk vom USB-Gerät trennen?", hostActYes: "Trennen und fortfahren",
+  hostActX: "<p>Das angeschlossene USB-Gerät verwendet das Laufwerk noch. Beim Trennen wird ein laufender Zugriff unterbrochen – zum Beispiel ein Druck oder ein Kopiervorgang von diesem Laufwerk.</p><p>Sicherer ist es, das Laufwerk zuerst am USB-Gerät auszuwerfen. Dann entfällt diese Rückfrage.</p>",
+  renFileT: "Datei umbenennen", renDirT: "Ordner umbenennen", newName: "Neuer Name", renamed: n => `Umbenannt in „${n}“.`,
+  nameEmpty: "Bitte einen Namen eingeben.",
+  nameLong: "Der Name ist zu lang. Bitte kürzen – Umlaute und Sonderzeichen zählen doppelt.",
+  nameChars: 'Der Name darf nicht mit Punkt oder Leerzeichen beginnen oder enden und keines dieser Zeichen enthalten: / \\ : * ? " < > |',
+  pathLong: "Der Pfad wird zu lang: möglich sind höchstens 8 Ordnerebenen und 240 Zeichen.",
+  create: "Anlegen", name: "Name", dirMade: n => `Ordner „${n}“ angelegt.`,
+  delFileT: "Datei löschen?", delFileX: n => `„${n}“ wird endgültig vom Laufwerk gelöscht.`,
+  delDirT: n => `Ordner „${n}“ mit Inhalt löschen?`, delDirX: "Der Ordner und alles, was er enthält, werden endgültig vom Laufwerk gelöscht.",
+  delManyT: n => `${n} Elemente löschen?`,
+  delManyX: d => "Die ausgewählten Elemente werden endgültig vom Laufwerk gelöscht." + (d === 1 ? " Darunter ist 1 Ordner – sein gesamter Inhalt wird mitgelöscht." : d ? ` Darunter sind ${d} Ordner – ihr gesamter Inhalt wird mitgelöscht.` : ""),
+  deleted: "Gelöscht.", deletedN: n => n === 1 ? "1 Element gelöscht." : `${n} Elemente gelöscht.`,
+  deleting: (i, n) => `Wird gelöscht … (${i} von ${n})`, busyX: "Das Laufwerk antwortet währenddessen auf nichts anderes.",
+  alreadyHere: "Die Elemente liegen bereits in diesem Ordner.",
+  copying: (n, i, c) => `„${n}“ wird kopiert …` + (c > 1 ? ` (${i} von ${c})` : ""),
+  copyingX: "Das Laufwerk antwortet währenddessen nicht. Große Dateien können einige Minuten dauern.",
+  existsT: n => `„${n}“ gibt es hier schon`,
+  existsX: "Beim Einfügen lässt sich nichts ersetzen. Du kannst das Element überspringen oder mit einem neuen Namen einfügen.",
+  newNameBtn: "Mit neuem Namen", skip: "Überspringen", forAll: "Für alle weiteren übernehmen",
+  intoSelf: n => `„${n}“ kann nicht in sich selbst eingefügt werden.`,
+  movedN: n => n === 1 ? "1 Element verschoben." : `${n} Elemente verschoben.`,
+  copiedN: n => n === 1 ? "1 Element kopiert." : `${n} Elemente kopiert.`,
+  skippedN: n => n === 1 ? "1 übersprungen." : `${n} übersprungen.`,
+  upQueued: "Wartet", upChecking: "Wird geprüft …", upSaving: "Wird gespeichert …", upLeft: s => `noch ${s}`, upDone: "Gespeichert", upCancelled: "Abgebrochen", upSkipped: "Übersprungen",
+  upType: x => `Dieser Dateityp ist nicht erlaubt (möglich: ${x}).`, upEmpty: "Die Datei ist leer.", upBig: "Zu groß – möglich sind höchstens 4 GB pro Datei.",
+  upExistsT: "Vorhandene Datei ersetzen?", upExistsX: n => `„${n}“ gibt es in diesem Ordner bereits.`, replace: "Ersetzen",
+  upNoConn: "Keine Verbindung zum Laufwerk – nicht hochgeladen.", upBroken: "Der Speicher ist nicht lesbar – nicht hochgeladen.",
+  upNoApp: "Nicht hochgeladen – die Dateiverwaltung wurde nicht aktiviert.", upLost: "Verbindung unterbrochen – die Datei wurde nicht gespeichert.",
+  upOut: "Nicht hochgeladen – die Anmeldung ist abgelaufen. Bitte melde dich an und lade die Datei erneut hoch.",
+  upPw: "Nicht hochgeladen – zuerst muss ein neues Passwort festgelegt werden.",
+  upBad: "Unerwartete Antwort des Laufwerks – nicht gespeichert.",
+  savedN: n => n === 1 ? "1 Datei gespeichert." : `${n} Dateien gespeichert.`, reprovided: "Das USB-Laufwerk ist wieder bereitgestellt.",
+  upHeadActive: n => n === 1 ? "1 Datei wird hochgeladen" : `${n} Dateien werden hochgeladen`,
+  upHeadFail: (f, n) => `${f} von ${n} nicht gespeichert`, upHeadDone: n => n === 1 ? "1 Datei gespeichert" : `${n} Dateien gespeichert`,
+  uploads: "Uploads", upMore: "Weitere Dateien hochladen", upCancel: "Upload abbrechen",
+  dropHere: "Dateien zum Hochladen hier ablegen", dropIn: n => `Dateien hier ablegen, um sie in „${n}“ hochzuladen`,
+  secGen: "Allgemein", secNet: "Netzwerk", secUsb: "Speicher & USB", secUsers: "Benutzer", secSys: "System", secDanger: "Gefahrenbereich", areas: "Bereiche",
+  acct: "Konto", theme: "Darstellung", tAuto: "Automatisch", tLight: "Hell", tDark: "Dunkel", language: "Sprache",
+  netOn: s => `Verbunden mit „${s}“`, netConnecting: s => `Verbindung mit „${s}“ wird hergestellt …`, netNone: "Kein WLAN eingerichtet",
+  rssi3: "Sehr guter Empfang.", rssi2: "Guter Empfang.", rssi1: "Schwacher Empfang.", apOn: s => `Das Einrichtungs-WLAN „${s}“ ist aktiv.`,
+  addr: "Adresse", host: "Name im Netzwerk",
+  wifiSaved: "Gespeicherte WLANs", wifiSavedX: "Das Laufwerk verbindet sich mit dem stärksten gespeicherten WLAN in Reichweite.",
+  connected: "Verbunden", removeX: s => `„${s}“ entfernen`, wifiNone: "Noch kein WLAN gespeichert.", wifiCount: (n, m) => `${n} von ${m} gespeichert`,
+  wifiAdd: "WLAN hinzufügen", wifiLoadErr: "Die gespeicherten WLANs konnten nicht geladen werden.",
+  wifiAddX: "Ist das WLAN schon gespeichert, wird sein Passwort ersetzt. Danach verbindet sich das Laufwerk neu – diese Seite ist dabei kurz nicht erreichbar.",
+  ssid: "WLAN-Name", wifiPassL: "Passwort (leer bei einem offenen WLAN)",
+  ssidEmpty: "Bitte den WLAN-Namen eingeben.", ssidLong: "Der WLAN-Name darf höchstens 32 Zeichen lang sein.",
+  wifiPwLen: "Das Passwort muss 8 bis 63 Zeichen lang sein (oder leer bei einem offenen WLAN).",
+  wifiAdded: s => `„${s}“ gespeichert. Das Laufwerk verbindet sich jetzt neu – ob es geklappt hat, zeigt sein Display.`,
+  wifiDelT: s => `WLAN „${s}“ entfernen?`, wifiDelX: "Das Laufwerk verbindet sich danach nicht mehr von selbst mit diesem WLAN.",
+  wifiDelActive: "Das Laufwerk ist gerade mit diesem WLAN verbunden. Ist beim nächsten Start kein anderes gespeichertes WLAN erreichbar, öffnet es das Einrichtungs-WLAN.",
+  remove: "Entfernen", removed: s => `„${s}“ entfernt.`,
+  secDev: "Vertraute Geräte", devX: "Diese Geräte bleiben angemeldet, bis du sie hier entfernst, dich dort abmeldest oder das Passwort geändert wird.",
+  devCount: (n, m) => `${n} von ${m} Plätzen belegt.`, devNone: "Noch kein vertrautes Gerät. Beim Anmelden lässt sich „Diesem Gerät vertrauen“ auswählen.",
+  thisDev: "Dieses Gerät", devDelT: s => `Gerät „${s}“ entfernen?`, devDelX: "Dort ist danach eine neue Anmeldung nötig.",
+  devDelSelf: "Das ist das Gerät, das du gerade benutzt – du wirst hier abgemeldet.", devLoadErr: "Die vertrauten Geräte konnten nicht geladen werden.",
+  dPhone: "Android-Handy", dTab: "Android-Tablet", dWin: "Windows-PC", dLinux: "Linux-PC",
+  apT: "Einrichtungs-WLAN", apX: "Findet das Laufwerk kein bekanntes WLAN, öffnet es ein eigenes, passwortgeschütztes Einrichtungs-WLAN. Das Passwort wird nur auf dem Display angezeigt.",
+  medium: "Speichermedium", used: "Belegt", free: "Frei",
+  usbWriteT: "USB-Gerät darf Dateien ändern", usbWriteX: "Ausgeschaltet kann das angeschlossene Gerät Dateien nur lesen – empfohlen für Drucker und andere Geräte, die nichts speichern müssen. Gilt ab dem nächsten Bereitstellen.",
+  usbWriteOn: "Das USB-Gerät darf Dateien ändern. Gilt ab dem nächsten Bereitstellen.", usbWriteOff: "Das USB-Gerät darf nur noch lesen. Gilt ab dem nächsten Bereitstellen.",
+  autoT: "Nach dem Hochladen wieder bereitstellen", autoX: "Wird ein Upload gestartet, während das USB-Laufwerk aktiv ist, steht es danach automatisch wieder für das USB-Gerät bereit. Gilt für diesen Browser.",
+  typesT: "Erlaubte Dateien", typesAll: "Es können Dateien aller Typen hochgeladen werden, bis 4 GB pro Datei. 3MF-Dateien werden beim Hochladen auf Vollständigkeit geprüft.",
+  typesSome: x => `Hochgeladen werden können nur Dateien mit den Endungen ${x}.`,
+  usersX: "Administratoren dürfen alles, Benutzer verwalten nur Dateien. Anmeldedaten werden im WLAN unverschlüsselt übertragen – verwende das Laufwerk nur in vertrauenswürdigen Netzwerken.",
+  usersCount: (n, m) => `${n} von ${m} Benutzern`, userAdd: "Benutzer hinzufügen", role: "Rolle", usersLoadErr: "Die Benutzer konnten nicht geladen werden.",
+  userAdded: n => `„${n}“ wurde angelegt.`, mkAdmin: "Zum Administrator machen", mkUser: "Administratorrechte entziehen",
+  roleT: (n, adm) => adm ? `„${n}“ zum Administrator machen?` : `„${n}“ die Administratorrechte entziehen?`,
+  roleXAdmin: "Administratoren können alle Einstellungen ändern, Benutzer verwalten und den Speicher formatieren.",
+  roleXUser: "Danach kann dieses Konto nur noch Dateien verwalten.", roleXSelf: "Du verlierst damit selbst den Zugriff auf diese Einstellungen.",
+  change: "Ändern", roleDone: n => `Die Rolle von „${n}“ wurde geändert.`,
+  setPw: "Neues Passwort festlegen", setPwT: n => `Neues Passwort für „${n}“`, setPwX: "Der Benutzer wird dabei auf allen Geräten abgemeldet.",
+  pwSetFor: n => `Das Passwort von „${n}“ wurde geändert.`,
+  userDelT: n => `Benutzer „${n}“ löschen?`, userDelX: "Das Konto wird entfernt und eine laufende Anmeldung beendet. Die Dateien bleiben erhalten.",
+  userDelSelf: "Das ist dein eigenes Konto – du wirst danach abgemeldet.", userDeleted: n => `„${n}“ wurde gelöscht.`,
+  version: "Version", slot: "Aktiver Firmware-Bereich", uptime: "In Betrieb seit", heap: "Freier Arbeitsspeicher",
+  otaT: "Gerätesoftware aktualisieren",
+  otaX: "Wähle die Datei printdrive.bin einer neuen Version. Startet die neue Version nicht, kehrt das Laufwerk von selbst zur bisherigen zurück.",
+  otaPick: "Datei auswählen …",
+  otaPend: "Die neue Version läuft gerade zur Probe. Läuft sie stabil, wird sie in wenigen Sekunden übernommen – sonst kehrt das Laufwerk beim nächsten Start zur vorherigen Version zurück.",
+  otaNotBin: "Bitte eine Firmware-Datei mit der Endung .bin wählen.", otaSmall: "Die Datei ist zu klein für eine Gerätesoftware.",
+  otaBig: "Die Datei ist zu groß für dieses Laufwerk.", otaBad: "Diese Datei ist keine Gerätesoftware für dieses Laufwerk.",
+  otaConfT: "Gerätesoftware aktualisieren?",
+  otaConfX: (n, s) => `„${n}“ (${s}) wird übertragen. Danach startet das Laufwerk neu – ein angeschlossenes USB-Gerät verliert es dabei kurz, und alle müssen sich neu anmelden.`,
+  otaGo: "Aktualisieren", otaSending: p => `${p} %`, otaChecking: "Wird geprüft …",
+  logT: "Protokoll", logX: "Hilft bei der Fehlersuche.", show: "Anzeigen", refresh: "Aktualisieren", logEmpty: "(leer)", logErr: "Das Protokoll konnte nicht geladen werden.",
+  rebootT: "Neu starten", rebootX: "Dauert etwa 10 Sekunden. Ein angeschlossenes USB-Gerät verliert das Laufwerk kurz, und alle müssen sich danach neu anmelden.",
+  rebootQ: "Laufwerk neu starten?",
+  fmtT: "Speicher formatieren", fmtBtn: "Formatieren …", whereSd: "der microSD-Karte", whereFlash: "dem internen Speicher",
+  fmtX: w => `Löscht alle Dateien auf ${w} unwiderruflich und richtet den Speicher neu ein.`,
+  fmtQ: "Speicher formatieren?", fmtQX: w => `Alle Dateien auf ${w} werden unwiderruflich gelöscht. Tippe zur Bestätigung das Wort LÖSCHEN ein.`,
+  fmtWord: "LÖSCHEN", fmtConfirm: "Bestätigung", fmtWrong: "Bitte genau das Wort LÖSCHEN eingeben.", fmtYes: "Alles löschen", fmtOwner: "Bitte zuerst die Dateiverwaltung aktivieren.",
+  maintT: "Wartungsmodus", maintX: "Startet das Laufwerk so, dass neue Gerätesoftware per USB-Kabel aufgespielt werden kann. Diese Oberfläche ist danach nicht erreichbar, bis das Laufwerk aus- und wieder eingesteckt wird.",
+  start: "Starten …", maintQ: "Wartungsmodus starten?", maintYes: "Wartungsmodus starten",
+  today: "Heute", yesterday: "Gestern",
+  dur: s => s < 90 ? "gerade eben" : s < 5400 ? Math.round(s / 60) + " Minuten" : s < 129600 ? Math.round(s / 3600) + " Stunden" : Math.round(s / 86400) + " Tagen",
+  E: {
+    BAD_NAME: "Dieser Name ist nicht erlaubt.", BAD_REQUEST: "Die Anfrage war ungültig.", INCOMPLETE: "Die Übertragung war unvollständig.",
+    FORBIDDEN: "Anfrage nicht erlaubt.", NOT_FOUND: "Die Datei oder der Ordner wurde nicht gefunden.",
+    BUSY: "Es läuft gerade eine Dateiübertragung. Bitte warte, bis sie abgeschlossen ist.",
+    HOST_ACTIVE: "Das USB-Gerät verwendet das Laufwerk noch.",
+    HOST_WRITING: "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warte, bis es fertig ist, und versuche es dann erneut.",
+    WRONG_OWNER: "Das geht nur, solange die Dateiverwaltung aktiv ist.", NO_FS: "Der Speicher ist nicht lesbar und muss formatiert werden.",
+    EXISTS: "Eine Datei oder ein Ordner mit diesem Namen existiert hier bereits.",
+    TOO_LARGE: "Die Datei ist zu groß – möglich sind höchstens 4 GB pro Datei.", BAD_TYPE: "Dieser Dateityp ist nicht erlaubt.",
+    INVALID_FILE: "Die Datei ist unvollständig oder beschädigt.", IO: "Lese- oder Schreibfehler auf dem Speicher.",
+    NO_MEM: "Das Laufwerk hat gerade zu wenig Arbeitsspeicher. Bitte versuche es gleich noch einmal.", NO_SPACE: "Nicht genug freier Speicher.",
+    BAD_USER: "Ungültiger Benutzername. Erlaubt sind 1 bis 24 Zeichen: Buchstaben, Ziffern, Punkt, Unterstrich und Bindestrich.",
+    BAD_PASSWORD: "Das Passwort muss 5 bis 64 Zeichen lang sein.", IS_DIR: "Das ist ein Ordner, keine Datei.",
+    UNAUTHORIZED: "Bitte melde dich an.", BAD_LOGIN: "Benutzername oder Passwort ist falsch.",
+    FORBIDDEN_ROLE: "Dafür sind Administratorrechte nötig.", MUST_CHANGE_PASSWORD: "Bitte lege zuerst ein eigenes Passwort fest.",
+    DIR_NOT_EMPTY: "Der Ordner ist nicht leer.", LAST_ADMIN: "Der letzte Administrator kann weder gelöscht noch herabgestuft werden.",
+    USER_LIMIT: "Es sind bereits 8 Benutzer angelegt. Bitte zuerst einen löschen.", WIFI_LIMIT: "Es sind bereits 5 WLANs gespeichert. Bitte zuerst eines entfernen.",
+    LOCKED: "Zu viele Fehlversuche. Bitte in 30 Sekunden erneut versuchen.",
+    OFFLINE: "Keine Antwort vom Laufwerk.", HTTP: r => `Unerwartete Antwort des Laufwerks (${r.status}).`,
+    "pw.BAD_LOGIN": "Das aktuelle Passwort stimmt nicht.",
+    "up.NOT_FOUND": "Der Zielordner existiert nicht mehr – nicht hochgeladen.",
+    "mk.NOT_FOUND": "Der übergeordnete Ordner existiert nicht mehr.",
+    "paste.BAD_NAME": "Ein Ordner lässt sich nicht in sich selbst einfügen, und Pfade dürfen höchstens 8 Ebenen tief sein.",
+    "paste.NOT_FOUND": "Das Element oder der Zielordner existiert nicht mehr.",
+    "user.NOT_FOUND": "Diesen Benutzer gibt es nicht mehr.", "user.EXISTS": "Diesen Benutzernamen gibt es schon (Groß- und Kleinschreibung zählen nicht).",
+    "wifi.NOT_FOUND": "Dieses WLAN ist nicht mehr gespeichert.", "dev.NOT_FOUND": "Dieses Gerät ist nicht mehr gespeichert.", "wifi.BAD_REQUEST": "WLAN-Name (1 bis 32 Zeichen) oder Passwort (leer oder 8 bis 63 Zeichen) ist ungültig.",
+    "ota.IO": "Beim Schreiben der neuen Version ist ein Fehler aufgetreten. Die bisherige Version bleibt aktiv.",
+    "ota.OFFLINE": "Die Verbindung wurde unterbrochen. Ist die Datei nicht vollständig angekommen, bleibt die bisherige Version aktiv."
+  }
+},
+en: {
+  myFiles: "My files", settings: "Settings", cancel: "Cancel", ok: "OK", close: "Close", save: "Save",
+  brandHome: "WiFi DataDrive – My files", otherLang: "Deutsch",
+  loginLead: "Sign in to manage your files.", userName: "User name", password: "Password", signIn: "Sign in",
+  loginHelp: "Forgot your password? Hold the button on the drive for 10 seconds to reset the sign-in to admin / admin.",
+  loginEmpty: "Please enter your user name and password.",
+  locked: s => `Too many failed attempts. Please wait ${s} seconds.`,
+  why_expired: "Your session has ended. Please sign in again.",
+  why_restart: "The drive has restarted. Please sign in again.",
+  why_offline: "The drive is not responding. Trying again …",
+  why_out: "You have signed out.",
+  pwT: "Set a new password",
+  pwWhy: "The drive still uses its factory password, which anyone can look up — please choose your own before you continue.",
+  pwOld: "Current password", pwNew: "New password", pwNew2: "Repeat new password", pwSave: "Save password",
+  pwNoOld: "Please enter your current password.",
+  pwLen: "The new password must be 5 to 64 characters long.",
+  pwDiff: "The two new passwords do not match.",
+  pwAdmin: "Please choose a password other than “admin”.",
+  pwSame: "The new password must be different from the current one.",
+  pwSaved: "Your password has been changed. Other devices using this account have been signed out.",
+  trust: "Trust this device", trustX: "Stay signed in on this device, even after the drive restarts.",
+  signOut: "Sign out", changePw: "Change password",
+  roleAdmin: "Administrator", roleUser: "User", you: "you",
+  acctL: u => `Account ${u}`, acctX: (u, r) => `Signed in as ${u} (${r}).`,
+  connecting: "Connecting …", storage: "Storage",
+  search: "Search this folder", sortL: "Sort order",
+  sNameA: "Name (A–Z)", sNameZ: "Name (Z–A)", sNew: "Newest first", sOld: "Oldest first", sBig: "Largest first", sSmall: "Smallest first",
+  upload: "Upload", uploadFiles: "Upload files", newDir: "New folder", path: "Folder path", morePath: "More folders in the path",
+  colName: "Name", colSize: "Size", colDate: "Modified", sortAsc: "sorted ascending", sortDesc: "sorted descending", sortBy: "sort",
+  folder: "Folder", actionsFor: n => `Actions for ${n}`, selectX: n => `Select ${n}`, selectAll: "Select all",
+  nItems: n => n === 1 ? "1 item" : `${n} items`, nOf: (a, b) => `${a} of ${b}`,
+  nSel: n => `${n} selected`, selClear: "Clear selection", selection: "Selection", clipboard: "Clipboard",
+  download: "Download", rename: "Rename", cut: "Cut", copy: "Copy", select: "Select", delete: "Delete", open: "Open",
+  clipCut: n => n === 1 ? "1 item ready to move" : `${n} items ready to move`,
+  clipCopied: n => n === 1 ? "1 item copied" : `${n} items copied`,
+  pasteHere: "Paste here",
+  emptyT: "No files yet", emptyX: "Upload files to store them on the drive. On a computer you can also drag them into this window.",
+  emptyDirT: "This folder is empty", emptyDirX: "Upload files here, or paste items you have cut or copied.",
+  noHits: "No matches", noHitsX: q => `Nothing in this folder matches “${q}”.`,
+  brokenT: "The storage needs to be set up",
+  brokenX: "The drive cannot read its storage. You can format it in the settings — this erases everything on it.",
+  brokenUser: "The drive cannot read its storage. An administrator can format it in the settings.",
+  toFormat: "Go to formatting",
+  lockedT: "The USB device is using the files",
+  lockedX: n => `To keep everything consistent, only one side can use the drive at a time. Switch to file management to view, upload or delete files — the USB device won’t see the drive until you hand it back.${n ? ` Last known: ${n === 1 ? "1 file" : n + " files"}.` : ""}`,
+  truncHint: "This folder contains a great many files — only part of the list is shown.",
+  dirGone: n => `The folder “${n}” no longer exists.`,
+  mErrT: "Storage not readable", mErrX: "No readable file system was found on the storage.",
+  mUsbT: "USB drive active", mAppT: "File management active", mToApp: "Switch to file management", mToUsb: "Hand drive to USB device",
+  mActivating: "Switching …", mProviding: "Handing over …",
+  hNone: "No USB device connected.", hWriting: "The USB device is writing to the drive.", hReading: "The USB device is accessing the drive.",
+  hRW: "The connected USB device can access the files.", hRO: "The connected USB device can read the files.", hHidden: "The USB device can’t see the drive right now.",
+  sd: "microSD card", flash: "Internal storage", usedOf: (u, n) => `${u} of ${n} used`, sizeUnknown: "Size unknown",
+  nMaint: "Maintenance mode is on. To leave it, unplug the drive and plug it back in.",
+  nRestart: "The drive is restarting …",
+  nOffline: "The drive is not responding. That’s normal while a large file is being transferred — otherwise please check the Wi-Fi connection. Trying again …",
+  nOther: "Another device is uploading a file. No changes are possible here until it has finished.",
+  ready: "The drive is ready again.",
+  waitUpload: "Please wait until the upload has finished.", waitBusy: "Please wait until the current operation has finished.",
+  provided: "The drive is now available to the USB device.",
+  hostActT: "Disconnect the drive from the USB device?", hostActYes: "Disconnect and continue",
+  hostActX: "<p>The connected USB device is still using the drive. Disconnecting interrupts whatever it is doing — a print job or a copy from this drive, for example.</p><p>It’s safer to eject the drive on the USB device first. Then this question won’t appear.</p>",
+  renFileT: "Rename file", renDirT: "Rename folder", newName: "New name", renamed: n => `Renamed to “${n}”.`,
+  nameEmpty: "Please enter a name.",
+  nameLong: "The name is too long. Please shorten it — accented letters and symbols count double.",
+  nameChars: 'A name can’t start or end with a dot or space, and can’t contain any of these characters: / \\ : * ? " < > |',
+  pathLong: "The path would be too long: at most 8 folder levels and 240 characters are possible.",
+  create: "Create", name: "Name", dirMade: n => `Folder “${n}” created.`,
+  delFileT: "Delete file?", delFileX: n => `“${n}” will be permanently deleted from the drive.`,
+  delDirT: n => `Delete folder “${n}” and its contents?`, delDirX: "The folder and everything in it will be permanently deleted from the drive.",
+  delManyT: n => `Delete ${n} items?`,
+  delManyX: d => "The selected items will be permanently deleted from the drive." + (d === 1 ? " This includes 1 folder and everything in it." : d ? ` This includes ${d} folders and everything in them.` : ""),
+  deleted: "Deleted.", deletedN: n => n === 1 ? "1 item deleted." : `${n} items deleted.`,
+  deleting: (i, n) => `Deleting … (${i} of ${n})`, busyX: "The drive doesn’t respond to anything else meanwhile.",
+  alreadyHere: "These items are already in this folder.",
+  copying: (n, i, c) => `Copying “${n}” …` + (c > 1 ? ` (${i} of ${c})` : ""),
+  copyingX: "The drive doesn’t respond while it copies. Large files can take a few minutes.",
+  existsT: n => `“${n}” already exists here`,
+  existsX: "Pasting can’t replace anything. You can skip this item or paste it under a new name.",
+  newNameBtn: "Use a new name", skip: "Skip", forAll: "Do the same for all remaining items",
+  intoSelf: n => `“${n}” can’t be pasted into itself.`,
+  movedN: n => n === 1 ? "1 item moved." : `${n} items moved.`,
+  copiedN: n => n === 1 ? "1 item copied." : `${n} items copied.`,
+  skippedN: n => `${n} skipped.`,
+  upQueued: "Waiting", upChecking: "Checking …", upSaving: "Saving …", upLeft: s => `${s} left`, upDone: "Saved", upCancelled: "Cancelled", upSkipped: "Skipped",
+  upType: x => `This file type isn’t allowed (allowed: ${x}).`, upEmpty: "The file is empty.", upBig: "Too large — at most 4 GB per file.",
+  upExistsT: "Replace existing file?", upExistsX: n => `“${n}” already exists in this folder.`, replace: "Replace",
+  upNoConn: "No connection to the drive — not uploaded.", upBroken: "The storage isn’t readable — not uploaded.",
+  upNoApp: "Not uploaded — file management was not activated.", upLost: "Connection lost — the file was not saved.",
+  upOut: "Not uploaded — you were signed out. Please sign in and upload the file again.",
+  upPw: "Not uploaded — a new password has to be set first.",
+  upBad: "Unexpected answer from the drive — not saved.",
+  savedN: n => n === 1 ? "1 file saved." : `${n} files saved.`, reprovided: "The drive is available to the USB device again.",
+  upHeadActive: n => n === 1 ? "Uploading 1 file" : `Uploading ${n} files`,
+  upHeadFail: (f, n) => `${f} of ${n} not saved`, upHeadDone: n => n === 1 ? "1 file saved" : `${n} files saved`,
+  uploads: "Uploads", upMore: "Upload more files", upCancel: "Cancel upload",
+  dropHere: "Drop files here to upload", dropIn: n => `Drop files here to upload them to “${n}”`,
+  secGen: "General", secNet: "Network", secUsb: "Storage & USB", secUsers: "Users", secSys: "System", secDanger: "Danger zone", areas: "Sections",
+  acct: "Account", theme: "Appearance", tAuto: "Automatic", tLight: "Light", tDark: "Dark", language: "Language",
+  netOn: s => `Connected to “${s}”`, netConnecting: s => `Connecting to “${s}” …`, netNone: "No Wi-Fi set up",
+  rssi3: "Excellent signal.", rssi2: "Good signal.", rssi1: "Weak signal.", apOn: s => `The setup network “${s}” is active.`,
+  addr: "Address", host: "Network name",
+  wifiSaved: "Saved networks", wifiSavedX: "The drive connects to the strongest saved network in range.",
+  connected: "Connected", removeX: s => `Remove “${s}”`, wifiNone: "No networks saved yet.", wifiCount: (n, m) => `${n} of ${m} saved`,
+  wifiAdd: "Add network", wifiLoadErr: "Couldn’t load the saved networks.",
+  wifiAddX: "If the network is already saved, its password is replaced. The drive then reconnects, so this page may be unreachable for a moment.",
+  ssid: "Network name (SSID)", wifiPassL: "Password (leave empty for an open network)",
+  ssidEmpty: "Please enter the network name.", ssidLong: "The network name can be at most 32 characters long.",
+  wifiPwLen: "The password must be 8 to 63 characters long (or empty for an open network).",
+  wifiAdded: s => `“${s}” saved. The drive is reconnecting — its display shows whether it worked.`,
+  wifiDelT: s => `Remove network “${s}”?`, wifiDelX: "The drive will no longer connect to this network by itself.",
+  wifiDelActive: "The drive is connected to this network right now. If no other saved network is in range at the next start, it opens its setup network.",
+  remove: "Remove", removed: s => `“${s}” removed.`,
+  secDev: "Trusted devices", devX: "These devices stay signed in until you remove them here, sign out on them, or the password is changed.",
+  devCount: (n, m) => `${n} of ${m} slots used.`, devNone: "No trusted devices yet. You can choose “Trust this device” when signing in.",
+  thisDev: "This device", devDelT: s => `Remove device “${s}”?`, devDelX: "That device will have to sign in again.",
+  devDelSelf: "This is the device you are using — you will be signed out here.", devLoadErr: "Couldn’t load the trusted devices.",
+  dPhone: "Android phone", dTab: "Android tablet", dWin: "Windows PC", dLinux: "Linux PC",
+  apT: "Setup network", apX: "If the drive can’t find a known network, it opens its own password-protected setup network. The password is shown only on its display.",
+  medium: "Storage medium", used: "Used", free: "Free",
+  usbWriteT: "USB device may change files", usbWriteX: "When off, the connected device can only read files — recommended for printers and other devices that don’t need to save anything. Takes effect the next time the drive is handed over.",
+  usbWriteOn: "The USB device may change files. Takes effect the next time the drive is handed over.", usbWriteOff: "The USB device can now only read. Takes effect the next time the drive is handed over.",
+  autoT: "Hand back after uploading", autoX: "If an upload starts while the USB drive is active, the drive goes back to the USB device automatically afterwards. Applies to this browser.",
+  typesT: "Allowed files", typesAll: "Files of any type can be uploaded, up to 4 GB each. 3MF files are checked for completeness when uploaded.",
+  typesSome: x => `Only files ending in ${x} can be uploaded.`,
+  usersX: "Administrators can do everything, users can only manage files. Sign-in details travel unencrypted over Wi-Fi, so use the drive only on networks you trust.",
+  usersCount: (n, m) => `${n} of ${m} users`, userAdd: "Add user", role: "Role", usersLoadErr: "Couldn’t load the users.",
+  userAdded: n => `“${n}” has been added.`, mkAdmin: "Make administrator", mkUser: "Remove admin rights",
+  roleT: (n, adm) => adm ? `Make “${n}” an administrator?` : `Remove admin rights from “${n}”?`,
+  roleXAdmin: "Administrators can change every setting, manage users and format the storage.",
+  roleXUser: "This account will then only be able to manage files.", roleXSelf: "You will lose access to these settings yourself.",
+  change: "Change", roleDone: n => `The role of “${n}” has been changed.`,
+  setPw: "Set new password", setPwT: n => `New password for “${n}”`, setPwX: "The user will be signed out on all devices.",
+  pwSetFor: n => `The password of “${n}” has been changed.`,
+  userDelT: n => `Delete user “${n}”?`, userDelX: "The account is removed and any active sign-in ends. Files are not affected.",
+  userDelSelf: "This is your own account — you will be signed out.", userDeleted: n => `“${n}” has been deleted.`,
+  version: "Version", slot: "Active firmware slot", uptime: "Running for", heap: "Free memory",
+  otaT: "Update firmware",
+  otaX: "Choose the printdrive.bin file of a new version. If the new version fails to start, the drive returns to the previous one by itself.",
+  otaPick: "Choose file …",
+  otaPend: "The new version is on trial. If it keeps running it is confirmed within seconds — otherwise the drive returns to the previous version at the next start.",
+  otaNotBin: "Please choose a firmware file ending in .bin.", otaSmall: "The file is too small to be firmware.",
+  otaBig: "The file is too large for this drive.", otaBad: "This file is not firmware for this drive.",
+  otaConfT: "Update the firmware?",
+  otaConfX: (n, s) => `“${n}” (${s}) will be transferred. The drive then restarts — a connected USB device briefly loses it, and everyone has to sign in again.`,
+  otaGo: "Update", otaSending: p => `${p} %`, otaChecking: "Verifying …",
+  logT: "Log", logX: "Helps with troubleshooting.", show: "Show", refresh: "Refresh", logEmpty: "(empty)", logErr: "Couldn’t load the log.",
+  rebootT: "Restart", rebootX: "Takes about 10 seconds. A connected USB device briefly loses the drive, and everyone has to sign in again.",
+  rebootQ: "Restart the drive?",
+  fmtT: "Format storage", fmtBtn: "Format …", whereSd: "the microSD card", whereFlash: "the internal storage",
+  fmtX: w => `Permanently erases all files on ${w} and sets the storage up again.`,
+  fmtQ: "Format the storage?", fmtQX: w => `All files on ${w} will be permanently erased. Type ERASE to confirm.`,
+  fmtWord: "ERASE", fmtConfirm: "Confirmation", fmtWrong: "Please type exactly ERASE.", fmtYes: "Erase everything", fmtOwner: "Please switch to file management first.",
+  maintT: "Maintenance mode", maintX: "Restarts the drive so that new firmware can be installed over the USB cable. This page is unreachable afterwards until the drive is unplugged and plugged back in.",
+  start: "Start …", maintQ: "Start maintenance mode?", maintYes: "Start maintenance mode",
+  today: "Today", yesterday: "Yesterday",
+  dur: s => s < 90 ? "less than a minute" : s < 5400 ? Math.round(s / 60) + " minutes" : s < 129600 ? Math.round(s / 3600) + " hours" : Math.round(s / 86400) + " days",
+  E: {
+    BAD_NAME: "This name isn’t allowed.", BAD_REQUEST: "The request was invalid.", INCOMPLETE: "The transfer was incomplete.",
+    FORBIDDEN: "Request not allowed.", NOT_FOUND: "The file or folder wasn’t found.",
+    BUSY: "A file transfer is in progress. Please wait until it has finished.",
+    HOST_ACTIVE: "The USB device is still using the drive.",
+    HOST_WRITING: "The USB device is writing to the drive. Please wait until it has finished, then try again.",
+    WRONG_OWNER: "This only works while file management is active.", NO_FS: "The storage isn’t readable and needs to be formatted.",
+    EXISTS: "A file or folder with this name already exists here.",
+    TOO_LARGE: "The file is too large — at most 4 GB per file.", BAD_TYPE: "This file type isn’t allowed.",
+    INVALID_FILE: "The file is incomplete or damaged.", IO: "Read or write error on the storage.",
+    NO_MEM: "The drive is short of memory right now. Please try again in a moment.", NO_SPACE: "Not enough free space.",
+    BAD_USER: "Invalid user name. Use 1 to 24 characters: letters, digits, dot, underscore and hyphen.",
+    BAD_PASSWORD: "The password must be 5 to 64 characters long.", IS_DIR: "That’s a folder, not a file.",
+    UNAUTHORIZED: "Please sign in.", BAD_LOGIN: "Wrong user name or password.",
+    FORBIDDEN_ROLE: "This requires administrator rights.", MUST_CHANGE_PASSWORD: "Please set your own password first.",
+    DIR_NOT_EMPTY: "The folder isn’t empty.", LAST_ADMIN: "The last administrator can’t be deleted or demoted.",
+    USER_LIMIT: "There are already 8 users. Please delete one first.", WIFI_LIMIT: "There are already 5 saved networks. Please remove one first.",
+    LOCKED: "Too many failed attempts. Please try again in 30 seconds.",
+    OFFLINE: "The drive is not responding.", HTTP: r => `Unexpected answer from the drive (${r.status}).`,
+    "pw.BAD_LOGIN": "The current password is wrong.",
+    "up.NOT_FOUND": "The target folder no longer exists — not uploaded.",
+    "mk.NOT_FOUND": "The parent folder no longer exists.",
+    "paste.BAD_NAME": "A folder can’t be pasted into itself, and paths can be at most 8 levels deep.",
+    "paste.NOT_FOUND": "The item or the target folder no longer exists.",
+    "user.NOT_FOUND": "This user no longer exists.", "user.EXISTS": "This user name is already taken (upper and lower case count as the same).",
+    "wifi.NOT_FOUND": "This network is no longer saved.", "dev.NOT_FOUND": "This device is no longer saved.", "wifi.BAD_REQUEST": "Invalid network name (1 to 32 characters) or password (empty or 8 to 63 characters).",
+    "ota.IO": "Writing the new version failed. The current version stays active.",
+    "ota.OFFLINE": "The connection was interrupted. If the file didn’t arrive completely, the current version stays active."
+  }
+}};
 
 /* ---------- preferences (per browser) ---------- */
 const pref = {
   get(k, d){ try { const v = localStorage.getItem("dd-" + k); return v === null ? d : v; } catch(e) { return d; } },
   set(k, v){ try { v === "" ? localStorage.removeItem("dd-" + k) : localStorage.setItem("dd-" + k, v); } catch(e) {} }
 };
-function applyTheme(){ const t = pref.get("theme", ""); if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
+function applyTheme(){ const th = pref.get("theme", ""); if (th) document.documentElement.dataset.theme = th; else delete document.documentElement.dataset.theme; }
 applyTheme();
 
-/* ---------- formatting ---------- */
-const nf = new Intl.NumberFormat("de-DE", {maximumFractionDigits: 1});
+/* ---------- language and formatting ---------- */
+let lang = "de", loc = "de-DE", nf, TF, DF;
+function t(k, ...a){ const v = k in L[lang] ? L[lang][k] : L.de[k]; return typeof v === "function" ? v(...a) : v === undefined ? k : v; }
+function errText(r, ctx){
+  const E = L[lang].E, v = (ctx && E[ctx + "." + r.code]) || E[r.code];
+  return typeof v === "function" ? v(r) : v || r.error || E.HTTP({status: "?"});
+}
+function setLang(l){
+  lang = l === "en" ? "en" : "de";
+  const nl = navigator.language || "";
+  loc = lang === "de" ? "de-DE" : /^en/i.test(nl) ? nl : "en-GB";
+  document.documentElement.lang = lang;
+  nf = new Intl.NumberFormat(loc, {maximumFractionDigits: 1});
+  // mtime is local wall-clock time stored as if it were UTC (the file system has no time zone).
+  TF = new Intl.DateTimeFormat(loc, {hour: "2-digit", minute: "2-digit", timeZone: "UTC"});
+  DF = new Intl.DateTimeFormat(loc, lang === "de" ? {day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC"} : {day: "numeric", month: "short", year: "numeric", timeZone: "UTC"});
+  $$("[data-t]").forEach(e => e.textContent = t(e.dataset.t));
+  $$("[data-tl]").forEach(e => e.setAttribute("aria-label", t(e.dataset.tl)));
+  $$("[data-tt]").forEach(e => { e.setAttribute("aria-label", t(e.dataset.tt)); e.title = t(e.dataset.tt); });
+  $$("[data-tp]").forEach(e => e.placeholder = t(e.dataset.tp));
+  $$("[data-lang]").forEach(e => { e.textContent = t("otherLang"); e.lang = lang === "de" ? "en" : "de"; });
+}
 function fsize(b){ const u = ["B","kB","MB","GB","TB"]; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return nf.format(b) + " " + u[i]; }
-// mtime is local wall-clock time stored as if it were UTC (the file system has no time zone).
-const TF = new Intl.DateTimeFormat("de-DE", {hour: "2-digit", minute: "2-digit", timeZone: "UTC"});
-const DF = new Intl.DateTimeFormat("de-DE", {day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC"});
-function fdate(t){
-  if (!t) return "–";
-  const d = new Date(t * 1000), now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+function fdate(s){
+  if (!s) return "–";
+  const d = new Date(s * 1000), now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
   const day = x => Math.floor(x.getTime() / 864e5), diff = day(now) - day(d);
-  if (diff === 0) return "Heute, " + TF.format(d);
-  if (diff === 1) return "Gestern, " + TF.format(d);
+  if (diff === 0) return t("today") + ", " + TF.format(d);
+  if (diff === 1) return t("yesterday") + ", " + TF.format(d);
   return DF.format(d);
 }
-function fdur(s){ if (s < 90) return "gerade eben"; if (s < 5400) return Math.round(s / 60) + " Minuten"; if (s < 129600) return Math.round(s / 3600) + " Stunden"; return Math.round(s / 86400) + " Tagen"; }
 const localSecs = ms => Math.floor(ms / 1000) - new Date(ms).getTimezoneOffset() * 60;
 const CATS = {model: "3mf stl obj step stp gcode amf", image: "jpg jpeg png gif webp svg bmp heic", doc: "pdf txt md doc docx odt xls xlsx csv ppt pptx", archive: "zip 7z rar gz tar", media: "mp3 wav flac m4a mp4 mov mkv avi"};
 function ftype(name){
@@ -459,34 +1016,69 @@ function ftype(name){
   return {cat, label: ext.slice(0, 5).toUpperCase()};
 }
 
-/* ---------- server ---------- */
+/* ---------- State ---------- */
+const S = {
+  auth: "",            // "" while starting, "login", "pw" (forced password change) or "ok"
+  me: null,            // {user, role, def}
+  why: "",             // reason shown on the sign-in view
+  st: null,            // last status from the device
+  dir: "",             // current folder, "" = main directory (mirrors the URL hash "#/a/b")
+  entries: null,       // entries of the current folder; null = not loaded
+  filesVer: 0, trunc: false,
+  listKey: "",         // change detector for reloading the folder
+  q: "", sort: {k: "name", d: 1},
+  sel: new Set(), selMode: false,   // selected names in the current folder; selection mode on phones
+  clip: null,          // {op: "cut"|"copy", dir, items: [{name, type}]}, survives navigation
+  busy: "",            // a blocking operation (copy, delete, update) runs: no polling, actions wait
+  switching: "",       // "app" | "usb" while a mode change is running
+  fails: 0,            // consecutive failed status polls
+  restart: "",         // "normal" | "download" | "format" | "update" after such a request
+  sawDown: false,      // device was unreachable since the restart request
+  ups: [], working: false, upSeq: 0,
+  wifi: null, users: null, devs: null, lockUntil: 0
+};
+const isAdmin = () => !!S.me && S.me.role === "admin";
+const roleName = r => t(r === "admin" ? "roleAdmin" : "roleUser");
+
+/* ---------- Server access. Every answer can be 401 (signed out) or 403 (role, forced password change); api() reacts to those centrally. ---------- */
 async function api(path, o = {}){
   const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), o.timeout || 20000);
-  const init = {method: o.method || "GET", cache: "no-store", signal: ctl.signal, headers: {}};
+  const init = {method: o.method || "GET", cache: "no-store", credentials: "same-origin", signal: ctl.signal, headers: {}};
   if (init.method === "POST") init.headers["X-PrintDrive"] = "1";
   if (o.body !== undefined) { init.body = o.body; init.headers["Content-Type"] = "application/x-www-form-urlencoded"; }
+  let j = null;
   try {
     const r = await fetch(path, init);
-    if (o.text) return r.ok ? await r.text() : null;
-    let j = null; try { j = await r.json(); } catch(e) {}
-    return j || {ok: false, code: "HTTP", error: "Unerwartete Antwort des Laufwerks (" + r.status + ")."};
+    if (o.text && r.ok) return await r.text();
+    try { j = await r.json(); } catch(e) {}
+    if (!j) j = {ok: false, code: "HTTP", status: r.status};
   } catch(e) {
-    return o.text ? null : {ok: false, code: "OFFLINE", error: "Keine Antwort vom Laufwerk."};
+    j = {ok: false, code: "OFFLINE"};
   } finally { clearTimeout(timer); }
+  if (!j.ok && !o.auth) authFail(j);
+  return o.text ? null : j;
 }
 const post = (path, o = {}) => api(path, Object.assign({method: "POST"}, o));
+function authFail(j){
+  if (j.code === "UNAUTHORIZED") lost();
+  else if (j.code === "MUST_CHANGE_PASSWORD" && S.auth === "ok") { S.auth = "pw"; leaveApp(t("upPw")); if (S.me) S.me.def = true; showPw(); }
+  else if (j.code === "FORBIDDEN_ROLE") recheck();
+}
 
-/* ---------- toasts & dialog ---------- */
+/* ---------- Toasts, dialogs, menus, busy overlay ---------- */
 function toast(text, err){
-  Array.from($("#toasts").children).filter(t => t.textContent === text).forEach(t => t.remove());   // same message again: replace, do not stack
+  Array.from($("#toasts").children).filter(x => x.textContent === text).forEach(x => x.remove());   // same message again: replace, do not stack
   const el = document.createElement("div");
   el.className = "toast" + (err ? " err" : ""); el.setAttribute("role", err ? "alert" : "status"); el.textContent = text;
   $("#toasts").appendChild(el);
   setTimeout(() => el.remove(), err ? 8000 : 4500);
 }
-/* ask({title, text|html, yes, no, danger, input:{label,value,placeholder,select}, run})
-   run(value) may return an error string: the dialog then stays open and shows it. */
-let dlgQueue = Promise.resolve();
+/* ask({title, text|html, yes, no, danger, input|fields, run})
+   fields: [{label, type ("text"|"password"|"check"), value, placeholder, options:[[v,l]], auto, max, raw, select}]
+   Resolves false (cancelled), true (no fields), the value (input) or the list of values (fields).
+   run(value) may return an error string: the dialog then stays open and shows it.
+   o.out receives the field values also when the dialog was cancelled. */
+let dlgQueue = Promise.resolve(), dlgCancel = null;
 function ask(o){            // dialogs share one element: show them strictly one after another
   const p = dlgQueue.then(() => askNow(o));
   dlgQueue = p.catch(() => {});
@@ -494,24 +1086,32 @@ function ask(o){            // dialogs share one element: show them strictly one
 }
 function askNow(o){
   return new Promise(resolve => {
-    const d = $("#dlg"), yes = $("#dYes"), no = $("#dNo"), inp = $("#dInput");
+    if (S.auth !== "ok") return resolve(false);          // signed out meanwhile: drop queued questions
+    const d = $("#dlg"), yes = $("#dYes"), no = $("#dNo"), fields = o.fields || (o.input ? [o.input] : []);
     $("#dTitle").textContent = o.title;
     $("#dBody").innerHTML = o.html || (o.text ? `<p>${esc(o.text)}</p>` : "");
     $("#dErr").textContent = "";
-    $("#dInputWrap").hidden = !o.input;
-    if (o.input) { $("#dLabel").textContent = o.input.label; inp.value = o.input.value || ""; inp.placeholder = o.input.placeholder || ""; }
-    yes.textContent = o.yes || "OK"; yes.className = "btn " + (o.danger ? "danger" : "primary"); yes.disabled = false;
-    no.textContent = o.no || "Abbrechen"; no.disabled = false;
+    $("#dFields").innerHTML = fields.map((f, i) => f.type === "check"
+      ? `<label class="chk"><input type="checkbox" id="dF${i}"> ${esc(f.label)}</label>`
+      : `<div><label class="lbl" for="dF${i}">${esc(f.label)}</label>${f.options
+        ? `<select class="field" id="dF${i}">${f.options.map(([v, l]) => `<option value="${esc(v)}"${v === f.value ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`
+        : `<input class="field" id="dF${i}" type="${f.type || "text"}" autocomplete="${f.auto || "off"}" spellcheck="false" autocapitalize="none"${f.max ? ` maxlength="${f.max}"` : ""}>`}</div>`).join("");
+    const els = fields.map((f, i) => { const el = $("#dF" + i); if (el.tagName === "INPUT" && f.type !== "check") { el.value = f.value || ""; el.placeholder = f.placeholder || ""; } return el; });
+    const vals = () => fields.map((f, i) => f.type === "check" ? els[i].checked : f.type === "password" || f.raw || f.options ? els[i].value : els[i].value.trim());
+    yes.textContent = o.yes || t("ok"); yes.className = "btn " + (o.danger ? "danger" : "primary"); yes.disabled = false;
+    no.textContent = o.no || t("cancel"); no.disabled = false;
     let done = false, running = false;
-    const finish = v => { if (done) return; done = true; if (d.open) d.close(); resolve(v); };
-    const cancel = () => { if (!running) finish(false); };
+    const finish = v => { if (done) return; done = true; dlgCancel = null; if (d.open) d.close(); resolve(v); };
+    const cancel = () => { if (!running) { o.out = vals(); finish(false); } };
+    dlgCancel = () => { running = false; finish(false); };
     $("#dForm").onsubmit = async e => {
       e.preventDefault();
-      const val = o.input ? inp.value.trim() : true;
       if (running) return;
+      const v = vals(), val = !fields.length ? true : o.input ? v[0] : v;
       if (o.run) {
         running = true; yes.disabled = no.disabled = true; $("#dErr").textContent = "";
         const err = await o.run(val);
+        if (done) return;                    // signed out while waiting
         running = false; yes.disabled = no.disabled = false;
         if (!d.open) {                       // the browser closed the dialog while we waited
           if (err) toast(err, true);
@@ -519,28 +1119,223 @@ function askNow(o){
         }
         if (err) { $("#dErr").textContent = err; return; }
       }
-      finish(val);
+      o.out = v; finish(val);
     };
     no.onclick = cancel;
     d.oncancel = e => { e.preventDefault(); cancel(); };
     d.onclick = e => { if (e.target === d) cancel(); };
     d.onclose = () => { if (!d.open) cancel(); };   // a late close event of the previous dialog must not close this one
     d.showModal();
-    if (o.input) { inp.focus(); if (o.input.select) inp.setSelectionRange(0, o.input.select); else inp.select(); }
+    const first = els[0];
+    if (first && first.type !== "checkbox") { first.focus(); if (first.select) { if (fields[0].select) first.setSelectionRange(0, fields[0].select); else first.select(); } }
     else (o.danger ? no : yes).focus();
   });
 }
 
-/* ---------- status polling ---------- */
+let menuFrom = null;
+function closeMenu(refocus){
+  const was = !$("#menu").hidden;
+  $("#menu").hidden = $("#scrim").hidden = true;
+  $$(".row.open").forEach(r => r.classList.remove("open"));
+  if (refocus && was && menuFrom && menuFrom.isConnected) menuFrom.focus();
+}
+/* items: [[action, icon, label, danger]]; head is HTML (shown on phones, or always with uhead) */
+function showMenu(from, ev, head, items, pick, row, uhead){
+  const m = $("#menu");
+  closeMenu(); if (row) row.classList.add("open"); menuFrom = from;
+  m.innerHTML = `<div class="mhead${uhead ? " uhead" : ""}">${head}</div>` +
+    items.map(([a, ic, l, dg]) => `<button role="menuitem" data-act="${a}"${dg ? ' class="danger"' : ""}>${icon(ic)}${esc(l)}</button>`).join("");
+  m.hidden = $("#scrim").hidden = false;
+  const r = ev && ev.clientX ? {left: ev.clientX, bottom: ev.clientY} : from.getBoundingClientRect();
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + "px";
+  m.style.top = Math.max(8, Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8)) + "px";
+  m.onclick = async e => { const b = e.target.closest("[data-act]"); if (!b) return; closeMenu(); await pick(b.dataset.act); };
+  m.onkeydown = e => {
+    const list = Array.from(m.querySelectorAll("button")), i = list.indexOf(document.activeElement);
+    const to = {ArrowDown: (i + 1) % list.length, ArrowUp: (i + list.length - 1) % list.length, Home: 0, End: list.length - 1}[e.key];
+    if (to !== undefined) { e.preventDefault(); list[to].focus(); }
+  };
+  m.querySelector("button").focus();
+}
+$("#scrim").onclick = () => closeMenu(true);
+addEventListener("resize", () => closeMenu());
+
+// While a copy runs the device answers nothing else: block the page visibly.
+function busyOn(title, text){
+  $("#busyT").textContent = title; $("#busyX").textContent = text; $("#busy").hidden = false;
+  $("#app").inert = $(".top").inert = true;
+}
+function busyOff(){ $("#busy").hidden = true; $("#app").inert = $(".top").inert = false; }
+function blocked(){
+  if (S.working) { toast(t("waitUpload")); return true; }
+  if (S.busy) { toast(t("waitBusy")); return true; }
+  return false;
+}
+
+/* ---------- Sign-in, forced password change, session loss, account ---------- */
+let bootTimer = 0, lockTimer = 0, rechecking = false;
+async function boot(){
+  clearTimeout(bootTimer);
+  if (S.auth === "ok" || S.auth === "pw") return;
+  const j = await api("/api/session", {auth: true, timeout: 8000});
+  if (S.auth === "ok" || S.auth === "pw") return;
+  if (j.ok) return signedIn(j);
+  const why = j.code === "UNAUTHORIZED" ? (S.why === "offline" ? "" : S.why) : "offline";
+  if (S.auth !== "login" || why !== S.why) showLogin(why, S.auth === "login");
+  if (j.code !== "UNAUTHORIZED") bootTimer = setTimeout(boot, 3000);
+}
+function setMe(j){
+  S.me = {user: j.user, role: j.role, def: !!j.default_password};
+  document.body.classList.toggle("role-user", j.role !== "admin");
+  $("#userAv").textContent = j.user.slice(0, 1);
+  $("#userBtn").setAttribute("aria-label", t("acctL", j.user)); $("#userBtn").title = j.user;
+}
+function signedIn(j){
+  clearTimeout(bootTimer);
+  setMe(j);
+  if (S.me.def) return showPw();
+  S.auth = "ok"; S.why = ""; S.fails = 0;
+  $("#vLogin").hidden = $("#vPw").hidden = true;
+  document.body.classList.remove("authv");
+  S.listKey = ""; S.entries = null; listSig = "";
+  route();
+  schedule(0);
+}
+function renderWhy(){
+  const n = $("#loginNote"), w = S.why;
+  n.textContent = w ? t("why_" + w) : ""; n.hidden = !w; n.className = "notice" + (w === "offline" ? "" : " info");
+}
+function showLogin(why, keepFocus){
+  S.auth = "login"; S.why = why || ""; S.me = null;
+  document.body.classList.add("authv"); document.body.classList.remove("role-user");
+  $("#vPw").hidden = true; $("#vLogin").hidden = false;
+  renderWhy();
+  if (!keepFocus) { loginMsg(""); ($("#lUser").value ? $("#lPass") : $("#lUser")).focus(); }
+}
+function showPw(){
+  S.auth = "pw";
+  document.body.classList.add("authv");
+  $("#vLogin").hidden = true; $("#vPw").hidden = false;
+  $("#pwUser").value = S.me ? S.me.user : "";
+  ["#pwOld", "#pwNew", "#pwNew2"].forEach(s => $(s).value = "");
+  $("#pwMsg").textContent = "";
+  $("#pwOld").focus();
+}
+// Leaving the app view (signed out, password change forced): stop everything that talks to the device.
+function leaveApp(msg){
+  clearTimeout(pollTimer);
+  if (dlgCancel) dlgCancel();
+  closeMenu(); busyOff();
+  S.ups.filter(u => u.state === "queued").forEach(u => endUp(u, "err", msg));
+}
+function lost(){
+  if (S.auth !== "ok") return;
+  const why = S.restart && S.restart !== "download" ? "restart" : "expired";
+  S.auth = "login"; S.restart = ""; S.sawDown = false;
+  leaveApp(t("upOut"));
+  showLogin(why);
+}
+async function recheck(){              // the role may have changed: ask the device who we are
+  if (rechecking || S.auth !== "ok") return;
+  rechecking = true;
+  const j = await api("/api/session");
+  rechecking = false;
+  if (j.ok && S.auth === "ok") { setMe(j); listSig = ""; render(); if (inSettings()) loadAdmin(); }
+}
+const loginMsg = m => { $("#loginMsg").textContent = m; };
+function lockTick(){
+  clearTimeout(lockTimer);
+  const s = Math.ceil((S.lockUntil - Date.now()) / 1000);
+  $("#loginBtn").disabled = s > 0;
+  loginMsg(s > 0 ? t("locked", s) : "");
+  if (s > 0) lockTimer = setTimeout(lockTick, 1000);
+}
+$("#loginForm").onsubmit = async e => {
+  e.preventDefault();
+  if (S.lockUntil > Date.now()) return;
+  const user = $("#lUser").value.trim(), pass = $("#lPass").value, btn = $("#loginBtn");
+  if (!user || !pass) return loginMsg(t("loginEmpty"));
+  btn.disabled = true; loginMsg("");
+  const body = {user, pass};
+  if ($("#lTrust").checked) Object.assign(body, {remember: 1, device: devLabel()});
+  const j = await post("/api/login", {auth: true, body: form(body)});
+  btn.disabled = false;
+  if (j.ok) { $("#lPass").value = ""; return signedIn(j); }
+  if (j.code === "LOCKED") { S.lockUntil = Date.now() + 30000; return lockTick(); }
+  loginMsg(errText(j, "login"));
+  if (j.code === "BAD_LOGIN") { $("#lPass").select(); $("#lPass").focus(); }
+};
+$$("[data-lang]").forEach(b => b.onclick = () => { pref.set("lang", lang === "de" ? "en" : "de"); setLang(pref.get("lang")); renderWhy(); });
+
+// Short name of this browser for the list of trusted devices (at most 32 bytes).
+function devLabel(){
+  const u = navigator.userAgent;
+  const os = /iPhone/.test(u) ? "iPhone" : /iPad/.test(u) || (/Macintosh/.test(u) && navigator.maxTouchPoints > 1) ? "iPad"
+    : /Android/.test(u) ? t(/Mobile/.test(u) ? "dPhone" : "dTab") : /Windows/.test(u) ? t("dWin") : /CrOS/.test(u) ? "Chromebook"
+    : /Mac/.test(u) ? "Mac" : /Linux/.test(u) ? t("dLinux") : "Browser";
+  const br = /Edg/.test(u) ? "Edge" : /Firefox|FxiOS/.test(u) ? "Firefox" : /OPR\//.test(u) ? "Opera" : /Chrome|CriOS/.test(u) ? "Chrome" : /Safari/.test(u) ? "Safari" : "";
+  let l = br ? os + " · " + br : os;
+  while (bytes(l) > 32) l = l.slice(0, -1);
+  return l;
+}
+function pwErr(a, b, old){
+  const n = bytes(a);
+  if (n < 5 || n > 64) return t("pwLen");
+  if (a === "admin") return t("pwAdmin");
+  if (old !== undefined && a === old) return t("pwSame");
+  return a === b ? "" : t("pwDiff");
+}
+async function savePw(old, a, b){
+  const err = !old ? t("pwNoOld") : pwErr(a, b, old);
+  if (err) return err;
+  const r = await post("/api/users/password", {auth: S.auth !== "ok", body: form({user: S.me.user, pass: a, old})});
+  if (r.ok) return "";
+  if (S.auth === "pw" && r.code === "UNAUTHORIZED") { showLogin("expired"); return ""; }
+  return errText(r, "pw");
+}
+$("#pwForm").onsubmit = async e => {
+  e.preventDefault();
+  const btn = $("#pwBtn2");
+  btn.disabled = true;
+  const err = await savePw($("#pwOld").value, $("#pwNew").value, $("#pwNew2").value);
+  btn.disabled = false;
+  if (S.auth !== "pw") return;
+  if (err) { $("#pwMsg").textContent = err; return; }
+  toast(t("pwSaved"));
+  signedIn({user: S.me.user, role: S.me.role, default_password: false});
+};
+async function logout(){
+  if (S.auth === "ok" && blocked()) return;
+  await post("/api/logout", {auth: true});
+  if (S.auth === "ok") { S.auth = "login"; leaveApp(t("upOut")); }
+  $("#lPass").value = "";
+  showLogin("out");
+}
+$("#pwOut").onclick = logout;
+async function changeOwnPw(){
+  if (blocked()) return;
+  const ok = await ask({title: t("changePw"), yes: t("save"),
+    fields: [{label: t("pwOld"), type: "password", auto: "current-password"}, {label: t("pwNew"), type: "password", auto: "new-password"}, {label: t("pwNew2"), type: "password", auto: "new-password"}],
+    run: ([o, a, b]) => savePw(o, a, b)});
+  if (ok) { toast(t("pwSaved")); if (inSettings()) loadDevices(); }
+}
+$("#userBtn").onclick = () => showMenu($("#userBtn"), null, `${esc(S.me.user)}<small>${esc(roleName(S.me.role))}</small>`,
+  [["pw", "key", t("changePw")], ["out", "logout", t("signOut")]], a => a === "pw" ? changeOwnPw() : logout(), null, true);
+$("#pwBtn").onclick = changeOwnPw;
+$("#outBtn").onclick = logout;
+
+/* ---------- Status polling and loading the current folder ---------- */
 let pollTimer = 0;
-function schedule(ms){ clearTimeout(pollTimer); pollTimer = setTimeout(poll, ms); }
+function schedule(ms){ clearTimeout(pollTimer); if (S.auth === "ok") pollTimer = setTimeout(poll, ms); }
 async function poll(){
-  if (S.working || document.hidden) return schedule(3000);   // the device handles one request at a time
+  if (S.auth !== "ok") return;
+  if (S.working || S.busy || document.hidden) return schedule(3000);   // the device handles one request at a time
   await refresh();
   schedule(S.restart || S.fails ? 2000 : 3000);
 }
 async function refresh(forceList){
   const j = await api("/api/status", {timeout: 6000});
+  if (S.auth !== "ok") return false;
   if (!j || !j.version) {
     S.fails++;
     if (S.restart) S.sawDown = true;
@@ -548,151 +1343,218 @@ async function refresh(forceList){
     return false;
   }
   // A restart counts as finished only once the device was unreachable or reports a fresh start.
-  if (S.restart && (S.sawDown || j.uptime_s < 15)) { toast("Das Laufwerk ist wieder bereit."); S.restart = ""; S.sawDown = false; }
+  if (S.restart && (S.sawDown || j.uptime_s < 15)) { toast(t("ready")); S.restart = ""; S.sawDown = false; }
   S.fails = 0; S.st = j;
-  const d = j.drive, key = [d.owner, d.fs_ok, d.files, d.free].join("|");
+  const d = j.drive, key = [d.owner, d.fs_ok, d.files, d.free, S.dir].join("|");
   if (d.owner === "app" && d.fs_ok) {
-    if (forceList || key !== S.listKey || S.files === null) await loadFiles();
-  } else S.files = null;
-  S.listKey = key;
+    if (forceList || key !== S.listKey || S.entries === null) await loadFiles();
+  } else S.entries = null;
+  S.listKey = [d.owner, d.fs_ok, d.files, d.free, S.dir].join("|");
   render();
   return true;
 }
 async function loadFiles(){
-  const j = await api("/api/files");
-  if (j.ok) { S.files = j.files; S.dirs = j.dirs || 0; S.trunc = !!j.truncated; S.filesVer++; }
-  else if (j.code !== "OFFLINE") S.files = null;
+  const dir = S.dir, j = await api("/api/files?dir=" + enc(dir));
+  if (dir !== S.dir || S.auth !== "ok") return;      // navigated away meanwhile
+  if (j.ok) { S.entries = j.entries || []; S.trunc = !!j.truncated; S.filesVer++; for (const n of S.sel) if (!entry(n)) S.sel.delete(n); }
+  else if (j.code === "NOT_FOUND" && dir) {
+    toast(t("dirGone", base(dir)), true);
+    history.replaceState(null, "", "#/"); S.dir = ""; S.entries = null; S.sel.clear(); S.selMode = false;
+    await loadFiles();
+  } else if (j.code !== "OFFLINE") S.entries = null;
 }
 
-/* ---------- rendering ---------- */
-function render(){ renderNotice(); renderStatus(); renderList(); renderSettings(); }
+/* ---------- Rendering ---------- */
+function render(){ if (S.auth !== "ok") return; renderNotice(); renderStatus(); renderList(); renderSettings(); }
 
 function renderNotice(){
   const n = $("#notice");
   let html = "", cls = "notice";
-  if (S.restart === "download") { cls += " info"; html = icon("alert") + "<span>Der Wartungsmodus ist aktiv. Zum Beenden das Laufwerk aus- und wieder einstecken.</span>"; }
-  else if (S.restart) { cls += " info"; html = '<span class="spin"></span><span>Das Laufwerk startet neu …</span>'; }
-  else if (S.fails >= 2) html = icon("alert") + "<span>Keine Antwort vom Laufwerk. Wird gerade eine große Datei übertragen, ist das normal – sonst bitte die WLAN-Verbindung prüfen. Neuer Versuch läuft …</span>";
-  else if (S.st && S.st.upload.active && !S.working) { cls += " info"; html = '<span class="spin"></span><span>Ein anderes Gerät lädt gerade eine Datei hoch. Bis das abgeschlossen ist, sind hier keine Änderungen möglich.</span>'; }
+  if (S.restart === "download") { cls += " info"; html = icon("alert") + `<span>${t("nMaint")}</span>`; }
+  else if (S.restart) { cls += " info"; html = `<span class="spin"></span><span>${t("nRestart")}</span>`; }
+  else if (S.fails >= 2) html = icon("alert") + `<span>${t("nOffline")}</span>`;
+  else if (S.st && S.st.upload.active && !S.working) { cls += " info"; html = `<span class="spin"></span><span>${t("nOther")}</span>`; }
   n.className = cls; n.innerHTML = html; n.hidden = !html;
 }
 
 function hostText(d){
-  if (!d.usb_connected) return "Kein USB-Gerät angeschlossen.";
+  if (!d.usb_connected) return t("hNone");
   const g = d.write_guard_ms || 3000;
-  if (d.host_write_idle_ms >= 0 && d.host_write_idle_ms < g) return "Das USB-Gerät schreibt gerade auf das Laufwerk.";
-  if (d.host_idle_ms >= 0 && d.host_idle_ms < g) return "Das USB-Gerät greift gerade auf das Laufwerk zu.";
-  return d.host_writable ? "Das angeschlossene USB-Gerät hat Zugriff auf die Dateien." : "Das angeschlossene USB-Gerät kann die Dateien lesen.";
+  if (d.host_write_idle_ms >= 0 && d.host_write_idle_ms < g) return t("hWriting");
+  if (d.host_idle_ms >= 0 && d.host_idle_ms < g) return t("hReading");
+  return t(d.host_writable ? "hRW" : "hRO");
 }
 const broken = d => d.needs_format || !d.fs_ok || d.owner === "none";
+const fileMode = () => !!S.st && S.st.drive.owner === "app" && !broken(S.st.drive);
 
 function renderStatus(){
   const st = S.st; if (!st) return;
   const d = st.drive, cell = $("#modeCell"), btn = $("#modeBtn");
   let mode, ic, title, sub, label = "", primary = false;
-  if (broken(d)) {
-    mode = "err"; ic = "alert"; title = "Speicher nicht lesbar";
-    sub = "Auf dem Speicher wurde kein lesbares Dateisystem gefunden.";
-  } else if (d.owner === "usb") {
-    mode = "usb"; ic = "usb"; title = "USB-Laufwerk aktiv"; sub = hostText(d);
-    label = "Dateiverwaltung aktivieren"; primary = true;
-  } else {
-    mode = "app"; ic = "folder"; title = "Dateiverwaltung aktiv";
-    sub = d.usb_connected ? "Das USB-Gerät sieht das Laufwerk im Moment nicht." : "Kein USB-Gerät angeschlossen.";
-    label = "USB-Laufwerk bereitstellen";
-  }
+  if (broken(d)) { mode = "err"; ic = "alert"; title = t("mErrT"); sub = t("mErrX"); }
+  else if (d.owner === "usb") { mode = "usb"; ic = "usb"; title = t("mUsbT"); sub = hostText(d); label = t("mToApp"); primary = true; }
+  else { mode = "app"; ic = "folder"; title = t("mAppT"); sub = t(d.usb_connected ? "hHidden" : "hNone"); label = t("mToUsb"); }
   cell.className = "cell mode mode-" + mode;
   $("#modeIcon").setAttribute("href", "#i-" + ic);
   $("#modeTitle").textContent = title; $("#modeSub").textContent = sub;
   btn.hidden = !label;
   if (label) {
     btn.className = "btn" + (primary ? " primary" : "");
-    btn.disabled = !!S.switching || S.working;
-    btn.innerHTML = S.switching ? '<span class="spin"></span>' + (S.switching === "app" ? "Wird aktiviert …" : "Wird bereitgestellt …") : esc(label);
+    btn.disabled = !!S.switching || S.working || !!S.busy;
+    btn.innerHTML = S.switching ? '<span class="spin"></span>' + t(S.switching === "app" ? "mActivating" : "mProviding") : esc(label);
     btn.onclick = mode === "usb" ? () => activate() : () => provide();
   }
   const used = Math.max(0, d.total - d.free), pct = d.total ? used / d.total * 100 : 0, bar = $("#stoBar");
-  $("#stoTitle").textContent = st.medium.sd ? "microSD-Karte" : "Interner Speicher";
-  $("#stoSub").textContent = d.total ? `${fsize(used)} von ${fsize(d.total)} belegt` : "Größe unbekannt";
+  $("#stoTitle").textContent = t(st.medium.sd ? "sd" : "flash");
+  $("#stoSub").textContent = d.total ? t("usedOf", fsize(used), fsize(d.total)) : t("sizeUnknown");
   bar.className = "bar" + (pct > 97 ? " full" : pct > 85 ? " high" : "");
   bar.firstElementChild.style.width = (used && pct < 1 ? 1 : pct).toFixed(1) + "%";
 }
 
-function visibleFiles(){
+/* ---------- breadcrumb: "Meine Dateien › … › Eltern › Ordner" (the middle collapses on phones) ---------- */
+const parseDir = h => h.startsWith("#/") ? h.slice(2).split("/").filter(Boolean).map(s => { try { return decodeURIComponent(s); } catch(e) { return s; } }).join("/") : "";
+const dirHash = p => "#/" + (p ? p.split("/").map(enc).join("/") : "");
+function renderCrumbs(){
+  const segs = S.dir ? S.dir.split("/") : [], nav = $("#crumbs"), n = segs.length;
+  $("#title").textContent = n ? segs[n - 1] : t("myFiles");
+  nav.hidden = !n;
+  if (!n) return;
+  let html = `<span class="cr"><a href="#/">${esc(t("myFiles"))}</a></span>`;
+  if (n >= 3) html += `<span class="cr ellc"><button class="ell" type="button" aria-label="${esc(t("morePath"))}" aria-haspopup="menu">…</button></span>`;
+  segs.forEach((s, i) => {
+    html += i === n - 1 ? `<span class="cr"><span aria-current="page">${esc(s)}</span></span>`
+      : `<span class="cr${n >= 3 && i < n - 2 ? " mid" : ""}"><a href="${dirHash(segs.slice(0, i + 1).join("/"))}">${esc(s)}</a></span>`;
+  });
+  if (nav.innerHTML !== html) nav.innerHTML = html;
+}
+$("#crumbs").onclick = e => {
+  const b = e.target.closest(".ell"); if (!b) return;
+  const segs = S.dir.split("/").slice(0, -2);
+  showMenu(b, null, esc(t("path")), segs.map((s, i) => [String(i), "folder", s]), a => { location.hash = dirHash(segs.slice(0, +a + 1).join("/")); });
+};
+
+/* ---------- file list ---------- */
+const entry = n => (S.entries || []).find(e => e.name === n);
+const selMode = () => S.selMode || S.sel.size > 0;
+const selItems = () => (S.entries || []).filter(e => S.sel.has(e.name));
+function visible(){
   const q = S.q.toLowerCase(), {k, d} = S.sort;
-  const list = (S.files || []).filter(f => !q || f.name.toLowerCase().includes(q));
-  const byName = (a, b) => a.name.localeCompare(b.name, "de", {numeric: true, sensitivity: "base"});
-  return list.sort((a, b) => (k === "name" ? byName(a, b) : (a[k] - b[k]) || byName(a, b)) * d);
+  const list = (S.entries || []).filter(f => !q || f.name.toLowerCase().includes(q));
+  const byName = (a, b) => a.name.localeCompare(b.name, lang, {numeric: true, sensitivity: "base"});
+  return list.sort((a, b) => ((b.type === "dir") - (a.type === "dir")) || (k === "name" ? byName(a, b) : (a[k] - b[k]) || byName(a, b)) * d);
 }
 const inSettings = () => !$("#vSettings").hidden;
 let listSig = "";
 
 function renderList(){
   const st = S.st, box = $("#list"); if (!st) return;
-  const d = st.drive, fileMode = d.owner === "app" && !broken(d);
-  const has = fileMode && S.files && S.files.length > 0;
+  const d = st.drive, fm = fileMode(), ents = S.entries;
+  const has = fm && !!ents && ents.length > 0;
+  if (!has && selMode()) { S.sel.clear(); S.selMode = false; }
   $("#searchBox").hidden = $("#sortM").hidden = !has;
-  $("#upBtn").hidden = !fileMode; $("#fab").hidden = !has || inSettings();
-  $("#upBtn").disabled = $("#fab").disabled = !!S.switching;
+  $("#upBtn").hidden = $("#mkBtn").hidden = !fm;
+  $("#upBtn").disabled = $("#fab").disabled = $("#mkBtn").disabled = !!S.switching;
+  renderCrumbs(); renderClip();
 
   // Rebuild the list only when something visible changed (keeps focus, scroll and open menus).
-  const sig = [d.owner, broken(d), d.files, S.filesVer, S.files === null, S.q, S.sort.k, S.sort.d, !!S.switching, S.working, S.dirs, S.trunc].join("|");
-  if (sig === listSig) return;
-  listSig = sig;
+  const sig = [lang, d.owner, broken(d), d.files, S.filesVer, ents === null, S.q, S.sort.k, S.sort.d, !!S.switching, S.working, S.trunc, S.dir, isAdmin()].join("|");
+  if (sig !== listSig) {
+    listSig = sig;
+    buildList(box, d, fm, ents, has);
+  }
+  renderSel();
+}
+function buildList(box, d, fm, ents, has){
   const cnt = $("#count");
-  cnt.textContent = has ? (S.q ? `${visibleFiles().length} von ${S.files.length}` : `${S.files.length}`) : "";
-  if (has) cnt.setAttribute("aria-label", S.files.length === 1 ? "1 Datei" : S.files.length + " Dateien"); else cnt.removeAttribute("aria-label");
+  cnt.textContent = has ? (S.q ? t("nOf", visible().length, ents.length) : `${ents.length}`) : "";
+  if (has) cnt.setAttribute("aria-label", t("nItems", ents.length)); else cnt.removeAttribute("aria-label");
 
   if (broken(d)) {
-    box.innerHTML = `<div class="state"><div class="big">${icon("alert")}</div><h2>Der Speicher muss eingerichtet werden</h2>
-      <p>Das Laufwerk kann den Speicher nicht lesen. In den Einstellungen lässt er sich neu formatieren – dabei gehen alle vorhandenen Daten verloren.</p>
-      <div class="acts"><a class="btn primary" href="#s-danger">Zum Formatieren</a></div></div>`;
+    box.innerHTML = `<div class="state"><div class="big">${icon("alert")}</div><h2>${t("brokenT")}</h2>
+      <p>${t(isAdmin() ? "brokenX" : "brokenUser")}</p>${isAdmin() ? `<div class="acts"><a class="btn primary" href="#s-danger">${t("toFormat")}</a></div>` : ""}</div>`;
     return;
   }
-  if (!fileMode) {
-    const n = d.files;
-    box.innerHTML = `<div class="state"><div class="big">${icon("lock")}</div><h2>Die Dateien gehören gerade dem USB-Gerät</h2>
-      <p>Damit nichts durcheinandergerät, kann immer nur eine Seite auf das Laufwerk zugreifen. Aktiviere die Dateiverwaltung, um Dateien anzusehen, hochzuladen oder zu löschen – das USB-Gerät sieht das Laufwerk so lange nicht.${n ? ` Zuletzt ${n === 1 ? "war 1 Datei" : "waren " + n + " Dateien"} gespeichert.` : ""}</p>
-      <div class="acts"><button class="btn" id="lockedUp" ${S.switching || S.working ? "disabled" : ""}>${icon("upload")}Dateien hochladen</button></div></div>`;
+  if (!fm) {
+    box.innerHTML = `<div class="state"><div class="big">${icon("lock")}</div><h2>${t("lockedT")}</h2><p>${esc(t("lockedX", d.files))}</p>
+      <div class="acts"><button class="btn" id="lockedUp" ${S.switching || S.working ? "disabled" : ""}>${icon("upload")}${t("uploadFiles")}</button></div></div>`;
     $("#lockedUp").onclick = pick;
     return;
   }
-  if (S.files === null) { box.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>'; return; }
-  if (!S.files.length) {
-    box.innerHTML = `<div class="state"><div class="big">${icon("folder")}</div><h2>Noch keine Dateien</h2>
-      <p>Lade Dateien hoch, um sie auf dem Laufwerk zu speichern. Am Computer kannst du sie auch einfach in dieses Fenster ziehen.</p>
-      <div class="acts"><button class="btn primary" id="emptyUp">${icon("upload")}Dateien hochladen</button></div></div>` + notes();
+  if (ents === null) { box.innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel"></div>'; return; }
+  if (!ents.length) {
+    const root = !S.dir;
+    box.innerHTML = `<div class="state"><div class="big">${icon("folder")}</div><h2>${t(root ? "emptyT" : "emptyDirT")}</h2><p>${t(root ? "emptyX" : "emptyDirX")}</p>
+      <div class="acts"><button class="btn primary" id="emptyUp">${icon("upload")}${t("uploadFiles")}</button>${root ? `<button class="btn" id="emptyMk">${icon("newdir")}${t("newDir")}</button>` : ""}</div></div>`;
     $("#emptyUp").onclick = pick;
+    if (root) $("#emptyMk").onclick = mkdir;
     return;
   }
-  const list = visibleFiles(), {k, d: dir} = S.sort;
+  const list = visible(), {k, d: dir} = S.sort;
   const col = (key, label, cls) => {
     const on = k === key;
-    return `<button data-sort="${key}" class="${cls || ""}${on ? " on" : ""}" ${on ? `data-dir="${dir > 0 ? "asc" : "desc"}"` : ""} aria-label="${label}, ${on ? (dir > 0 ? "aufsteigend sortiert" : "absteigend sortiert") : "sortieren"}">${label}${on ? icon(dir > 0 ? "up" : "down") : ""}</button>`;
+    return `<button data-sort="${key}" class="${cls || ""}${on ? " on" : ""}" aria-label="${label}, ${on ? t(dir > 0 ? "sortAsc" : "sortDesc") : t("sortBy")}">${label}${on ? icon(dir > 0 ? "up" : "down") : ""}</button>`;
   };
-  let html = `<div class="cols"><span></span>${col("name", "Name")}${col("size", "Größe", "num")}${col("mtime", "Geändert")}<span></span></div>`;
-  if (!list.length) html += `<div class="state"><h2>Keine Treffer</h2><p>Keine Datei enthält „${esc(S.q)}“.</p></div>`;
+  let html = `<div class="cols"><span class="lead"><input type="checkbox" class="ck" id="ckAll" aria-label="${esc(t("selectAll"))}"></span>${col("name", t("colName"))}${col("size", t("colSize"), "num")}${col("mtime", t("colDate"))}<span></span></div>`;
+  if (!list.length) html += `<div class="state"><h2>${t("noHits")}</h2><p>${esc(t("noHitsX", S.q))}</p></div>`;
   for (const f of list) {
-    const t = ftype(f.name), when = fdate(f.mtime), sz = fsize(f.size);
-    // Keep the extension visible when a long name is shortened.
-    const dot = f.name.lastIndexOf("."), split = dot > 0 && f.name.length - dot <= 8;
-    html += `<div class="row" data-name="${esc(f.name)}" title="${esc(f.name)}">
-      <span class="ficon ${t.cat}${t.label.length > 4 ? " long" : ""}">${t.label ? esc(t.label) : icon("file")}</span>
-      <span><span class="name"><span class="nb">${esc(split ? f.name.slice(0, dot) : f.name)}</span>${split ? `<span class="ne">${esc(f.name.slice(dot))}</span>` : ""}</span><span class="meta">${sz}${f.mtime ? " · " + when : ""}</span></span>
+    const isDir = f.type === "dir", ft = ftype(f.name), when = isDir ? (f.mtime ? fdate(f.mtime) : "") : fdate(f.mtime), sz = isDir ? "" : fsize(f.size);
+    // Keep the extension visible when a long file name is shortened.
+    const dot = f.name.lastIndexOf("."), split = !isDir && dot > 0 && f.name.length - dot <= 8;
+    const nm = `<span class="nb">${esc(split ? f.name.slice(0, dot) : f.name)}</span>${split ? `<span class="ne">${esc(f.name.slice(dot))}</span>` : ""}`;
+    html += `<div class="row${isDir ? " dir" : ""}" data-name="${esc(f.name)}" title="${esc(f.name)}">
+      <span class="lead">${isDir ? `<span class="ficon dir">${icon("folder")}</span>` : `<span class="ficon ${ft.cat}${ft.label.length > 4 ? " long" : ""}">${ft.label ? esc(ft.label) : icon("file")}</span>`}<input type="checkbox" class="ck" aria-label="${esc(t("selectX", f.name))}"></span>
+      <span>${isDir ? `<a class="name" href="${dirHash(join(S.dir, f.name))}">${nm}</a>` : `<span class="name">${nm}</span>`}<span class="meta">${isDir ? t("folder") + (when ? " · " + when : "") : sz + (f.mtime ? " · " + when : "")}</span></span>
       <span class="num">${sz}</span><span class="date">${when}</span>
-      <button class="icon-btn" data-more aria-haspopup="menu" aria-label="Aktionen für ${esc(f.name)}">${icon("more")}</button></div>`;
+      <button class="icon-btn" data-more aria-haspopup="menu" aria-label="${esc(t("actionsFor", f.name))}">${icon("more")}</button></div>`;
   }
-  box.innerHTML = html + notes();
-}
-function notes(){
-  let s = "";
-  if (S.dirs) s += `<p class="hint">${S.dirs === 1 ? "1 Ordner wird" : S.dirs + " Ordner werden"} hier nicht angezeigt. Ordner lassen sich bisher nur am USB-Gerät öffnen.</p>`;
-  if (S.trunc) s += '<p class="hint">Es sind sehr viele Dateien gespeichert – die Liste zeigt nur einen Teil davon.</p>';
-  return s;
+  if (S.trunc) html += `<p class="hint">${t("truncHint")}</p>`;
+  box.innerHTML = html;
 }
 
-/* ---------- list interaction ---------- */
+/* ---------- selection and clipboard bars ---------- */
+function renderSel(){
+  const sm = selMode(), n = S.sel.size, list = $("#list");
+  list.classList.toggle("selmode", sm);
+  $("#toolbar").hidden = sm; $("#selbar").hidden = !sm;
+  $("#fab").hidden = !fileMode() || !S.entries || !S.entries.length || inSettings() || sm;
+  for (const r of list.querySelectorAll(".row")) {
+    const on = S.sel.has(r.dataset.name);
+    r.classList.toggle("sel", on); r.querySelector(".ck").checked = on;
+  }
+  const vis = S.entries ? visible() : [], all = vis.length > 0 && vis.every(e => S.sel.has(e.name)), ca = $("#ckAll");
+  if (ca) { ca.checked = all; ca.indeterminate = n > 0 && !all; }
+  $("#selCount").textContent = t("nSel", n);
+  const items = selItems();
+  $("#sDl").hidden = !(items.length === 1 && items[0].type !== "dir");
+  $("#sCut").disabled = $("#sCopy").disabled = $("#sDel").disabled = !n;
+  $("#sAll").disabled = all;
+}
+function toggleSel(name, on){
+  if (on === undefined) on = !S.sel.has(name);
+  if (on) S.sel.add(name); else S.sel.delete(name);
+  renderSel();
+}
+function clearSel(){ S.sel.clear(); S.selMode = false; renderSel(); }
+function renderClip(){
+  const c = S.clip, bar = $("#clipbar");
+  bar.hidden = !c || !fileMode() || !S.entries;
+  if (!c) return;
+  $("#clipTxt").textContent = t(c.op === "cut" ? "clipCut" : "clipCopied", c.items.length);
+  bar.title = c.items.map(i => i.name).join(", ");
+}
+$("#sX").onclick = () => { clearSel(); const b = $("#upBtn"); if (b && !b.hidden) b.focus(); };
+$("#sAll").onclick = () => { visible().forEach(e => S.sel.add(e.name)); renderSel(); };
+$("#sDl").onclick = () => { const i = selItems()[0]; if (i) download(i.name); };
+$("#sCut").onclick = () => clipSet("cut", [...S.sel]);
+$("#sCopy").onclick = () => clipSet("copy", [...S.sel]);
+$("#sDel").onclick = () => del([...S.sel]);
+$("#clipPaste").onclick = paste;
+$("#clipX").onclick = () => { S.clip = null; renderClip(); };
+
+/* ---------- list interaction: click, keyboard, long press ---------- */
+let lpTimer = 0, lpFired = false, lpXY = null, lastPointer = "mouse";
 $("#list").addEventListener("click", e => {
+  if (lpFired) { lpFired = false; e.preventDefault(); return; }
   const sortBtn = e.target.closest("[data-sort]");
   if (sortBtn) {
     const key = sortBtn.dataset.sort;
@@ -700,86 +1562,197 @@ $("#list").addEventListener("click", e => {
     $("#sortM").value = S.sort.k + "," + S.sort.d;
     return renderList();
   }
-  const row = e.target.closest(".row");
-  if (row) openMenu(row, e.target.closest("[data-more]") ? null : e);
+  if (e.target.id === "ckAll") {
+    if (e.target.checked) visible().forEach(x => S.sel.add(x.name)); else S.sel.clear();
+    return renderSel();
+  }
+  const row = e.target.closest(".row"); if (!row) return;
+  const name = row.dataset.name;
+  if (e.target.classList.contains("ck")) return toggleSel(name, e.target.checked);
+  if (e.target.closest("[data-more]")) return itemMenu(row, null);
+  if (selMode() || e.ctrlKey || e.metaKey) { e.preventDefault(); return toggleSel(name); }
+  if (row.classList.contains("dir")) { if (!e.target.closest("a")) location.hash = dirHash(join(S.dir, name)); return; }
+  itemMenu(row, e);
 });
-$("#list").addEventListener("contextmenu", e => { const row = e.target.closest(".row"); if (row) { e.preventDefault(); openMenu(row, e); } });
+$("#list").addEventListener("contextmenu", e => {
+  const row = e.target.closest(".row"); if (!row) return;
+  e.preventDefault();
+  if (lastPointer === "mouse" && !lpFired) itemMenu(row, e);     // touch: the long press selects instead
+});
+$("#list").addEventListener("pointerdown", e => {
+  lastPointer = e.pointerType; lpFired = false; clearTimeout(lpTimer);
+  if (e.pointerType === "mouse") return;
+  const row = e.target.closest(".row");
+  if (!row || e.target.closest("[data-more]")) return;
+  lpXY = [e.clientX, e.clientY];
+  lpTimer = setTimeout(() => { lpFired = true; S.selMode = true; toggleSel(row.dataset.name, true); if (navigator.vibrate) navigator.vibrate(15); }, 520);
+});
+$("#list").addEventListener("pointermove", e => { if (lpXY && Math.hypot(e.clientX - lpXY[0], e.clientY - lpXY[1]) > 10) clearTimeout(lpTimer); });
+["pointerup", "pointercancel"].forEach(n => $("#list").addEventListener(n, () => clearTimeout(lpTimer)));
 $("#search").addEventListener("input", e => { S.q = e.target.value.trim(); renderList(); });
 $("#sortM").addEventListener("change", e => { const [k, d] = e.target.value.split(","); S.sort = {k, d: +d}; renderList(); });
+addEventListener("keydown", e => {
+  if (e.key !== "Escape" || $("#dlg").open) return;
+  if (!$("#menu").hidden) return closeMenu(true);
+  if (selMode() && !inSettings()) clearSel();
+});
 
-let menuFrom = null;
-const rowButton = name => { const r = Array.from(document.querySelectorAll(".row")).find(x => x.dataset.name === name); return r ? r.querySelector("[data-more]") : null; };
-function closeMenu(refocus){
-  const was = !$("#menu").hidden;
-  $("#menu").hidden = $("#scrim").hidden = true;
-  document.querySelectorAll(".row.open").forEach(r => r.classList.remove("open"));
-  if (refocus && was && menuFrom && menuFrom.isConnected) menuFrom.focus();
-}
-function openMenu(row, ev){
-  const name = row.dataset.name, m = $("#menu");
-  closeMenu(); row.classList.add("open"); menuFrom = row.querySelector("[data-more]");
-  m.innerHTML = `<div class="mhead">${esc(name)}</div>
-    <button role="menuitem" data-act="dl">${icon("download")}Herunterladen</button>
-    <button role="menuitem" data-act="ren">${icon("edit")}Umbenennen</button>
-    <button role="menuitem" data-act="del" class="danger">${icon("trash")}Löschen</button>`;
-  m.hidden = $("#scrim").hidden = false;
-  const r = ev && ev.clientX ? {left: ev.clientX, bottom: ev.clientY} : row.querySelector("[data-more]").getBoundingClientRect();
-  m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + "px";
-  m.style.top = Math.max(8, Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8)) + "px";
-  m.onclick = async e => {
-    const b = e.target.closest("[data-act]"); if (!b) return;
-    closeMenu();
-    const renamed = await ({dl: download, ren: renameFile, del: deleteFile})[b.dataset.act](name);
-    const back = rowButton(typeof renamed === "string" ? renamed : name);   // focus the file if it still exists
+const rowOf = name => $$(".row").find(x => x.dataset.name === name);
+const rowButton = name => { const r = rowOf(name); return r ? r.querySelector("[data-more]") : null; };
+function itemMenu(row, ev){
+  const name = row.dataset.name, isDir = row.classList.contains("dir");
+  const items = [isDir ? ["open", "folder", t("open")] : ["dl", "download", t("download")],
+    ["ren", "edit", t("rename")], ["cut", "cut", t("cut")], ["copy", "copy", t("copy")], ["sel", "check", t("select")], ["del", "trash", t("delete"), 1]];
+  showMenu(row.querySelector("[data-more]"), ev, esc(name), items, async a => {
+    if (a === "open") { location.hash = dirHash(join(S.dir, name)); return; }
+    if (a === "cut" || a === "copy") return clipSet(a, [name]);
+    if (a === "sel") { S.selMode = true; toggleSel(name, true); const r = rowOf(name); if (r) r.querySelector(".ck").focus(); return; }
+    const res = a === "dl" ? download(name) : a === "ren" ? await rename(name) : await del([name]);
+    const back = rowButton(typeof res === "string" ? res : name);   // focus the item if it still exists
     if (back) back.focus();
-  };
-  m.onkeydown = e => {
-    const items = Array.from(m.querySelectorAll("button")), i = items.indexOf(document.activeElement);
-    const to = {ArrowDown: (i + 1) % items.length, ArrowUp: (i + items.length - 1) % items.length, Home: 0, End: items.length - 1}[e.key];
-    if (to !== undefined) { e.preventDefault(); items[to].focus(); }
-  };
-  m.querySelector("button").focus();
+  }, row);
 }
-$("#scrim").onclick = () => closeMenu(true);
-addEventListener("keydown", e => { if (e.key === "Escape") closeMenu(true); });
-addEventListener("resize", () => closeMenu());
 
-/* ---------- file actions ---------- */
-// The device handles one request at a time: during an upload nothing else can be answered.
-function uploading(){ if (!S.working) return false; toast("Bitte warte, bis der Upload abgeschlossen ist."); return true; }
+/* ---------- File and folder actions ---------- */
 function download(name){
-  if (uploading()) return;
+  if (blocked()) return;
   const a = document.createElement("a");
-  a.href = "/api/download?name=" + enc(name); a.download = name;
+  a.href = "/api/download?path=" + enc(join(S.dir, name)); a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
 }
 const BAD_CHARS = /[\/\\:*?"<>|\x00-\x1f]/;
-async function renameFile(name){
-  if (uploading()) return;
-  const dot = name.lastIndexOf(".");
+function nameErr(v, dir){
+  if (!v) return t("nameEmpty");
+  if (BAD_CHARS.test(v) || /^[. ]|[. ]$/.test(v)) return t("nameChars");
+  if (bytes(v) > 120) return t("nameLong");
+  const p = join(dir, v);
+  return bytes(p) > 240 || p.split("/").length > 8 ? t("pathLong") : "";
+}
+async function rename(name){
+  if (blocked()) return;
+  const dir = S.dir, e = entry(name), isDir = !!e && e.type === "dir", dot = name.lastIndexOf(".");
   const to = await ask({
-    title: "Datei umbenennen", yes: "Umbenennen",
-    input: {label: "Neuer Name", value: name, select: dot > 0 ? dot : 0},
+    title: t(isDir ? "renDirT" : "renFileT"), yes: t("rename"),
+    input: {label: t("newName"), value: name, select: !isDir && dot > 0 ? dot : 0},
     run: async v => {
-      if (!v) return "Bitte einen Namen eingeben.";
       if (v === name) return "";
-      if (new TextEncoder().encode(v).length > 120) return "Der Name ist zu lang. Bitte kürzen – Umlaute und Sonderzeichen zählen doppelt.";
-      if (BAD_CHARS.test(v) || /^[. ]|[. ]$/.test(v)) return 'Der Name darf nicht mit Punkt oder Leerzeichen beginnen oder enden und keines dieser Zeichen enthalten: / \\ : * ? " < > |';
-      const r = await post(`/api/rename?name=${enc(name)}&to=${enc(v)}`);
-      if (r.ok) return "";
-      return r.code === "EXISTS" ? "Eine Datei mit diesem Namen gibt es bereits." : r.error;
+      const err = nameErr(v, dir); if (err) return err;
+      const r = await post(`/api/move?from=${enc(join(dir, name))}&to=${enc(join(dir, v))}`);
+      return r.ok ? "" : errText(r, "ren");
     }
   });
-  if (to && to !== name) { await refresh(true); toast("Umbenannt in „" + to + "“."); return to; }
+  if (to && to !== name) { await refresh(true); toast(t("renamed", to)); return to; }
 }
-async function deleteFile(name){
-  if (uploading()) return;
-  const ok = await ask({title: "Datei löschen?", text: `„${name}“ wird endgültig vom Laufwerk gelöscht.`, yes: "Löschen", danger: true,
-    run: async () => { const r = await post("/api/delete?name=" + enc(name)); return r.ok ? "" : r.error; }});
-  if (ok) { await refresh(true); toast("Gelöscht."); }
+async function mkdir(){
+  if (blocked()) return;
+  const dir = S.dir;
+  const n = await ask({title: t("newDir"), yes: t("create"), input: {label: t("name"), placeholder: t("newDir")},
+    run: async v => { const err = nameErr(v, dir); if (err) return err;
+      const r = await post("/api/mkdir?path=" + enc(join(dir, v))); return r.ok ? "" : errText(r, "mk"); }});
+  if (n) { await refresh(true); toast(t("dirMade", n)); const b = rowButton(n); if (b) b.focus(); }
+}
+$("#mkBtn").onclick = mkdir;
+const delPath = (dir, i) => `/api/delete?path=${enc(join(dir, i.name))}${i.type === "dir" ? "&recursive=1" : ""}`;
+async function del(names){
+  if (blocked()) return;
+  const dir = S.dir, items = names.map(n => entry(n)).filter(Boolean);
+  if (!items.length) return;
+  if (items.length === 1) {
+    const i = items[0], isDir = i.type === "dir";
+    const ok = await ask({title: isDir ? t("delDirT", i.name) : t("delFileT"), text: isDir ? t("delDirX") : t("delFileX", i.name), yes: t("delete"), danger: true,
+      run: async () => {
+        S.busy = "del";
+        try { const r = await post(delPath(dir, i), {timeout: 180000}); return r.ok ? "" : errText(r); }
+        finally { S.busy = ""; }
+      }});
+    if (ok) { S.sel.delete(i.name); await refresh(true); toast(t("deleted")); }
+    return;
+  }
+  const dirs = items.filter(i => i.type === "dir").length;
+  if (!await ask({title: t("delManyT", items.length), text: t("delManyX", dirs), yes: t("delete"), danger: true})) return;
+  let done = 0, err = "";
+  S.busy = "del";
+  try {
+    for (const [n, i] of items.entries()) {
+      busyOn(t("deleting", n + 1, items.length), t("busyX"));
+      const r = await post(delPath(dir, i), {timeout: 180000});
+      if (r.ok) { done++; S.sel.delete(i.name); }
+      else { err = `${i.name}: ${errText(r)}`; if (r.code !== "NOT_FOUND") break; }
+    }
+  } finally { S.busy = ""; busyOff(); }
+  if (S.auth !== "ok") return;
+  if (!S.sel.size) S.selMode = false;
+  await refresh(true);
+  if (done) toast(t("deletedN", done));
+  if (err) toast(err, true);
 }
 
-/* ---------- switching between USB drive and file management ---------- */
+/* ---------- clipboard: cut / copy, then paste in another folder ---------- */
+function clipSet(op, names){
+  if (blocked()) return;
+  const items = names.map(n => entry(n)).filter(Boolean).map(e => ({name: e.name, type: e.type}));
+  if (!items.length) return;
+  S.clip = {op, dir: S.dir, items};
+  S.sel.clear(); S.selMode = false;
+  renderList();
+  $("#clipPaste").focus();
+}
+function freeName(name, taken, isDir){
+  const dot = name.lastIndexOf("."), split = !isDir && dot > 0;
+  const stem = split ? name.slice(0, dot) : name, ext = split ? name.slice(dot) : "";
+  for (let n = 2; ; n++) { const c = `${stem} (${n})${ext}`; if (!taken.has(c.toLowerCase())) return c; }
+}
+const FATAL = ["NO_SPACE", "OFFLINE", "WRONG_OWNER", "BUSY", "IO", "UNAUTHORIZED", "MUST_CHANGE_PASSWORD", "FORBIDDEN_ROLE", "HTTP"];
+async function paste(){
+  const c = S.clip; if (!c || blocked()) return;
+  const dest = S.dir, copy = c.op === "copy";
+  if (!copy && c.dir === dest) return toast(t("alreadyHere"));
+  const taken = new Set((S.entries || []).map(e => e.name.toLowerCase()));
+  let done = 0, skipped = 0, all = null, stop = false;
+  const errs = [], left = [];
+  S.busy = c.op;
+  try {
+    for (let i = 0; i < c.items.length && !stop; i++) {
+      const it = c.items[i], from = join(c.dir, it.name);
+      if (it.type === "dir" && (dest === from || dest.startsWith(from + "/"))) { errs.push(t("intoSelf", it.name)); left.push(it); continue; }
+      let name = it.name;
+      for (let tries = 0; ; tries++) {
+        const to = join(dest, name);
+        if (bytes(to) > 240 || to.split("/").length > 8) { errs.push(`${it.name}: ${t("pathLong")}`); left.push(it); break; }
+        if (copy) busyOn(t("copying", name, i + 1, c.items.length), t("copyingX"));
+        const r = await post(`/api/${copy ? "copy" : "move"}?from=${enc(from)}&to=${enc(to)}`, {timeout: copy ? 3600000 : 60000});
+        busyOff();
+        if (r.ok) { done++; taken.add(name.toLowerCase()); break; }
+        if (r.code === "EXISTS" && tries < 50) {
+          taken.add(name.toLowerCase());
+          let choice = all;
+          if (!choice) {
+            const o = {title: t("existsT", name), text: t("existsX"), yes: t("newNameBtn"), no: t("skip"),
+              fields: c.items.length - i > 1 ? [{type: "check", label: t("forAll")}] : []};
+            const res = await ask(o);
+            if (S.auth !== "ok") { stop = true; break; }
+            choice = res ? "rename" : "skip";
+            if (o.out && o.out[0]) all = choice;
+          }
+          if (choice === "skip") { skipped++; left.push(it); break; }
+          name = freeName(it.name, taken, it.type === "dir");
+          continue;
+        }
+        errs.push(`${it.name}: ${errText(r, "paste")}`); left.push(it);
+        if (FATAL.includes(r.code)) stop = true;
+        break;
+      }
+    }
+  } finally { S.busy = ""; busyOff(); }
+  if (S.auth !== "ok") return;
+  if (!copy) S.clip = left.length && done === 0 ? c : null;   // moved items are gone from the source
+  await refresh(true);
+  const msg = (done ? t(copy ? "copiedN" : "movedN", done) : "") + (skipped ? (done ? " " : "") + t("skippedN", skipped) : "");
+  if (msg) toast(msg);
+  if (errs.length) toast(errs.slice(0, 3).join(" "), true);
+}
+
+/* ---------- Switching between USB drive and file management (unchanged safety flow) ---------- */
 async function activate(){
   if (S.switching) return false;
   S.switching = "app"; render();
@@ -787,18 +1760,12 @@ async function activate(){
     let r = await post("/api/mode?target=app");
     if (r.code === "HOST_ACTIVE") {
       S.switching = ""; render();
-      const ok = await ask({
-        title: "Laufwerk vom USB-Gerät trennen?", yes: "Trennen und fortfahren", danger: true,
-        html: "<p>Das angeschlossene USB-Gerät verwendet das Laufwerk noch. Beim Trennen wird ein laufender Zugriff unterbrochen – zum Beispiel ein Druck oder ein Kopiervorgang von diesem Laufwerk.</p><p>Sicherer ist es, das Laufwerk zuerst am USB-Gerät auszuwerfen. Dann entfällt diese Rückfrage.</p>"
-      });
+      const ok = await ask({title: t("hostActT"), yes: t("hostActYes"), danger: true, html: t("hostActX")});
       if (!ok) return false;
       S.switching = "app"; render();
       r = await post("/api/mode?target=app&force=1");
     }
-    if (!r.ok) {
-      toast(r.code === "HOST_WRITING" ? "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warte, bis es fertig ist, und versuche es dann erneut." : r.error, true);
-      return false;
-    }
+    if (!r.ok) { if (S.auth === "ok") toast(errText(r), true); return false; }
     await refresh(true);
     return true;
   } finally { S.switching = ""; render(); }
@@ -808,14 +1775,14 @@ async function provide(quiet){
   S.switching = "usb"; render();
   try {
     const r = await post("/api/mode?target=usb");
-    if (!r.ok) { toast(r.error, true); return false; }
+    if (!r.ok) { if (S.auth === "ok") toast(errText(r), true); return false; }
     await refresh();
-    if (!quiet) toast("Das USB-Laufwerk ist bereitgestellt.");
+    if (!quiet) toast(t("provided"));
     return true;
   } finally { S.switching = ""; render(); }
 }
 
-/* ---------- uploads ---------- */
+/* ---------- Uploads into the current folder ---------- */
 function pick(){ $("#picker").click(); }
 $("#upBtn").onclick = $("#fab").onclick = $("#upMore").onclick = pick;
 $("#picker").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
@@ -823,7 +1790,8 @@ $("#picker").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
 function addFiles(list){
   const files = Array.from(list || []);
   if (!files.length) return;
-  for (const f of files) S.ups.push({id: ++S.upSeq, file: f, name: f.name, size: f.size, state: "queued", pct: 0, msg: "Wartet"});
+  if (S.busy) return toast(t("waitBusy"));
+  for (const f of files) S.ups.push({id: ++S.upSeq, file: f, name: f.name, dir: S.dir, size: f.size, state: "queued", pct: 0, msg: t("upQueued")});
   renderUploads();
   work();
 }
@@ -835,21 +1803,22 @@ async function work(){
   let okCount = 0, tookOver = false;
   const failQueued = msg => S.ups.filter(u => u.state === "queued").forEach(u => endUp(u, "err", msg));
   try {
-    if (!await refresh()) failQueued("Keine Verbindung zum Laufwerk – nicht hochgeladen.");
-    else if (broken(S.st.drive)) failQueued("Der Speicher ist nicht lesbar – nicht hochgeladen.");
+    if (!await refresh()) failQueued(t(S.auth === "ok" ? "upNoConn" : "upOut"));
+    else if (broken(S.st.drive)) failQueued(t("upBroken"));
     else {
       if (S.st.drive.owner === "usb") {
         if (await activate()) tookOver = true;
-        else failQueued("Nicht hochgeladen – die Dateiverwaltung wurde nicht aktiviert.");
+        else failQueued(t(S.auth === "ok" ? "upNoApp" : "upOut"));
       }
       let u;
-      while ((u = S.ups.find(x => x.state === "queued"))) { await uploadOne(u); if (u.state === "done") okCount++; }
+      while (S.auth === "ok" && (u = S.ups.find(x => x.state === "queued"))) { await uploadOne(u); if (u.state === "done") okCount++; }
     }
   } finally { S.working = false; }
+  if (S.auth !== "ok") { failQueued(t("upOut")); return; }
   await refresh(true);
   if (okCount) {
-    const what = okCount === 1 ? "1 Datei gespeichert." : okCount + " Dateien gespeichert.";
-    if (tookOver && pref.get("auto", "1") === "1") toast(await provide(true) ? what + " Das USB-Laufwerk ist wieder bereitgestellt." : what);
+    const what = t("savedN", okCount);
+    if (tookOver && pref.get("auto", "1") === "1") toast(await provide(true) ? what + " " + t("reprovided") : what);
     else toast(what);
   }
   render();
@@ -857,51 +1826,60 @@ async function work(){
   setTimeout(() => { if (!S.working && S.ups.length && !S.ups.some(u => u.state === "err")) { S.ups = []; renderUploads(); } }, 6000);
 }
 
+// POST a raw body with progress; resolves the parsed answer, {code:"OFFLINE"} or {code:"ABORT"}.
+function xpost(url, body, onprog, keep){
+  return new Promise(resolve => {
+    const x = new XMLHttpRequest();
+    if (keep) keep(x);
+    x.open("POST", url);
+    x.setRequestHeader("X-PrintDrive", "1");
+    x.setRequestHeader("Content-Type", "application/octet-stream");
+    x.upload.onprogress = e => { if (e.lengthComputable) onprog(e.loaded, e.total); };
+    x.onload = () => { let j = null; try { j = JSON.parse(x.responseText); } catch(e) {} resolve(j || {ok: false, code: "HTTP", status: x.status}); };
+    x.onerror = () => resolve({ok: false, code: "OFFLINE"});
+    x.onabort = () => resolve({ok: false, code: "ABORT"});
+    x.send(body);
+  });
+}
+
+function upErr(r, sent){
+  const k = {UNAUTHORIZED: "upOut", MUST_CHANGE_PASSWORD: "upPw", OFFLINE: sent ? "upLost" : "upNoConn", HTTP: "upBad"}[r.code];
+  return k ? t(k) : errText(r, "up");
+}
 async function uploadOne(u){
   const types = S.st.types;
-  if (types !== "all" && !types.split(",").some(t => u.name.toLowerCase().endsWith(t))) return endUp(u, "err", "Dieser Dateityp ist nicht erlaubt (möglich: " + types.replace(/,/g, ", ") + ").");
-  if (!u.size) return endUp(u, "err", "Die Datei ist leer.");
-  if (u.size >= GIB4) return endUp(u, "err", "Zu groß – möglich sind höchstens 4 GB pro Datei.");
-  u.state = "check"; u.msg = "Wird geprüft …"; renderUploads();
-  const q = `name=${enc(u.name)}&size=${u.size}`;
+  if (types !== "all" && !types.split(",").some(x => u.name.toLowerCase().endsWith(x))) return endUp(u, "err", t("upType", types.replace(/,/g, ", ")));
+  if (!u.size) return endUp(u, "err", t("upEmpty"));
+  if (u.size >= GIB4) return endUp(u, "err", t("upBig"));
+  const bad = nameErr(u.name, u.dir); if (bad) return endUp(u, "err", bad);
+  u.state = "check"; u.msg = t("upChecking"); renderUploads();
+  const q = `path=${enc(join(u.dir, u.name))}&size=${u.size}`;
   let over = 0, c = await post(`/api/upload/check?${q}&overwrite=0`);
   if (c.code === "EXISTS") {
-    const ok = await ask({title: "Vorhandene Datei ersetzen?", text: `„${u.name}“ gibt es auf dem Laufwerk bereits.`, yes: "Ersetzen", no: "Überspringen", danger: true});
-    if (!ok) return endUp(u, "skip", "Übersprungen");
+    const ok = await ask({title: t("upExistsT"), text: t("upExistsX", u.name), yes: t("replace"), no: t("skip"), danger: true});
+    if (S.auth !== "ok") return endUp(u, "err", t("upOut"));
+    if (!ok) return endUp(u, "skip", t("upSkipped"));
     over = 1; c = await post(`/api/upload/check?${q}&overwrite=1`);
   }
-  if (!c.ok) return endUp(u, "err", c.code === "OFFLINE" ? "Keine Verbindung – nicht hochgeladen." : c.error);
+  if (!c.ok) return endUp(u, "err", upErr(c));
   if (u.state === "cancel") return;
 
   u.state = "up"; u.pct = 0; u.msg = "0 %"; renderUploads();
   const lm = u.file.lastModified || Date.now();
-  await new Promise(resolve => {
-    const x = u.xhr = new XMLHttpRequest();
-    let t0 = performance.now(), last = 0, rate = 0;
-    x.open("POST", `/api/upload?name=${enc(u.name)}&overwrite=${over}&mtime=${localSecs(lm)}&now=${localSecs(Date.now())}`);
-    x.setRequestHeader("X-PrintDrive", "1");
-    x.setRequestHeader("Content-Type", "application/octet-stream");
-    x.upload.onprogress = e => {
-      if (!e.lengthComputable) return;
-      const now = performance.now(), dt = (now - t0) / 1000;
-      if (dt > .4) { const r = (e.loaded - last) / dt; rate = rate ? rate * .7 + r * .3 : r; t0 = now; last = e.loaded; }
-      u.pct = e.loaded / e.total * 100;
-      const left = rate ? (e.total - e.loaded) / rate : 0;
-      // 100 % only means "sent"; the file counts as saved once the device confirms it.
-      u.msg = e.loaded >= e.total ? "Wird gespeichert …" : Math.floor(u.pct) + " %" + (left > 5 ? " · noch " + (left > 90 ? Math.round(left / 60) + " min" : Math.round(left) + " s") : "");
-      if (e.loaded >= e.total && !u.sent) { u.sent = true; renderUploads(); }
-      else paintUpload(u);
-    };
-    x.onload = () => {
-      let j = null; try { j = JSON.parse(x.responseText); } catch(e) {}
-      if (j && j.ok) { u.pct = 100; endUp(u, "done", "Gespeichert"); }
-      else endUp(u, "err", j && j.error ? j.error : "Unerwartete Antwort des Laufwerks – nicht gespeichert.");
-      resolve();
-    };
-    x.onerror = () => { endUp(u, "err", "Verbindung unterbrochen – die Datei wurde nicht gespeichert."); resolve(); };
-    x.onabort = () => { endUp(u, "cancel", "Abgebrochen"); resolve(); };
-    x.send(u.file);
-  });
+  let t0 = performance.now(), last = 0, rate = 0;
+  const j = await xpost(`/api/upload?path=${enc(join(u.dir, u.name))}&overwrite=${over}&mtime=${localSecs(lm)}&now=${localSecs(Date.now())}`, u.file, (loaded, total) => {
+    const now = performance.now(), dt = (now - t0) / 1000;
+    if (dt > .4) { const r = (loaded - last) / dt; rate = rate ? rate * .7 + r * .3 : r; t0 = now; last = loaded; }
+    u.pct = loaded / total * 100;
+    const rest = rate ? (total - loaded) / rate : 0;
+    // 100 % only means "sent"; the file counts as saved once the device confirms it.
+    u.msg = loaded >= total ? t("upSaving") : Math.floor(u.pct) + " %" + (rest > 5 ? " · " + t("upLeft", rest > 90 ? Math.round(rest / 60) + " min" : Math.round(rest) + " s") : "");
+    if (loaded >= total && !u.sent) { u.sent = true; renderUploads(); }
+    else paintUpload(u);
+  }, x => u.xhr = x);
+  if (j.ok) { u.pct = 100; endUp(u, "done", t("upDone")); }
+  else if (j.code === "ABORT") endUp(u, "cancel", t("upCancelled"));
+  else { endUp(u, "err", upErr(j, true)); authFail(j); }
 }
 
 function paintUpload(u){
@@ -916,13 +1894,13 @@ function renderUploads(){
   if (S.ups.length) {
     const active = S.ups.filter(u => LIVE.includes(u.state)).length;
     const done = S.ups.filter(u => u.state === "done").length, failed = S.ups.filter(u => u.state === "err").length;
-    $("#upHead").textContent = active ? `${active === 1 ? "1 Datei wird" : active + " Dateien werden"} hochgeladen` : failed ? `${failed} von ${S.ups.length} nicht gespeichert` : done ? `${done === 1 ? "1 Datei" : done + " Dateien"} gespeichert` : "Uploads";
+    $("#upHead").textContent = active ? t("upHeadActive", active) : failed ? t("upHeadFail", failed, S.ups.length) : done ? t("upHeadDone", done) : t("uploads");
     $("#upClose").hidden = active > 0;
     $("#upList").innerHTML = S.ups.map(u => {
       const live = LIVE.includes(u.state) && !u.sent;
-      return `<li id="up${u.id}"><div class="l1"><span class="n" title="${esc(u.name)}">${esc(u.name)}</span>
+      return `<li id="up${u.id}"><div class="l1"><span class="n" title="${esc(join(u.dir, u.name))}">${esc(u.name)}</span>
         <span class="s ${u.state === "done" ? "ok" : ""}">${u.state === "err" ? "" : esc(u.msg)}</span>
-        ${live ? `<button class="icon-btn x" data-cancel="${u.id}" aria-label="Upload abbrechen" title="Abbrechen">${icon("x")}</button>` : ""}</div>
+        ${live ? `<button class="icon-btn x" data-cancel="${u.id}" aria-label="${esc(t("upCancel"))}" title="${esc(t("upCancel"))}">${icon("x")}</button>` : ""}</div>
         ${u.state === "up" ? `<div class="bar"><i style="width:${u.pct.toFixed(1)}%"></i></div>` : ""}
         ${u.state === "err" ? `<div class="s err">${esc(u.msg)}</div>` : ""}</li>`;
     }).join("");
@@ -933,119 +1911,266 @@ function renderUploads(){
 $("#upList").onclick = e => {
   const b = e.target.closest("[data-cancel]"); if (!b) return;
   const u = S.ups.find(x => x.id === +b.dataset.cancel); if (!u || u.sent) return;
-  if (u.xhr) u.xhr.abort(); else endUp(u, "cancel", "Abgebrochen");
+  if (u.xhr) u.xhr.abort(); else endUp(u, "cancel", t("upCancelled"));
 };
 $("#upClose").onclick = () => { S.ups = []; renderUploads(); };
-addEventListener("beforeunload", e => { if (S.working) { e.preventDefault(); e.returnValue = ""; } });
+addEventListener("beforeunload", e => { if (S.working || S.busy) { e.preventDefault(); e.returnValue = ""; } });
 
-/* drag & drop anywhere in the window */
+/* drag & drop anywhere in the window (into the current folder) */
 let dragDepth = 0;
 const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
-const canDrop = () => S.st && !broken(S.st.drive) && !inSettings();
-addEventListener("dragenter", e => { if (hasFiles(e) && canDrop()) { e.preventDefault(); dragDepth++; $("#drop").hidden = false; } });
+const canDrop = () => S.auth === "ok" && S.st && !broken(S.st.drive) && !inSettings();
+addEventListener("dragenter", e => {
+  if (!hasFiles(e) || !canDrop()) return;
+  e.preventDefault(); dragDepth++;
+  $("#drop").textContent = S.dir && fileMode() ? t("dropIn", base(S.dir)) : t("dropHere"); $("#drop").hidden = false;
+});
 addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
 addEventListener("dragleave", () => { if (dragDepth && --dragDepth === 0) $("#drop").hidden = true; });
 addEventListener("drop", e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $("#drop").hidden = true; if (canDrop()) addFiles(e.dataTransfer.files); });
 
-/* ---------- settings ---------- */
+/* ---------- Settings ---------- */
 function renderSettings(){
-  const st = S.st; if (!st || !inSettings()) return;
+  if (!inSettings() || !S.me) return;
+  const th = pref.get("theme", "");
+  $$("#theme button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === th)));
+  $$("#langSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === lang)));
+  $("#acctX").textContent = t("acctX", S.me.user, roleName(S.me.role));
+  $("#swAuto").checked = pref.get("auto", "1") === "1";
+  const st = S.st; if (!st) return;
   const w = st.wifi, d = st.drive, used = Math.max(0, d.total - d.free);
-  const q = w.rssi >= -60 ? "Sehr guter Empfang." : w.rssi >= -72 ? "Guter Empfang." : "Schwacher Empfang.";
-  $("#netTitle").textContent = w.sta_connected ? `Verbunden mit „${w.ssid}“` : w.sta_configured ? `Verbindung mit „${w.ssid}“ wird hergestellt …` : "Kein WLAN eingerichtet";
-  $("#netSub").textContent = w.sta_connected ? q : w.ap_active ? `Das Einrichtungs-WLAN „${w.ap_ssid}“ ist aktiv.` : "";
+  $("#netTitle").textContent = w.sta_connected ? t("netOn", w.ssid) : w.sta_configured ? t("netConnecting", w.ssid) : t("netNone");
+  $("#netSub").textContent = w.sta_connected ? t(w.rssi >= -60 ? "rssi3" : w.rssi >= -72 ? "rssi2" : "rssi1") : w.ap_active ? t("apOn", w.ap_ssid) : "";
   $("#netAddr").textContent = w.sta_connected ? "http://" + w.ip : w.ap_active ? "http://" + w.ap_ip : "–";
   $("#netHost").textContent = "http://" + w.hostname + ".local";
-  $("#suMedium").textContent = st.medium.sd ? "microSD-Karte" + (st.medium.name ? " (" + st.medium.name + ")" : "") : "Interner Speicher";
-  $("#suUsed").textContent = d.total ? `${fsize(used)} von ${fsize(d.total)}` : "–";
+  $("#secAp").textContent = (w.ap_active ? t("apOn", w.ap_ssid) + " " : "") + t("apX");
+  $("#suMedium").textContent = st.medium.sd ? t("sd") + (st.medium.name ? " (" + st.medium.name + ")" : "") : t("flash");
+  $("#suUsed").textContent = d.total ? t("nOf", fsize(used), fsize(d.total)) : "–";
   $("#suFree").textContent = d.total ? fsize(d.free) : "–";
   if (document.activeElement !== $("#swWrite")) $("#swWrite").checked = d.host_writable;
-  $("#swAuto").checked = pref.get("auto", "1") === "1";
-  $("#secAp").textContent = (w.ap_active ? `Das Einrichtungs-WLAN „${w.ap_ssid}“ ist gerade aktiv. ` : "") + "Findet das Laufwerk kein bekanntes WLAN, öffnet es ein eigenes, passwortgeschütztes Einrichtungs-WLAN. Das Passwort wird nur auf dem Display angezeigt.";
-  $("#secTypes").textContent = st.types === "all" ? "Es können Dateien aller Typen hochgeladen werden, bis 4 GB pro Datei. 3MF-Dateien werden beim Hochladen auf Vollständigkeit geprüft." : "Hochgeladen werden können nur Dateien mit den Endungen " + st.types.replace(/,/g, ", ") + ".";
+  $("#secTypes").textContent = st.types === "all" ? t("typesAll") : t("typesSome", st.types.replace(/,/g, ", "));
   $("#sysVer").textContent = st.version;
-  $("#sysUp").textContent = fdur(st.uptime_s);
+  $("#sysSlot").textContent = st.ota && st.ota.partition || "–";
+  $("#otaPend").hidden = !(st.ota && st.ota.pending_verify);
+  $("#sysUp").textContent = t("dur", st.uptime_s);
   $("#sysHeap").textContent = fsize(st.heap);
-  $("#fmtSub").textContent = `Löscht alle Dateien auf ${st.medium.sd ? "der microSD-Karte" : "dem internen Speicher"} unwiderruflich und richtet den Speicher neu ein.`;
+  $("#fmtSub").textContent = t("fmtX", t(st.medium.sd ? "whereSd" : "whereFlash"));
   $("#foot").textContent = "WiFi DataDrive " + st.version;
-  const t = pref.get("theme", "");
-  document.querySelectorAll("#theme button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.t === t)));
+}
+async function loadAdmin(){
+  if (S.working || S.busy) return;
+  await loadDevices();
+  if (!isAdmin()) return;
+  await loadWifi();
+  await loadUsers();
 }
 
-$("#theme").onclick = e => { const b = e.target.closest("button"); if (!b) return; pref.set("theme", b.dataset.t); applyTheme(); renderSettings(); };
+$("#theme").onclick = e => { const b = e.target.closest("button"); if (!b) return; pref.set("theme", b.dataset.v); applyTheme(); renderSettings(); };
+$("#langSeg").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  pref.set("lang", b.dataset.v); setLang(b.dataset.v);
+  if (S.me) setMe({user: S.me.user, role: S.me.role, default_password: S.me.def});
+  listSig = ""; render(); renderUploads(); renderWifi(); renderUsers(); renderDevices();
+};
 $("#swAuto").onchange = e => pref.set("auto", e.target.checked ? "1" : "0");
 $("#swWrite").onchange = async e => {
-  if (uploading()) { e.target.checked = !e.target.checked; return; }
+  if (blocked()) { e.target.checked = !e.target.checked; return; }
   const want = e.target.checked, r = await post("/api/settings/host_writable?value=" + (want ? 1 : 0));
-  if (!r.ok) { e.target.checked = !want; return toast(r.error, true); }
+  if (!r.ok) { e.target.checked = !want; if (S.auth === "ok") toast(errText(r), true); return; }
   await refresh();
-  toast(want ? "Das USB-Gerät darf Dateien ändern. Gilt ab dem nächsten Bereitstellen." : "Das USB-Gerät darf nur noch lesen. Gilt ab dem nächsten Bereitstellen.");
+  toast(t(want ? "usbWriteOn" : "usbWriteOff"));
 };
-$("#wifiForm").onsubmit = async e => {
-  e.preventDefault();
-  if (uploading()) return;
-  const ssid = $("#ssid").value, pass = $("#pass").value, msg = $("#wifiMsg"), btn = $("#wifiBtn");
-  const fail = t => { msg.className = "formmsg full err"; msg.textContent = t; };
-  if (!ssid.trim()) return fail("Bitte den WLAN-Namen eingeben.");
-  if (pass.length && pass.length < 8) return fail("Das Passwort muss mindestens 8 Zeichen lang sein (oder leer bei einem offenen WLAN).");
-  btn.disabled = true; msg.className = "formmsg full"; msg.textContent = "Wird gespeichert …";
-  const r = await post("/api/wifi", {body: new URLSearchParams({ssid, pass}).toString()});
-  btn.disabled = false;
-  if (!r.ok) return fail(r.error);
-  $("#pass").value = "";
-  msg.className = "formmsg full ok";
-  msg.textContent = `Gespeichert. Das Laufwerk verbindet sich jetzt mit „${ssid}“ – ob es geklappt hat, zeigt sein Display.`;
+
+/* ---------- trusted devices (own ones; administrators see all) ---------- */
+async function loadDevices(){ const j = await api("/api/devices"); S.devs = j.ok ? j : null; renderDevices(); }
+function renderDevices(){
+  const v = S.devs, box = $("#devList");
+  $("#devCount").textContent = v ? t("devCount", v.devices.length, v.max) : "";
+  if (!v) { box.innerHTML = `<div class="li"><span class="txt small">${t("devLoadErr")}</span></div>`; return; }
+  box.innerHTML = v.devices.map(x => `<div class="li">${icon("device")}<span class="txt">${esc(x.label || "–")}${x.current ? `<span class="pill">${t("thisDev")}</span>` : ""}${isAdmin() ? `<small>${esc(t("acctL", x.user))}</small>` : ""}</span>
+    <button class="icon-btn" data-ddel="${esc(x.id)}" aria-label="${esc(t("removeX", x.label))}" title="${esc(t("removeX", x.label))}">${icon("trash")}</button></div>`).join("")
+    || `<div class="li"><span class="txt small">${t("devNone")}</span></div>`;
+}
+$("#devList").onclick = async e => {
+  const b = e.target.closest("[data-ddel]"); if (!b || !S.devs || blocked()) return;
+  const d = S.devs.devices.find(x => x.id === b.dataset.ddel); if (!d) return;
+  const ok = await ask({title: t("devDelT", d.label), text: t(d.current ? "devDelSelf" : "devDelX"), yes: t("remove"), danger: true,
+    run: async () => { const r = await post("/api/devices/delete?id=" + enc(d.id)); return r.ok ? "" : errText(r, "dev"); }});
+  if (!ok || S.auth !== "ok") return;
+  if (d.current) { S.auth = "login"; leaveApp(t("upOut")); $("#lPass").value = ""; return showLogin("out"); }
+  toast(t("removed", d.label)); await loadDevices();
 };
+
+/* ---------- Wi-Fi networks (admin) ---------- */
+async function loadWifi(){ const j = await api("/api/wifi/list"); S.wifi = j.ok ? j : null; renderWifi(); }
+function renderWifi(){
+  const w = S.wifi, box = $("#wifiList");
+  $("#wifiCount").textContent = w ? t("wifiCount", w.networks.length, w.max) : "";
+  if (!w) { box.innerHTML = `<div class="li"><span class="txt small">${t("wifiLoadErr")}</span></div>`; return; }
+  box.innerHTML = w.networks.map(n => `<div class="li">${icon("wifi")}<span class="txt">${esc(n.ssid)}${n.active ? `<span class="pill">${t("connected")}</span>` : ""}</span>
+    <button class="icon-btn" data-wdel="${esc(n.ssid)}" aria-label="${esc(t("removeX", n.ssid))}" title="${esc(t("removeX", n.ssid))}">${icon("trash")}</button></div>`).join("")
+    || `<div class="li"><span class="txt small">${t("wifiNone")}</span></div>`;
+}
+$("#wifiAdd").onclick = async () => {
+  if (blocked()) return;
+  const v = await ask({title: t("wifiAdd"), text: t("wifiAddX"), yes: t("save"),
+    fields: [{label: t("ssid"), max: 32, raw: true}, {label: t("wifiPassL"), type: "password", auto: "new-password", max: 63}],
+    run: async ([ssid, pass]) => {
+      if (!ssid.trim()) return t("ssidEmpty");
+      if (bytes(ssid) > 32) return t("ssidLong");
+      if (pass.length && (pass.length < 8 || pass.length > 63)) return t("wifiPwLen");
+      const r = await post("/api/wifi/add", {body: form({ssid, pass})});
+      return r.ok ? "" : errText(r, "wifi");
+    }});
+  if (v) { toast(t("wifiAdded", v[0])); await loadWifi(); }
+};
+$("#wifiList").onclick = async e => {
+  const b = e.target.closest("[data-wdel]"); if (!b || blocked()) return;
+  const ssid = b.dataset.wdel, n = S.wifi && S.wifi.networks.find(x => x.ssid === ssid);
+  const ok = await ask({title: t("wifiDelT", ssid), text: n && n.active ? t("wifiDelActive") : t("wifiDelX"), yes: t("remove"), danger: true,
+    run: async () => { const r = await post("/api/wifi/delete?ssid=" + enc(ssid)); return r.ok ? "" : errText(r, "wifi"); }});
+  if (ok) { toast(t("removed", ssid)); await loadWifi(); }
+};
+
+/* ---------- users (admin) ---------- */
+async function loadUsers(){ const j = await api("/api/users"); S.users = j.ok ? j : null; renderUsers(); }
+function renderUsers(){
+  const u = S.users, box = $("#userList");
+  $("#userCount").textContent = u ? t("usersCount", u.users.length, u.max) : "";
+  if (!u || !S.me) { box.innerHTML = `<div class="li"><span class="txt small">${t("usersLoadErr")}</span></div>`; return; }
+  box.innerHTML = u.users.map(x => `<div class="li"><span class="av">${esc(x.name.slice(0, 1))}</span><span class="txt">${esc(x.name)}${same(x.name, S.me.user) ? `<span class="pill">${t("you")}</span>` : ""}<small>${esc(roleName(x.role))}</small></span>
+    <button class="icon-btn" data-umore="${esc(x.name)}" aria-haspopup="menu" aria-label="${esc(t("actionsFor", x.name))}">${icon("more")}</button></div>`).join("");
+}
+$("#userList").onclick = e => {
+  const b = e.target.closest("[data-umore]"); if (!b || !S.users) return;
+  const u = S.users.users.find(x => x.name === b.dataset.umore); if (!u) return;
+  const self = same(u.name, S.me.user);
+  showMenu(b, null, esc(u.name), [["role", "user", t(u.role === "admin" ? "mkUser" : "mkAdmin")], ["pw", "key", t("setPw")], ["del", "trash", t("delete"), 1]], a => userAct(a, u, self));
+};
+async function userAct(a, u, self){
+  if (blocked()) return;
+  if (a === "pw" && self) return changeOwnPw();
+  let ok;
+  if (a === "role") {
+    const to = u.role === "admin" ? "user" : "admin";
+    ok = await ask({title: t("roleT", u.name, to === "admin"), text: to === "admin" ? t("roleXAdmin") : t("roleXUser") + (self ? " " + t("roleXSelf") : ""), yes: t("change"), danger: self && to === "user",
+      run: async () => { const r = await post(`/api/users/role?user=${enc(u.name)}&role=${to}`); return r.ok ? "" : errText(r, "user"); }});
+    if (ok) toast(t("roleDone", u.name));
+  } else if (a === "pw") {
+    ok = await ask({title: t("setPwT", u.name), text: t("setPwX"), yes: t("save"),
+      fields: [{label: t("pwNew"), type: "password", auto: "new-password"}, {label: t("pwNew2"), type: "password", auto: "new-password"}],
+      run: async ([p1, p2]) => { const err = pwErr(p1, p2); if (err) return err;
+        const r = await post("/api/users/password", {body: form({user: u.name, pass: p1})}); return r.ok ? "" : errText(r, "user"); }});
+    if (ok) toast(t("pwSetFor", u.name));
+  } else {
+    ok = await ask({title: t("userDelT", u.name), text: t("userDelX") + (self ? " " + t("userDelSelf") : ""), yes: t("delete"), danger: true,
+      run: async () => { const r = await post("/api/users/delete?user=" + enc(u.name)); return r.ok ? "" : errText(r, "user"); }});
+    if (ok) toast(t("userDeleted", u.name));
+  }
+  if (!ok || S.auth !== "ok") return;
+  if (self && a !== "pw") return recheck();      // own role or own account changed
+  await loadUsers(); await loadDevices();       // the user's trusted devices were removed
+}
+$("#userAdd").onclick = async () => {
+  if (blocked()) return;
+  const v = await ask({title: t("userAdd"), yes: t("create"),
+    fields: [{label: t("userName"), max: 24}, {label: t("password"), type: "password", auto: "new-password"}, {label: t("role"), options: [["user", t("roleUser")], ["admin", t("roleAdmin")]], value: "user"}],
+    run: async ([name, pass, role]) => {
+      if (!/^[A-Za-z0-9._-]{1,24}$/.test(name)) return errText({code: "BAD_USER"});
+      const n = bytes(pass); if (n < 5 || n > 64) return errText({code: "BAD_PASSWORD"});
+      const r = await post("/api/users/add", {body: form({user: name, pass, role})});
+      return r.ok ? "" : errText(r, "user");
+    }});
+  if (v) { toast(t("userAdded", v[0])); await loadUsers(); }
+};
+
+/* ---------- log, restart, update, format, maintenance (admin) ---------- */
 $("#logBtn").onclick = async () => {
-  if (uploading()) return;
+  if (blocked()) return;
   const pre = $("#log"), btn = $("#logBtn");
   btn.disabled = true;
-  const t = await api("/api/log", {text: true});
-  btn.disabled = false; btn.textContent = "Aktualisieren";
-  pre.hidden = false; pre.textContent = typeof t === "string" ? t || "(leer)" : "Das Protokoll konnte nicht geladen werden.";
+  const txt = await api("/api/log", {text: true});
+  btn.disabled = false; btn.dataset.t = "refresh"; btn.textContent = t("refresh");
+  pre.hidden = false; pre.textContent = typeof txt === "string" ? txt || t("logEmpty") : t("logErr");
   pre.scrollTop = pre.scrollHeight;
 };
-function restartError(r){ return r.code === "HOST_WRITING" ? "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warte, bis es fertig ist." : r.code === "BUSY" ? "Es läuft gerade eine Dateiübertragung. Bitte warte, bis sie abgeschlossen ist." : r.error; }
-function awaitRestart(kind){ S.restart = kind; S.sawDown = false; S.files = null; renderNotice(); schedule(2500); }
+function awaitRestart(kind){ S.restart = kind; S.sawDown = false; S.entries = null; renderNotice(); schedule(2500); }
 $("#rebootBtn").onclick = async () => {
-  if (uploading()) return;
-  const ok = await ask({title: "Laufwerk neu starten?", text: "Das dauert etwa 10 Sekunden. Ein angeschlossenes USB-Gerät verliert das Laufwerk kurz.", yes: "Neu starten",
-    run: async () => { const r = await post("/api/reboot?mode=normal"); return r.ok ? "" : restartError(r); }});
+  if (blocked()) return;
+  const ok = await ask({title: t("rebootQ"), text: t("rebootX"), yes: t("rebootT"),
+    run: async () => { const r = await post("/api/reboot?mode=normal"); return r.ok ? "" : errText(r); }});
   if (ok) awaitRestart("normal");
 };
 $("#flashBtn").onclick = async () => {
-  if (uploading()) return;
-  const ok = await ask({title: "Wartungsmodus starten?", yes: "Wartungsmodus starten", danger: true,
-    text: "Nur nötig, um neue Gerätesoftware aufzuspielen. Das Laufwerk und diese Oberfläche sind danach nicht erreichbar, bis es aus- und wieder eingesteckt wird.",
-    run: async () => { const r = await post("/api/reboot?mode=download"); return r.ok ? "" : restartError(r); }});
+  if (blocked()) return;
+  const ok = await ask({title: t("maintQ"), yes: t("maintYes"), danger: true, text: t("maintX"),
+    run: async () => { const r = await post("/api/reboot?mode=download"); return r.ok ? "" : errText(r); }});
   if (ok) awaitRestart("download");
 };
 $("#fmtBtn").onclick = async () => {
-  if (!S.st || uploading()) return;
+  if (!S.st || blocked()) return;
   const took = S.st.drive.owner === "usb";   // formatting needs the file management to own the drive
   if (took && !await activate()) return;
-  const where = S.st.medium.sd ? "der microSD-Karte" : "dem internen Speicher";
-  const ok = await ask({title: "Speicher formatieren?", yes: "Alles löschen", danger: true,
-    text: `Alle Dateien auf ${where} werden unwiderruflich gelöscht. Tippe zur Bestätigung das Wort LÖSCHEN ein.`,
-    input: {label: "Bestätigung", placeholder: "LÖSCHEN"},
+  const where = t(S.st.medium.sd ? "whereSd" : "whereFlash");
+  const ok = await ask({title: t("fmtQ"), yes: t("fmtYes"), danger: true, text: t("fmtQX", where),
+    input: {label: t("fmtConfirm"), placeholder: t("fmtWord")},
     run: async v => {
-      if (v.toUpperCase() !== "LÖSCHEN") return "Bitte genau das Wort LÖSCHEN eingeben.";
+      if (v.toUpperCase() !== t("fmtWord")) return t("fmtWrong");
       const r = await post("/api/format?confirm=FORMAT");
-      return r.ok ? "" : r.code === "WRONG_OWNER" ? "Bitte zuerst die Dateiverwaltung aktivieren." : restartError(r);
+      return r.ok ? "" : r.code === "WRONG_OWNER" ? t("fmtOwner") : errText(r);
     }});
   if (ok) awaitRestart("format");
-  else if (took) await provide();            // cancelled: give the drive back to the USB device
+  else if (took && S.auth === "ok") await provide();            // cancelled: give the drive back to the USB device
 };
 
-/* ---------- routing: "#einstellungen" shows the settings, "#s-…" jumps to a section ---------- */
+$("#otaBtn").onclick = () => { if (!blocked()) $("#otaPick").click(); };
+$("#otaPick").onchange = e => { const f = e.target.files[0]; e.target.value = ""; if (f) ota(f); };
+async function ota(f){
+  const msg = $("#otaMsg"), prog = $("#otaProg"), fail = m => { msg.textContent = m; };
+  fail("");
+  // Cheap checks before sending 1–2 MB over Wi-Fi: an ESP32 image starts with the magic byte 0xE9.
+  if (!/\.bin$/i.test(f.name)) return fail(t("otaNotBin"));
+  if (f.size < OTA_MIN) return fail(t("otaSmall"));
+  if (f.size > OTA_MAX) return fail(t("otaBig"));
+  const head = new Uint8Array(await f.slice(0, 1).arrayBuffer());
+  if (head[0] !== 0xE9) return fail(t("otaBad"));
+  const ok = await ask({title: t("otaConfT"), text: t("otaConfX", f.name, fsize(f.size)), yes: t("otaGo")});
+  if (!ok || blocked()) return;
+  S.busy = "ota"; $("#otaBtn").disabled = true;
+  $("#otaName").textContent = f.name; $("#otaPct").textContent = "0 %"; $("#otaBar").style.width = "0"; prog.hidden = false;
+  const r = await xpost("/api/ota", f, (loaded, total) => {
+    const p = Math.floor(loaded / total * 100);
+    $("#otaPct").textContent = loaded >= total ? t("otaChecking") : t("otaSending", p);
+    $("#otaBar").style.width = p + "%";
+  });
+  S.busy = ""; $("#otaBtn").disabled = false; prog.hidden = true;
+  if (r.ok) return awaitRestart("update");
+  authFail(r);
+  if (S.auth === "ok") fail(r.code === "INVALID_FILE" ? t("otaBad") : r.code === "TOO_LARGE" ? t("otaBig") : errText(r, "ota"));
+}
+
+/* ---------- Routing: "#/Ordner/Unterordner" = folder, "#einstellungen" = settings, "#s-…" jumps to a settings section. ---------- */
 function route(){
+  if (S.auth !== "ok") return;
   const h = location.hash, sec = h.startsWith("#s-") ? document.getElementById(h.slice(1)) : null;
-  const settings = h === "#einstellungen" || !!sec;
+  const settings = h === "#einstellungen" || !!sec, was = inSettings();
   if (sec) history.replaceState(null, "", "#einstellungen");
   $("#vFiles").hidden = settings; $("#vSettings").hidden = !settings;
   $("#navSettings").hidden = settings;
-  closeMenu(); render();
-  if (sec) sec.scrollIntoView({behavior: "smooth"}); else scrollTo(0, 0);
+  closeMenu();
+  if (!settings) {
+    const dir = parseDir(h);
+    if (dir !== S.dir) {
+      S.dir = dir; S.entries = null; S.sel.clear(); S.selMode = false;
+      S.q = ""; $("#search").value = "";
+      schedule(0);
+    }
+  } else {
+    $("#backLink").href = dirHash(S.dir);
+    if (!was) loadAdmin();
+  }
+  render();
+  if (sec) sec.scrollIntoView({behavior: "smooth"}); else if (settings !== was || !settings) scrollTo(0, 0);
 }
 addEventListener("hashchange", route);
 // Section chips only scroll; they must not add browser history entries.
@@ -1056,8 +2181,8 @@ document.querySelector(".tabs").onclick = e => {
 };
 document.addEventListener("visibilitychange", () => { if (!document.hidden) schedule(0); });
 
-route();
-poll();
+setLang(pref.get("lang", "") || (/^de/i.test(navigator.language || "") ? "de" : "en"));
+boot();
 </script>
 </body>
 </html>

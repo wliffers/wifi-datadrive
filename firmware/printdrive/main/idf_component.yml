@@ -3,3 +3,4 @@ dependencies:
   # Pinned to releases that were at least two weeks old when the project was set up.
   espressif/esp_tinyusb: "~2.4.0"
   espressif/tinyusb: "0.21.0~2"
+  espressif/qrcode: "0.2.0"   # QR encoder; release of 2025-12-23

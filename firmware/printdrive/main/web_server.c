@@ -144,6 +144,8 @@ const char *web_result_code(drive_result_t r)
     case DRIVE_ERR_INVALID_FILE: return "INVALID_FILE";
     case DRIVE_ERR_INCOMPLETE:   return "INCOMPLETE";
     case DRIVE_ERR_TOO_LARGE:    return "TOO_LARGE";
+    case DRIVE_ERR_DIR_NOT_EMPTY: return "DIR_NOT_EMPTY";
+    case DRIVE_ERR_IS_DIR:       return "IS_DIR";
     default:                     return "IO";
     }
 }
@@ -153,7 +155,9 @@ const char *web_result_http_status(drive_result_t r)
     switch (r) {
     case DRIVE_OK:               return "200 OK";
     case DRIVE_ERR_BAD_NAME:
+    case DRIVE_ERR_IS_DIR:
     case DRIVE_ERR_INCOMPLETE:   return "400 Bad Request";
+    case DRIVE_ERR_DIR_NOT_EMPTY: return "409 Conflict";
     case DRIVE_ERR_TOO_LARGE:    return "413 Payload Too Large";
     case DRIVE_ERR_NOT_FOUND:    return "404 Not Found";
     case DRIVE_ERR_BAD_TYPE:     return "415 Unsupported Media Type";
@@ -204,15 +208,16 @@ static bool check_csrf(httpd_req_t *req)
     return false;
 }
 
-/** Registered for every route (route in user_ctx): CSRF, then authorization, then the handler.
+/** Registered for every route (route in user_ctx): authorization, then CSRF, then the handler
+ *  (an unauthenticated POST gets 401, as in the API contract and the mock server).
  *  Both checks have already answered the client when they fail, so we return ESP_OK. */
 static esp_err_t dispatch(httpd_req_t *req)
 {
     const web_route_t *route = req->user_ctx;
-    if (req->method == HTTP_POST && !check_csrf(req)) {
+    if (!auth_authorize(req, route->role)) {
         return ESP_OK;
     }
-    if (!auth_authorize(req, route->role)) {
+    if (req->method == HTTP_POST && !check_csrf(req)) {
         return ESP_OK;
     }
     return route->handler(req);

@@ -16,6 +16,8 @@ static const char *TAG = "main";
 void app_main(void)
 {
     applog_init();
+    // The QR library logs the encoded text - in setup mode that is the setup Wi-Fi password.
+    esp_log_level_set("QRCODE", ESP_LOG_WARN);
     ESP_LOGI(TAG, "WiFi DataDrive %s", esp_app_get_description()->version);
 
     // NVS holds Wi-Fi credentials and drive flags. Only the NVS partition is erased

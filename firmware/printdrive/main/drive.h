@@ -3,8 +3,9 @@
 // The FAT file system on the internal flash has exactly ONE owner at any time:
 //
 //   DRIVE_OWNER_APP  - mounted locally at DRIVE_BASE_PATH. The web server may list,
-//                      upload and delete files. The USB host sees "no medium"
-//                      (like an empty card reader); every host READ/WRITE is refused.
+//                      upload, download and manage files and folders. The USB host
+//                      sees "no medium" (like an empty card reader); every host
+//                      READ/WRITE is refused.
 //   DRIVE_OWNER_USB  - not mounted locally. Only the USB host accesses the sectors.
 //                      All local file operations are refused.
 //
@@ -23,8 +24,21 @@ extern "C" {
 #endif
 
 #define DRIVE_BASE_PATH  "/data"
-#define DRIVE_NAME_MAX   120          // max length of uploaded file names (bytes, UTF-8)
+#define DRIVE_NAME_MAX   120          // max length of one new name segment (bytes, UTF-8)
 #define DRIVE_FILE_NAME_MAX 255      // max length of existing (e.g. host-created) names
+
+// Paths (API v3, section 3.1): relative to the root, '/'-separated, no leading or trailing
+// '/', "" = root folder. See drive_check_path().
+#define DRIVE_PATH_MAX        240     // max total length of a path that creates something (bytes)
+#define DRIVE_PATH_DEPTH_MAX  8       // max number of segments of any path
+#define DRIVE_SRC_PATH_MAX    765     // max total length of an existing path accepted as input
+
+// drive_list(): every entry in the packed buffer is a header of DRIVE_LIST_HDR bytes -
+// uint32_t size, uint32_t mtime (native byte order, copy with memcpy), uint8_t type
+// (DRIVE_ENTRY_*) - followed by the NUL-terminated name.
+#define DRIVE_LIST_HDR        9
+#define DRIVE_ENTRY_FILE      0
+#define DRIVE_ENTRY_DIR       1
 
 typedef enum {
     DRIVE_OWNER_NONE = 0,             // not initialised / failed
@@ -57,10 +71,9 @@ typedef struct {
 
 /** Result summary of drive_list(). */
 typedef struct {
-    uint32_t count;                   // files written to the buffer
-    uint32_t dirs;                    // folders in the root directory (not listed)
+    uint32_t count;                   // entries (files and folders) written to the buffer
     size_t used;                      // bytes used in the buffer
-    bool truncated;                   // buffer was too small for all files
+    bool truncated;                   // buffer was too small for all entries
 } drive_list_info_t;
 
 typedef enum {
@@ -79,6 +92,8 @@ typedef enum {
     DRIVE_ERR_INCOMPLETE,             // fewer bytes than announced
     DRIVE_ERR_TOO_LARGE,              // file >= 4 GiB (FAT limit)
     DRIVE_ERR_IO,
+    DRIVE_ERR_DIR_NOT_EMPTY,          // folder not empty and recursive delete not requested
+    DRIVE_ERR_IS_DIR,                 // a file was expected, the path names a folder
 } drive_result_t;
 
 /** Human readable (German) text for a result code. */
@@ -102,16 +117,46 @@ drive_result_t drive_set_owner(drive_owner_t target, bool force);
 esp_err_t drive_set_host_writable(bool writable);
 
 /**
- * List regular files in the root folder (APP only) into a packed buffer. Each entry is
- * 4 bytes size + 4 bytes mtime (both native uint32_t, copy with memcpy) followed by the
- * NUL-terminated name. mtime is seconds since 1970 in the writer's local time, 0 = unknown.
+ * Validate a path from the network (API v3, 3.1). The single gate against path traversal:
+ * every file operation below calls it before the path touches the file system.
+ *  - for_new = true:  path of something that is created (mkdir, upload, move/copy target):
+ *                     every segment follows the name rules of drive_check_name() (without the
+ *                     type check), at most DRIVE_PATH_DEPTH_MAX segments, DRIVE_PATH_MAX bytes.
+ *                     The empty path (root) is refused.
+ *  - for_new = false: path of something that exists (list, download, delete, move/copy
+ *                     source): segments up to DRIVE_FILE_NAME_MAX bytes, no leading dot, no
+ *                     characters FAT cannot store; the empty path (root) is accepted.
+ * Returns DRIVE_OK or DRIVE_ERR_BAD_NAME.
  */
-drive_result_t drive_list(char *buf, size_t buf_len, drive_list_info_t *info);
+drive_result_t drive_check_path(const char *path, bool for_new);
 
-/** Rename a file in the root folder (APP only). `to` must pass drive_check_name(). */
-drive_result_t drive_rename(const char *name, const char *to);
+/**
+ * List the folder `dir` (existing path, "" = root; APP only) into a packed buffer, see
+ * DRIVE_LIST_HDR. Names with a leading dot and "System Volume Information" are skipped.
+ * Folders have size and mtime 0. mtime is seconds since 1970 in the writer's local time,
+ * 0 = unknown. DRIVE_ERR_NOT_FOUND if the folder does not exist.
+ */
+drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list_info_t *info);
 
-drive_result_t drive_delete(const char *name);
+/** Create exactly one folder (the parent must exist). NOT_FOUND, EXISTS. */
+drive_result_t drive_mkdir(const char *path);
+
+/** Delete a file or folder. A non-empty folder needs recursive, else DIR_NOT_EMPTY. */
+drive_result_t drive_delete(const char *path, bool recursive);
+
+/**
+ * Rename and/or move a file or folder; `to` is the complete new path. EXISTS (changing only
+ * the case is allowed), NOT_FOUND (source or target folder missing), BAD_NAME (folder into
+ * itself or a descendant, or the result would be deeper than DRIVE_PATH_DEPTH_MAX).
+ */
+drive_result_t drive_move(const char *from, const char *to);
+
+/**
+ * Copy a file or a folder (recursively). EXISTS, NOT_FOUND, BAD_NAME (as drive_move()),
+ * NO_SPACE (checked first: sum of the file sizes + reserve). A partial copy is removed again
+ * if anything fails. Blocks all other file operations while it runs.
+ */
+drive_result_t drive_copy(const char *from, const char *to);
 
 /** Re-create an empty FAT file system (APP only, erases all files). */
 drive_result_t drive_format(void);
@@ -119,12 +164,20 @@ drive_result_t drive_format(void);
 /** Validate a file name (characters, length, allowed extension). */
 drive_result_t drive_check_name(const char *name);
 
-/** Open a file for download (APP only). Caller must call drive_download_close(). */
-drive_result_t drive_download_open(const char *name, int *fd, uint32_t *size);
+/** Open a file for download (APP only). IS_DIR, NOT_FOUND. Caller must call drive_download_close(). */
+drive_result_t drive_download_open(const char *path, int *fd, uint32_t *size);
 void drive_download_close(int fd);
 
-// ---- Upload: written to a temp file and renamed only after validation ----
-drive_result_t drive_upload_begin(const char *name, uint32_t size, bool overwrite);
+// ---- Upload: written to a temp file in the root and renamed only after validation ----
+
+/**
+ * Checks of an upload that do not depend on the drive (path, file type, size): BAD_NAME,
+ * BAD_TYPE, TOO_LARGE, INVALID_FILE (size 0). drive_upload_begin() repeats them.
+ */
+drive_result_t drive_upload_validate(const char *path, uint64_t size);
+
+/** path: complete target path including the file name. NOT_FOUND (folder missing), IS_DIR. */
+drive_result_t drive_upload_begin(const char *path, uint32_t size, bool overwrite);
 drive_result_t drive_upload_write(const void *data, size_t len);
 /** mtime: modification time to store for the file (local time as seconds since 1970), 0 = now. */
 drive_result_t drive_upload_finish(uint32_t mtime);

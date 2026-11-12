@@ -21,3 +21,6 @@ __pycache__/
 
 # Diagnostic build (console on USB-Serial/JTAG)
 firmware/*/build_diag/
+
+# Per-package build folders
+firmware/*/build_*/

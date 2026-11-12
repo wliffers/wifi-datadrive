@@ -25,6 +25,8 @@ Nicht Teil dieser Version: Vorschaubilder, Druckerstatus, Nur-Lese-Modus-Test.
 | F5 | App-Icon | Web-App-Manifest und Apple-Touch-Icon; vom Home-Bildschirm öffnet die Oberfläche ohne Browserleiste. |
 | F6 | Senden vom PC und iPhone | Neuer Ein-Schritt-Endpunkt `push` (übernehmen, speichern, wieder bereitstellen). Dazu ein Windows-Skript mit „Senden an“-Eintrag und eine Anleitung für einen iPhone-Kurzbefehl. |
 | F7 | Update über die Weboberfläche | Firmware-Datei hochladen, Prüfung, Umschalten auf die zweite Firmware-Partition, automatische Rückkehr zur alten Version, wenn die neue nicht startet. Nur für Administratoren. |
+| F8 | Erzwungener Passwortwechsel | Mit dem Auslieferungspasswort `admin` / `admin` ist nur das Ändern des Passworts möglich; erst danach ist das Gerät bedienbar. Wichtig für eine Veröffentlichung. |
+| F9 | Deutsch und Englisch | Die Weboberfläche ist zweisprachig, Auswahl nach Browsersprache, umstellbar in den Einstellungen. Das Display bleibt deutsch. |
 
 ## Entscheidungen, die der Besitzer kennen sollte
 
