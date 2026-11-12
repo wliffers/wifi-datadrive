@@ -88,6 +88,10 @@ NAME_ORDER = ["Anleitung Drucker.pdf", "Benchy.3mf", "firmware_backup.bin", "Fot
 T_USB = "USB-Laufwerk aktiv"
 T_APP = "Dateiverwaltung aktiv"
 T_TAKEOVER = "Laufwerk vom USB-Gerät trennen?"
+T_WAIT_UPLOAD = "Bitte warte, bis der Upload abgeschlossen ist."
+JS_BAR = "() => { const b = document.querySelector('#upList .bar>i'); return b && parseFloat(b.style.width) > 3; }"
+JS_MORE_FOCUS = ("() => { const a = document.activeElement; return a && a.matches('[data-more]') ? "
+                 "a.closest('.row').dataset.name : (a && a !== document.body ? a.tagName.toLowerCase() + '#' + a.id : 'body'); }")
 
 # ------------------------------------------------------------------ page instrumentation
 
@@ -133,7 +137,7 @@ JS_UI = r"""() => {
     upBtn: vis(q('#upBtn')), upBtnPrimary: q('#upBtn').classList.contains('primary'), fab: vis(q('#fab')),
     search: vis(q('#search')), sortM: vis(q('#sortM')), cols: vis(q('#list .cols')),
     lockedUp: vis(q('#lockedUp')), emptyUp: vis(q('#emptyUp')),
-    settingsLink: vis(q('#list .state a[href="#einstellungen"]')),
+    settingsLink: vis(q('#list .state a[href="#s-danger"]')) ? q('#list .state a[href="#s-danger"]').textContent.trim() : null,
     notice: q('#notice').hidden ? '' : q('#notice').textContent,
     files: !q('#vFiles').hidden, settings: !q('#vSettings').hidden, hash: location.hash,
     dlgOpen: q('#dlg').open
@@ -144,6 +148,7 @@ JS_PANEL = r"""() => {
   const q = s => document.querySelector(s), box = q('#uploads');
   return {
     hidden: box.hidden, head: q('#upHead').textContent, closeVisible: !q('#upClose').hidden, working: S.working,
+    more: !!q('#upMore') && q('#upMore').getClientRects().length > 0,
     items: [...document.querySelectorAll('#upList li')].map(li => ({
       name: li.querySelector('.n').textContent, s: li.querySelector('.l1 .s').textContent.trim(),
       err: li.querySelector('.s.err') ? li.querySelector('.s.err').textContent : '',
@@ -265,6 +270,46 @@ JS_CONTRAST = r"""(sels) => {
       fg: 'rgb(' + fg + ')', bg: 'rgb(' + bg + ')', px: getComputedStyle(el).fontSize});
   }
   return res;
+}"""
+
+
+# Which fixed/sticky UI parts does the newest toast overlap?
+JS_TOAST_OVERLAP = r"""() => {
+  const ts = document.querySelectorAll('#toasts .toast'); if (!ts.length) return null;
+  const t = ts[ts.length - 1].getBoundingClientRect(), hit = [];
+  for (const sel of ['#uploads', '#fab', 'header.top', '#notice', '#menu', '#modeCell']) {
+    const el = document.querySelector(sel); if (!el || !el.getClientRects().length) continue;
+    const r = el.getBoundingClientRect();
+    if (t.left < r.right - 1 && t.right > r.left + 1 && t.top < r.bottom - 1 && t.bottom > r.top + 1) hit.push(sel);
+  }
+  return {hit, rect: [Math.round(t.left), Math.round(t.top), Math.round(t.right), Math.round(t.bottom)], vw: innerWidth, vh: innerHeight};
+}"""
+
+# Settings rows: label clipped or overlapped by the control next to it?
+JS_ITEMS = r"""() => {
+  const bad = [];
+  for (const it of document.querySelectorAll('#vSettings .item')) {
+    const txt = it.querySelector(':scope > .txt'), h = txt && txt.querySelector('h3');
+    const ctl = it.querySelector(':scope > .btn, :scope > .seg, :scope > .switch');
+    if (!h || !ctl) continue;
+    const a = h.getBoundingClientRect(), b = ctl.getBoundingClientRect(), t = txt.getBoundingClientRect();
+    const sameLine = a.top < b.bottom && a.bottom > b.top;
+    if (h.scrollWidth > h.clientWidth + 1 || (sameLine && a.right > b.left + 1) || t.width < 110)
+      bad.push(h.textContent + ': text column ' + Math.round(t.width) + ' px' + (h.scrollWidth > h.clientWidth + 1 ? ', heading clipped' : ''));
+  }
+  return bad;
+}"""
+
+# Is the centre of every visible element matching the selector reachable by a pointer (after scrolling to it)?
+JS_COVERED = r"""(sel) => {
+  const out = [];
+  for (const el of document.querySelectorAll(sel)) {
+    if (!el.getClientRects().length) continue;
+    el.scrollIntoView({block: 'center', behavior: 'instant'});     // can the user bring it to a reachable place?
+    const r = el.getBoundingClientRect(), top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (!(top && (top === el || el.contains(top)))) out.push((el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24) + ' <- ' + (top ? (top.id || top.className || top.tagName) : 'nothing'));
+  }
+  return out;
 }"""
 
 
@@ -604,8 +649,10 @@ def t01_initial_load(c: Ctx):
             ok = ui["btn"] is None
         else:
             ok = ui["btn"] == exp["btn"] and ui["btnPrimary"] == (exp["title"] == T_USB) and not ui["btnDisabled"]
-        if kind in ("rows", "empty"):       # file mode: upload is the primary action
+        if kind == "rows":                  # file mode: upload is the primary action
             ok = ok and (ui["fab"] and not ui["upBtn"] if c.phone else ui["upBtn"] and ui["upBtnPrimary"] and not ui["fab"])
+        elif kind == "empty":               # only the button of the empty state on a phone (no FAB)
+            ok = ok and ui["emptyUp"] and not ui["fab"] and (not ui["upBtn"] if c.phone else ui["upBtn"])
         else:
             ok = ok and not ui["fab"] and not ui["upBtn"]
         c.check(f"{tag}: mode button and primary action", ok,
@@ -620,8 +667,8 @@ def t01_initial_load(c: Ctx):
             ok = ui["stateH"] == "Noch keine Dateien" and ui["emptyUp"] and ui["rows"] == 0 and ui["count"] == ""
             info = ui["stateH"]
         elif kind == "broken":
-            ok = ui["stateH"] == "Der Speicher muss eingerichtet werden" and ui["settingsLink"] and ui["rows"] == 0
-            info = ui["stateH"]
+            ok = ui["stateH"] == "Der Speicher muss eingerichtet werden" and ui["settingsLink"] == "Zum Formatieren" and ui["rows"] == 0
+            info = f"{ui['stateH']} [{ui['settingsLink']}]"
         else:
             want = exp["rows"]
             if want is None:
@@ -653,6 +700,12 @@ def t01b_small_phone_and_no_api(c: Ctx):
             c.open(hash_, viewport={"width": 320, "height": 568})
             c.page.wait_for_timeout(250)
             c.overflow_check(f"320 px wide, {name}{hash_}")
+            if hash_:
+                bad = c.ev(JS_ITEMS)
+                c.check("320 px wide, settings: no label clipped or squeezed by its control", not bad, bad[:4])
+            elif name == "files":
+                fab = c.ev("() => { const f = document.querySelector('#fab').getBoundingClientRect(), l = document.querySelector('#fab .fl'); return {w: Math.round(f.width), label: !!l && l.getClientRects().length > 0, name: document.querySelector('#fab').getAttribute('aria-label')}; }")
+                c.check("320 px wide: FAB is icon-only and keeps its accessible name", fab["w"] <= 56 and not fab["label"] and fab["name"] == "Hochladen", fab)
             c.shot(f"w320_{name}{'_settings' if hash_ else ''}", full=bool(hash_))
     # API unreachable from the first request on (page itself is delivered)
     c.reset("files")
@@ -750,14 +803,12 @@ def t04a_upload_picker(c: Ctx):
     keys = ["3mf", "txt", "odd"]
     names = [c.run.f[k].name for k in keys]
     sizes = [c.run.f[k].stat().st_size for k in keys]
-    seen = {"bars": [], "early": [], "shot": False, "states": set()}
+    seen = {"bars": [], "early": [], "shot": False}
 
     def on(s):
         it = s["items"]
         if it and it[0]["bar"] is not None:
             seen["bars"].append(it[0]["bar"])
-        for i in it:
-            seen["states"].add(i["s"].split(" ")[0] if "%" not in i["s"] else "%")
         if any("gespeichert" in t for t in s["toasts"]) and (s["working"] or any(i["live"] for i in it)):
             seen["early"].append(s["toasts"])
         if not seen["shot"] and it and it[0]["bar"] is not None and 15 < it[0]["bar"] < 70:
@@ -776,7 +827,12 @@ def t04a_upload_picker(c: Ctx):
     c.check("upload: final state 'Gespeichert' for every file", all(i["s"] == "Gespeichert" and not i["err"] for i in last["items"])
             and last["head"] == "3 Dateien gespeichert" and last["closeVisible"], f"head '{last['head']}' {[i['s'] for i in last['items']]}")
     ok = c.wait_toast("3 Dateien gespeichert.")
+    ov = c.ev(JS_TOAST_OVERLAP)
+    fab = c.ui()["fab"]
     c.shot("upload_done")
+    c.check("upload: the toast covers neither panel, FAB, header nor status strip", ov is not None and not ov["hit"], ov)
+    if c.phone:
+        c.check("upload panel on phone: FAB hidden while the panel is open, 'Weitere Dateien hochladen' offered", not fab and last["more"])
     st = {f["name"]: f for f in c.mock.state()["files"]}
     c.check("upload: success toast only after the server confirmed all files", ok and not seen["early"]
             and all(n in st and st[n]["size"] == s for n, s in zip(names, sizes)), f"early toasts: {seen['early'][:1]}")
@@ -784,24 +840,32 @@ def t04a_upload_picker(c: Ctx):
         ok, info = _row_ok(c, n, s)
         c.check(f"upload: '{n}' listed with size and 'Heute, …'", ok, info)
     c.check("upload: count updated", c.ui()["count"] == "17", c.ui()["count"])
+    clean = list(c.console)
+    gone = c.wait("() => document.querySelector('#uploads').hidden", None, 10000)
+    c.check("upload panel: closes itself a few seconds after a queue without errors", gone and (c.ui()["fab"] or not c.phone))
 
-    # panel / FAB / list overlap once the panel is open
+    # a queue with an error stays; the end of the list must remain reachable
+    c.pick("bad")
+    c.watch_uploads(timeout=30)
+    p.wait_for_timeout(7000)
+    pn = c.panel()
+    c.check("upload panel: stays open after an error", not pn["hidden"] and pn["closeVisible"], pn["head"])
     c.ev("() => scrollTo(0, document.documentElement.scrollHeight)")
-    p.wait_for_timeout(200)
-    cov = c.ev(r"""() => {
-      const rows = document.querySelectorAll('#list .row'), b = rows[rows.length - 1].querySelector('[data-more]');
-      const r = b.getBoundingClientRect(), el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      const up = document.querySelector('#uploads').getBoundingClientRect(), fab = document.querySelector('#fab').getBoundingClientRect();
-      return {covered: !(el && (el === b || b.contains(el))), by: el ? (el.id || el.className || el.tagName) : null,
-              fabOverPanel: fab.width > 0 && fab.bottom > up.top + 1 && fab.top < up.bottom, upH: Math.round(up.height)};
-    }""")
+    p.wait_for_timeout(250)
+    cov = c.ev(JS_COVERED, "#list .row:last-of-type [data-more], #list .hint")
     c.shot("upload_panel_list_end")
-    c.check("upload panel: last row's menu button stays reachable at the end of the list", not cov["covered"],
-            f"covered by '{cov['by']}', panel height {cov['upH']} px")
-    c.check("upload panel: FAB does not overlap the panel", not cov["fabOverPanel"])
+    c.check("upload panel: last row and its menu button stay reachable at the end of the list", not cov, cov)
+    try:
+        with p.expect_file_chooser(timeout=5000) as fc:
+            c.tap("#upMore")
+        fc.value.set_files(str(c.run.f["small"]))
+        c.watch_uploads(timeout=30)
+        c.check("upload panel: 'Weitere Dateien hochladen' opens the picker and adds to the queue", "klein.txt" in c.mock.names(), c.panel()["head"])
+    except PWTimeout:
+        c.check("upload panel: 'Weitere Dateien hochladen' opens the picker and adds to the queue", False, "no file chooser")
     c.tap("#upClose")
     c.check("upload panel: close button hides it", c.panel()["hidden"])
-    c.check("upload: no JS console errors", not c.console, c.console[:3])
+    c.check("upload: no JS console errors during the successful uploads", not clean, clean[:3])
 
 
 @test
@@ -993,41 +1057,112 @@ def t04f_drag_and_drop(c: Ctx):
 
 @test
 def t04g_upload_concurrency(c: Ctx):
-    # file actions while an upload is running (the device answers one request at a time)
-    c.reset("files", upload_kbps=50)
+    # the device answers one request at a time: everything else is refused while an upload runs
+    c.reset("files", upload_kbps=10)
     p = c.open()
-    c.pick("big")                                           # ~8 s
-    c.wait("() => { const b = document.querySelector('#upList .bar>i'); return b && parseFloat(b.style.width) > 3; }", None, 15000)
-    c.act("LEER.TXT", "del")
-    c.wait_dlg("Datei löschen?")
-    t0 = time.time()
-    c.tap("#dYes")
-    p.wait_for_timeout(2500)
-    d = c.dlg()
-    c.shot("delete_during_upload")
-    c.check("during an upload: file actions are blocked or explained instead of hanging silently",
-            not (d["open"] and d["yesDisabled"] and not d["err"]),
-            f"after 2.5 s: dialog open={d['open']}, 'Löschen' disabled={d['yesDisabled']}, message='{d['err']}'")
-    c.wait_dlg_closed(30000)
-    c.run.info(f"{c.prof}: delete confirmed during an upload returned after {time.time() - t0:.1f} s")
-    c.watch_uploads(timeout=40)
+    c.pick("big")                                           # ~40 s
+    c.wait(JS_BAR, None, 20000)
+    res = {}
+    for act in ("del", "ren", "dl"):
+        c.clear_toasts()
+        c.act("LEER.TXT", act)
+        res[act] = c.wait_toast(T_WAIT_UPLOAD, 3000)
+    ov = c.ev(JS_TOAST_OVERLAP)
+    c.shot("blocked_during_upload")
+    bad = [u for m, u in c.requests if any(x in u for x in ("/api/delete", "/api/rename", "/api/download"))]
+    c.check("during an upload: download/rename/delete are refused with a toast, no dialog, no request",
+            all(res.values()) and not c.dialogs() and not bad, f"{res} dialogs {c.dialogs()} requests {bad}")
+    c.check("during an upload: the toast does not cover the upload panel or the header", ov is not None and not ov["hit"], ov)
+    c.tap("#navSettings")
+    c.wait("() => !document.querySelector('#vSettings').hidden")
+    p.fill("#ssid", "Netz")
+    res = {}
+    for sel in ("#rebootBtn", "#flashBtn", "#fmtBtn", "#logBtn", "#swWrite", "#wifiBtn"):
+        c.clear_toasts()
+        c.ev("s => document.querySelector(s).click()", sel)      # (the panel may cover a button, see next check)
+        res[sel] = c.wait_toast(T_WAIT_UPLOAD, 3000)
+    c.wait("() => !document.querySelector('#toasts .toast')", None, 10000)     # judge the panel, not the toasts
+    c.ev("() => scrollTo(0, document.documentElement.scrollHeight)")
+    p.wait_for_timeout(300)
+    cov = c.ev(JS_COVERED, "#fmtBtn, #flashBtn")
+    c.shot("settings_end_with_upload_panel")
+    c.check("settings: the upload panel does not cover the buttons at the end of the page", not cov, cov)
+    posts = [u for m, u in c.requests if m == "POST" and "/api/upload" not in u]
+    still = c.ev("() => S.working")
+    c.check("during an upload: settings actions are refused with a toast, nothing is sent",
+            all(res.values()) and not c.dialogs() and not posts and still and c.ev("() => document.querySelector('#swWrite').checked")
+            and c.ev("() => document.querySelector('#log').hidden"), f"{res} posts {posts} upload still running: {still}")
+    c.tap("[data-cancel]")
+    c.wait("() => !S.working", None, 15000)
 
-    # a dialog the user opened is replaced by the "replace file?" question of the upload queue
-    c.reset("files", upload_kbps=60)
+    # dialogs are shown one after another
+    c.reset("files", upload_kbps=0)
     p = c.open()
-    c.pick("big", "exists")                                 # big ~7 s, then notizen.txt (exists)
-    c.wait("() => { const b = document.querySelector('#upList .bar>i'); return b && parseFloat(b.style.width) > 3; }", None, 15000)
     c.act("README", "ren")
     c.wait_dlg("Datei umbenennen")
-    c.wait("() => window.__dialogs.length > 1 || !S.working", None, 40000)
-    p.wait_for_timeout(300)
+    c.pick("exists")                                        # exists on the drive -> "replace?" question
+    c.wait("() => S.ups.length > 0 && S.ups[0].state === 'check'", None, 8000)
+    p.wait_for_timeout(1200)
     d = c.dlg()
-    c.shot("dialog_replaced_by_upload")
-    c.check("dialog collision: an open rename dialog is not replaced by another question",
-            d["title"] == "Datei umbenennen", f"dialog now: '{d['title']}' [{d['no']}] [{d['yes']}], input shown: {d['input'] is not None}")
-    if d["open"]:
+    c.check("dialog queue: a second question waits while a dialog is open", d["open"] and d["title"] == "Datei umbenennen"
+            and d["input"] == "README" and len(c.dialogs()) == 1, f"dialog: '{d['title']}', opened so far: {c.dialogs()}")
+    c.tap("#dNo")
+    ok = c.wait_dlg("Vorhandene Datei ersetzen?", 5000)
+    c.check("dialog queue: the waiting question appears once the first dialog is closed", ok, c.dlg()["title"])
+    if ok:
         c.tap("#dNo")
-    c.wait("() => !S.working", None, 30000)
+    c.wait("() => !S.working", None, 15000)
+
+    # cancel while the file is already sent completely ("Wird gespeichert …")
+    c.reset("files", delay_ms=2500)
+    p = c.open()
+    c.wait("() => document.querySelectorAll('#list .row').length === 14", None, 25000)
+    c.pick("small")
+    ok = c.wait("() => { const s = document.querySelector('#upList .l1 .s'); return !!s && s.textContent.includes('Wird gespeichert'); }", None, 30000)
+    if not ok:
+        c.check("cancel while 'Wird gespeichert …': state reached", False, c.panel()["items"])
+    else:
+        c.shot("upload_saving")
+        # Once the whole file is sent the device will store it, so there is no cancel button any more.
+        gone = c.ev("() => !document.querySelector('[data-cancel]')")
+        c.check("cancel while 'Wird gespeichert …': the cancel button is gone once the file is sent", gone)
+        c.wait("() => !S.working", None, 30000)
+        c.mock.set(delay_ms=0)
+        p.wait_for_timeout(500)
+        c.ev("() => refresh(true)")
+        stored = "klein.txt" in c.mock.names()
+        listed = any(r["name"] == "klein.txt" for r in c.rows())
+        pn = c.panel()
+        state = pn["items"][0]["s"] if pn["items"] else "(panel closed)"
+        c.shot("upload_cancel_while_saving")
+        c.check("cancel while 'Wird gespeichert …': the UI does not report 'Abgebrochen' for a file that was saved",
+                not (stored and state != "Gespeichert"), f"panel says '{state}', file on the device: {stored}, in the list: {listed}, toasts {pn['toasts']}")
+
+    # Escape pressed repeatedly while a request is pending that then fails
+    c.reset("files", delay_ms=1500, fail_next="IO")
+    p = c.open()
+    c.wait("() => document.querySelectorAll('#list .row').length === 14", None, 20000)
+    c.act("LEER.TXT", "del")
+    c.wait_dlg("Datei löschen?")
+    c.tap("#dYes")
+    p.wait_for_timeout(200)
+    p.keyboard.press("Escape")
+    p.wait_for_timeout(150)
+    d1 = c.dlg()
+    c.check("pending request: Escape does not dismiss the dialog", d1["open"] and d1["yesDisabled"], f"open={d1['open']}")
+    p.keyboard.press("Escape")
+    p.wait_for_timeout(100)
+    p.keyboard.press("Escape")
+    p.wait_for_timeout(2800)
+    d2 = c.dlg()
+    c.mock.set(delay_ms=0, fail_next="none")
+    if d2["open"]:
+        c.tap("#dNo")
+        c.wait_dlg_closed()
+    c.act("README", "del")
+    ok = c.wait_dlg("Datei löschen?", 4000)
+    c.check("pending request: dialogs keep working after Escape was pressed several times", ok and "README" in c.dlg()["body"],
+            f"after the failed request: dialog open={d2['open']}, message='{d2['err']}'; next dialog opens: {ok}")
 
 
 # ================================================================== 5. file actions
@@ -1050,13 +1185,16 @@ def t05a_row_menu(c: Ctx):
     c.check("menu: focus moves into the menu", m["focusInMenu"] and m["focusText"] == "Herunterladen", m["focusText"])
     nm = c.ev(JS_NAMES)
     c.check("menu open: every control has an accessible name", not nm["bad"], nm["bad"][:3])
-    p.keyboard.press("ArrowDown")
-    c.check("menu: arrow keys move between the items (role=menu)", c.menu()["focusText"] == "Umbenennen", c.menu()["focusText"])
+    got = []
+    for key in ("ArrowDown", "End", "Home", "ArrowUp"):
+        p.keyboard.press(key)
+        got.append(c.menu()["focusText"])
+    c.check("menu: arrow keys, Home and End move between the items", got == ["Umbenennen", "Löschen", "Herunterladen", "Löschen"], got)
     p.keyboard.press("Escape")
     m = c.menu()
-    foc = c.ev("() => { const a = document.activeElement; return a && a.matches('[data-more]') ? a.closest('.row').dataset.name : (a ? a.tagName : ''); }")
+    foc = c.ev(JS_MORE_FOCUS)
     c.check("menu: Escape closes it", m["hidden"] and m["scrimHidden"] and m["openRows"] == 0)
-    c.check("menu: focus returns to the ⋯ button after closing", foc == "Benchy.3mf", f"focus is on {foc}")
+    c.check("menu: focus returns to the ⋯ button after Escape", foc == "Benchy.3mf", f"focus is on {foc}")
 
     # click on the row itself
     row = c.row("firmware_backup.bin")
@@ -1072,17 +1210,21 @@ def t05a_row_menu(c: Ctx):
         ok = ok and abs(r["l"] - (bb["x"] + pos["x"])) < 3 and abs(r["t"] - (bb["y"] + pos["y"] + 4)) < 3
     c.check("menu via click on the row: opens at the pointer, inside the viewport", ok, r)
     c.point(20, 110)
-    c.check("menu: click on the backdrop closes it", c.menu()["hidden"])
+    foc = c.ev(JS_MORE_FOCUS)
+    c.check("menu: click on the backdrop closes it and returns the focus", c.menu()["hidden"] and foc == "firmware_backup.bin", f"focus is on {foc}")
 
     if not c.phone:
         c.row("README").click(button="right", position={"x": 300, "y": 30})
         m = c.menu()
         c.check("menu via right-click (desktop)", not m["hidden"] and m["openRows"] == 1, m["rect"])
         p.keyboard.press("Escape")
-        c.row("README").focus()
+        c.row("README").locator("[data-more]").focus()
         p.keyboard.press("Enter")
-        c.check("menu via keyboard (Enter on the row)", not c.menu()["hidden"] and c.menu()["focusInMenu"])
+        p.wait_for_timeout(100)
+        c.check("menu via keyboard (Enter on the ⋯ button)", not c.menu()["hidden"] and c.menu()["focusInMenu"])
         p.keyboard.press("Escape")
+        extra = c.ev("() => document.querySelectorAll('#list .row[tabindex], #list [role=button]').length")
+        c.check("list: one Tab stop per file (rows themselves are not focusable)", extra == 0, f"{extra} extra stops")
 
     # last row at the very bottom of the page
     c.ev("() => scrollTo(0, document.documentElement.scrollHeight)")
@@ -1092,11 +1234,10 @@ def t05a_row_menu(c: Ctx):
     r = m["rect"]
     c.check("menu for the last row: clamped into the viewport", not m["hidden"] and r["b"] <= m["vh"] + 0.5 and r["t"] >= 0, r)
     c.shot("menu_last_row")
-    # the list is re-rendered by every status poll
     p.wait_for_timeout(3600)
     m = c.menu()
-    c.check("menu: row stays highlighted while its menu is open (survives the 3 s status poll)",
-            not m["hidden"] and m["openRows"] == 1, f"highlighted rows: {m['openRows']}")
+    c.check("menu: row stays highlighted and focus stays in the menu across the 3 s status poll",
+            not m["hidden"] and m["openRows"] == 1 and m["focusInMenu"], f"highlighted rows: {m['openRows']}, focus in menu: {m['focusInMenu']}")
     p.keyboard.press("Escape")
 
     if not c.phone:
@@ -1110,6 +1251,10 @@ def t05a_row_menu(c: Ctx):
                 r["l"] >= 0 and r["r"] <= m["vw"] + 0.5 and r["b"] <= m["vh"] + 0.5 and r["t"] >= 0, r)
         c.overflow_check("narrow desktop window 760 px")
         c.shot("menu_narrow_window")
+        p.keyboard.press("Escape")
+        c.ev("() => toast('Das USB-Laufwerk ist bereitgestellt.')")
+        ov = c.ev(JS_TOAST_OVERLAP)
+        c.check("narrow desktop window: toast stays inside the viewport", ov and ov["rect"][0] >= 0 and ov["rect"][2] <= ov["vw"] and ov["rect"][3] <= ov["vh"], ov)
 
 
 @test
@@ -1165,7 +1310,12 @@ def t05c_rename(c: Ctx):
     d = attempt("   ")
     c.check("rename: empty name rejected", d["open"] and d["err"] == "Bitte einen Namen eingeben.", d["err"])
     d = attempt("x" * 130 + ".3mf")
-    c.check("rename: over-long name (server BAD_NAME) shows a readable message", d["open"] and bool(d["err"]), d["err"])
+    c.check("rename: over-long name rejected with a clear message, without asking the device",
+            d["open"] and d["err"] == "Der Name ist zu lang. Bitte kürzen – Umlaute und Sonderzeichen zählen doppelt."
+            and not any("x" * 130 in u for _, u in c.requests), d["err"])
+    d = attempt("ä" * 70 + ".3mf")                     # 74 characters, but 144 bytes in UTF-8
+    c.check("rename: the length message is correct for a 74-character name with umlauts",
+            not (d["open"] and "120 Zeichen" in d["err"]), d["err"])
     p.fill("#dInput", "Würfel neu äß.3mf")
     c.tap("#dYes")
     ok = c.wait_dlg_closed() and c.wait_toast("Umbenannt in „Würfel neu äß.3mf“.")
@@ -1174,6 +1324,8 @@ def t05c_rename(c: Ctx):
     c.shot("rename_done")
     c.check("rename: success updates list and shows a toast", ok and "Würfel neu äß.3mf" in names and "Würfel.3mf" not in names
             and "Würfel neu äß.3mf" in rows and "Würfel.3mf" not in rows and len(rows) == 14, [t["text"] for t in c.toasts()])
+    foc = c.ev(JS_MORE_FOCUS)
+    c.check("rename: focus returns to the renamed file's ⋯ button", foc == "Würfel neu äß.3mf", f"focus is on {foc}")
 
 
 @test
@@ -1198,7 +1350,8 @@ def t05d_delete_and_dismiss(c: Ctx):
     c.wait_dlg_closed()
     foc = c.ev("() => { const a = document.activeElement; return !a || a === document.body ? 'body' : a.tagName.toLowerCase() + (a.id ? '#' + a.id : '') + '.' + a.className; }")
     c.check("delete: Escape closes the dialog, file kept", not c.dlg()["open"] and LONG_NAME in c.mock.names())
-    c.check("dialog opened from the row menu: focus returns to the list (not <body>)", foc != "body", f"focus is on {foc}")
+    foc = c.ev(JS_MORE_FOCUS)
+    c.check("dialog opened from the row menu: focus returns to that file's ⋯ button", foc == LONG_NAME, f"focus is on {foc[:30]}")
 
     c.act("LEER.TXT", "del")
     c.wait_dlg("Datei löschen?")
@@ -1210,6 +1363,12 @@ def t05d_delete_and_dismiss(c: Ctx):
     c.wait_dlg("Datei löschen?")
     c.tap("#dYes")
     ok = c.wait_dlg_closed() and c.wait_toast("Gelöscht.")
+    c.open_menu("README")                      # next action right away, while the toast is still shown
+    cov = c.ev(JS_COVERED, "#menu [data-act]")
+    tv = c.ev("() => document.querySelectorAll('#toasts .toast').length")
+    c.shot("menu_with_toast")
+    c.check("after an action: the toast does not cover the next row menu", tv >= 1 and not cov, f"toasts visible: {tv}; covered: {cov}")
+    p.keyboard.press("Escape")
     ui = c.ui()
     c.check("delete: confirm removes the file, list and count update", ok and "LEER.TXT" not in c.mock.names()
             and ui["rows"] == 13 and ui["count"] == "13" and not any(r["name"] == "LEER.TXT" for r in c.rows()), ui["count"])
@@ -1303,7 +1462,7 @@ def t06_search_sort(c: Ctx):
                 c.shot("sorted_by_size")
     else:
         def head(key):
-            return c.ev("k => { const b = document.querySelector('#list .cols [data-sort=\"' + k + '\"]'); const u = b.querySelector('use'); return {sort: b.getAttribute('aria-sort'), icon: u ? u.getAttribute('href') : null, others: [...document.querySelectorAll('#list .cols [aria-sort]')].length}; }", key)
+            return c.ev("k => { const b = document.querySelector('#list .cols [data-sort=\"' + k + '\"]'); const u = b.querySelector('use'); return {on: b.classList.contains('on'), dir: b.dataset.dir || null, label: b.getAttribute('aria-label'), icon: u ? u.getAttribute('href') : null, others: document.querySelectorAll('#list .cols .on').length, idle: [...document.querySelectorAll('#list .cols button:not(.on)')].map(x => x.getAttribute('aria-label')), ariaSort: document.querySelectorAll('#list [aria-sort]').length}; }", key)
         for key, label in (("size", "Größe"), ("mtime", "Geändert"), ("name", "Name")):
             for click in (1, 2):
                 c.tap(f'#list .cols [data-sort="{key}"]')
@@ -1315,14 +1474,27 @@ def t06_search_sort(c: Ctx):
                     ok = got == (NAME_ORDER[::-1] if desc else NAME_ORDER)
                 else:
                     ok = mono([files[n][key] for n in got], desc) and sorted(got) == sorted(files)
-                ok = ok and h["sort"] == ("descending" if desc else "ascending") and h["others"] == 1 \
-                    and h["icon"] == ("#i-down" if desc else "#i-up")
-                c.check(f"sort by column '{label}', click {click}: order, direction toggle, aria-sort", ok,
-                        f"aria-sort={h['sort']} icon={h['icon']} first: {[n[:10] for n in got[:3]]}")
+                ok = ok and h["on"] and h["dir"] == ("desc" if desc else "asc") and h["others"] == 1 and h["ariaSort"] == 0 \
+                    and h["icon"] == ("#i-down" if desc else "#i-up") \
+                    and h["label"] == f"{label}, {'absteigend' if desc else 'aufsteigend'} sortiert" \
+                    and all(x.endswith(", sortieren") for x in h["idle"]) and len(h["idle"]) == 2
+                c.check(f"sort by column '{label}', click {click}: order, direction toggle, accessible label", ok,
+                        f"dir={h['dir']} label='{h['label']}' icon={h['icon']} first: {[n[:10] for n in got[:3]]}")
                 if key == "size" and click == 1:
                     c.shot("sorted_by_size")
-        role = c.ev("() => { const b = document.querySelector('#list .cols [aria-sort]'); return (b.getAttribute('role') || b.tagName.toLowerCase()) + ' in ' + (b.parentElement.getAttribute('role') || b.parentElement.tagName.toLowerCase()); }")
-        c.check("sort: aria-sort sits on a columnheader (the only role that supports it)", "columnheader" in role, role)
+
+    # how names are drawn: extension stays visible, no "?" badge, long badge text fits
+    nm = c.ev("""n => { const row = [...document.querySelectorAll('#list .row')].find(r => r.dataset.name === n);
+      const nb = row.querySelector('.nb'), ne = row.querySelector('.ne'), box = row.querySelector('.name').getBoundingClientRect();
+      const readme = [...document.querySelectorAll('#list .row')].find(r => r.dataset.name === 'README').querySelector('.ficon');
+      const long = document.querySelector('#list .ficon.long');
+      return {ext: ne ? ne.textContent : null, cut: nb.scrollWidth > nb.clientWidth, extInside: !!ne && ne.getBoundingClientRect().right <= box.right + 0.5,
+              title: row.title === n, readme: readme.textContent.trim() + (readme.querySelector('svg') ? '[icon]' : ''),
+              long: long ? long.textContent : null, longFits: !!long && long.scrollWidth <= long.clientWidth}; }""", LONG_NAME)
+    c.check("names: a shortened long name keeps its extension visible, full name in the tooltip",
+            nm["ext"] == ".3mf" and nm["cut"] and nm["extInside"] and nm["title"], nm)
+    c.check("names: file without extension shows an icon, 5-letter type label fits its badge",
+            nm["readme"] == "[icon]" and nm["long"] == "GCODE" and nm["longFits"], nm)
 
     # numeric collation
     c.reset("empty", upload_kbps=0)
@@ -1365,6 +1537,10 @@ def t07a_settings_view(c: Ctx):
     c.check("settings: every control has an accessible name", not nm["bad"], nm["bad"][:3])
     c.check("settings: no JS console errors", not c.console, c.console[:3])
 
+    c.tap("a.back")                              # enter the settings the way a user does: files -> settings
+    c.wait("() => !document.querySelector('#vFiles').hidden")
+    c.tap("#navSettings")
+    c.wait("() => !document.querySelector('#vSettings').hidden")
     hist0 = c.ev("() => history.length")
     for href in ("#s-usb", "#s-sec", "#s-sys", "#s-net"):
         c.ev("() => scrollTo(0, 0)")
@@ -1381,8 +1557,10 @@ def t07a_settings_view(c: Ctx):
     p.go_back()
     p.wait_for_timeout(400)
     ui = c.ui()
-    c.check("settings: one browser 'Back' leaves the settings after using the chips", ui["files"],
+    c.check("settings: chips add no history entries, one browser 'Back' leaves the settings", hist == hist0 and ui["files"],
             f"history grew by {hist - hist0} entries; after Back: hash '{ui['hash']}', settings visible={ui['settings']}")
+    c.tap("#navSettings")
+    c.wait("() => !document.querySelector('#vSettings').hidden")
     c.ev("() => scrollTo(0, document.documentElement.scrollHeight)")
     p.wait_for_timeout(200)
     c.shot("settings_danger")
@@ -1562,17 +1740,22 @@ def t07e_format(c: Ctx):
     c.tap("#dYes")
     ok = c.wait_dlg("Speicher formatieren?")
     c.check("format in USB mode: then the format confirmation", ok and c.mock.state()["owner"] == "app", c.dlg()["title"])
+    c.clear_toasts()
     c.tap("#dNo")
     c.wait_dlg_closed()
-    p.wait_for_timeout(3500)
+    ok = c.wait_toast("Das USB-Laufwerk ist bereitgestellt.", 8000)
     st = c.mock.state()
-    c.check("format in USB mode, format cancelled: the USB device gets the drive back",
-            st["owner"] == "usb", f"owner after cancelling the format: {st['owner']} (files {st['file_count']})")
+    c.check("format in USB mode, format cancelled: the USB device gets the drive back, toast says so",
+            ok and st["owner"] == "usb" and st["file_count"] == 3, f"owner {st['owner']}, files {st['file_count']}, toasts {[t['text'] for t in c.toasts()]}")
 
     c.reset("no_fs")
     p = c.open()
-    c.tap('#list .state a[href="#einstellungen"]')
+    c.tap('#list .state a[href="#s-danger"]')
     c.wait("() => !document.querySelector('#vSettings').hidden")
+    p.wait_for_timeout(1300)
+    g = c.ev("() => { const r = document.querySelector('#fmtBtn').getBoundingClientRect(); return {top: Math.round(r.top), bottom: Math.round(r.bottom), vh: innerHeight, hash: location.hash}; }")
+    c.check("no_fs: 'Zum Formatieren' opens the settings at the format button", g["top"] >= 60 and g["bottom"] <= g["vh"] and g["hash"] == "#einstellungen", g)
+    c.shot("no_fs_format_target")
     c.tap("#fmtBtn")
     c.wait_dlg("Speicher formatieren?")
     p.fill("#dInput", "löschen")
@@ -1765,6 +1948,9 @@ def t08b_slow_device(c: Ctx):
 
     c.reset("files", other_upload=1)
     c.open()
+    n = c.ui()["notice"]
+    c.check("upload by another client: a notice explains it", n.startswith("Ein anderes Gerät lädt gerade eine Datei hoch."), n)
+    c.shot("other_upload_notice")
     c.tap("#modeBtn")
     ok = c.wait("() => window.__toasts.length > 0", None, 8000)
     t = c.toasts()
@@ -1781,10 +1967,9 @@ def t09a_accessibility(c: Ctx):
     nm = c.ev(JS_NAMES)
     c.check("a11y files view: every button/link/input has an accessible name", not nm["bad"], f"{nm['n']} controls {nm['bad'][:3]}")
     nested = c.ev("() => document.querySelectorAll('[role=button] button, [role=button] a, button button').length")
-    c.check("a11y: no interactive element nested inside another one (row role=button contains a button)", nested == 0,
-            f"{nested} nested controls")
-    h1 = c.ev("() => document.querySelector('#vFiles h1').textContent")
-    c.check("a11y: page heading text is clean", h1 == "Meine Dateien", repr(h1))
+    c.check("a11y: no interactive element nested inside another one", nested == 0, f"{nested} nested controls")
+    h1 = c.ev("() => ({t: document.querySelector('#vFiles h1').textContent.trim(), l: document.querySelector('#count').getAttribute('aria-label'), more: document.querySelector('#list [data-more]').getAttribute('aria-haspopup')})")
+    c.check("a11y: heading reads 'Meine Dateien 14', count labelled, ⋯ announces a menu", h1["t"] == "Meine Dateien 14" and h1["l"] == "14 Dateien" and h1["more"] == "menu", h1)
 
     if not c.phone:
         def walk(n, label):
@@ -1801,11 +1986,10 @@ def t09a_accessibility(c: Ctx):
                     f"{len(seen)} stops; without indicator: {none[:4]}" if none else f"{len(seen)} stops, e.g. {seen[:6]}")
         walk(12, "files view")
         c.shot("focus_ring")
-        # focus inside the list is lost when the status poll re-renders it
-        c.row("Benchy.3mf").focus()
+        c.row("Benchy.3mf").locator("[data-more]").focus()
         p.wait_for_timeout(3700)
-        foc = c.ev("() => { const a = document.activeElement; return a && a.dataset && a.dataset.name ? a.dataset.name : (a ? a.tagName : ''); }")
-        c.check("a11y: keyboard focus on a row survives the 3 s status poll", foc == "Benchy.3mf", f"focus after 3.7 s: {foc}")
+        foc = c.ev(JS_MORE_FOCUS)
+        c.check("a11y: keyboard focus in the list survives the 3 s status poll", foc == "Benchy.3mf", f"focus after 3.7 s: {foc}")
         c.ev("() => location.hash = '#einstellungen'")
         p.wait_for_timeout(300)
         walk(24, "settings")
@@ -1820,27 +2004,32 @@ def t09a_accessibility(c: Ctx):
         c.tap("#dNo")
         c.pick("big")
         c.wait("() => !!document.querySelector('[data-cancel]')")
-        res += c.ev(JS_TARGETS, ["[data-cancel]"])
+        res += c.ev(JS_TARGETS, ["[data-cancel]", "#upMore"])
         c.tap("[data-cancel]")
         c.wait("() => !S.working", None, 10000)
         res += c.ev(JS_TARGETS, ["#upClose"])
         c.ev("() => location.hash = '#einstellungen'")
         p.wait_for_timeout(300)
-        res += c.ev(JS_TARGETS, ["a.back", ".tabs a", "label.switch", "#swWrite", "#theme button", "#wifiBtn", "#logBtn", "#rebootBtn", "#fmtBtn", "#flashBtn"])
+        res += c.ev(JS_TARGETS, ["a.back", ".tabs a", "#swWrite", "#swAuto", "#theme button", "#wifiBtn", "#logBtn", "#rebootBtn", "#fmtBtn", "#flashBtn"])
         for r in res:
             if r.get("missing"):
                 c.check(f"touch target {r['sel']}: found", False, "element not visible")
             else:
                 c.check(f"touch target {r['sel']} at least 40x40 px", r["w"] >= 40 and r["h"] >= 40, f"{r['w']}x{r['h']}")
+        # enlarged hit areas must not steal taps from each other
+        cov = c.ev(JS_COVERED, "#swWrite, #swAuto, #theme button, .tabs a, a.back")
+        c.check("touch targets in the settings do not cover each other", not cov, cov)
 
 
 @test
 def t09b_contrast(c: Ctx):
     muted_files = ["#modeSub", "#stoSub", "#count", ".row .date" if not c.phone else ".row .meta", ".hint",
-                   "#sortM" if c.phone else ".cols button:not([aria-sort])"]
+                   "#sortM" if c.phone else ".cols button:not(.on)"]
     other_files = [".ficon:not(.model):not(.image):not(.doc):not(.archive):not(.media)", ".ficon.model", ".ficon.image",
-                   ".ficon.doc", ".ficon.archive", ".ficon.media", ".btn.primary", "#toasts .toast:not(.err)", "#toasts .toast.err",
+                   ".ficon.doc", ".ficon.archive", ".ficon.media", ".ficon.long", "#upBtn", "#toasts .toast:not(.err)", "#toasts .toast.err",
                    "#notice", "#uploads .s.ok", "#uploads .s.err", "#uploads .l1 .s:not(.ok)"]
+    if c.phone:                     # no primary button here on a phone: the FAB hides while the upload panel is open
+        other_files.remove("#upBtn")
     muted_set = [".sec > h2", ".item .txt p", ".kv span:last-child", "#theme button[aria-pressed=false]", "footer", "a.back"]
     other_set = [".dangerzone > h2", ".btn.outline-danger", "#notice.info", ".tabs a", "#wifiMsg.err", "#wifiMsg.ok"]
     dlg_sel = ["#dBody p", "#dYes.danger", "#dErr"]
@@ -1849,6 +2038,8 @@ def t09b_contrast(c: Ctx):
         for scheme in ("light", "dark"):
             c.page.emulate_media(color_scheme=scheme)
             for group, sels, need in (("muted text", muted, True), ("other text", other, False)):
+                if not sels:
+                    continue
                 res = c.ev(JS_CONTRAST, sels)
                 bad = [f"{r['sel']} {r['ratio']}:1 ({r['fg']} on {r['bg']}, {r['px']})" for r in res if not r.get("missing") and r["ratio"] < 4.5]
                 miss = [r["sel"] for r in res if r.get("missing")]
@@ -1898,7 +2089,10 @@ def t10_measure(c: Ctx):
     ok = c.wait("() => window.__rowsPainted > 0", None, 20000)
     c.check("measure: 300-file list rendered", ok and c.ui()["rows"] == 300)
     nav = c.ev("() => { const n = performance.getEntriesByType('navigation')[0]; return {resp: n.responseEnd, dcl: n.domContentLoadedEventEnd, load: n.loadEventEnd, rows: window.__rowsAt, painted: window.__rowsPainted}; }")
-    med = c.ev("() => { const ts = []; for (let i = 0; i < 9; i++) { const t = performance.now(); renderList(); document.body.offsetHeight; ts.push(performance.now() - t); } ts.sort((a, b) => a - b); return ts[4]; }")
+    js_cost = ("(force) => { const ts = []; for (let i = 0; i < 9; i++) { const t = performance.now(); if (force) listSig = ''; "
+               "render(); document.body.offsetHeight; ts.push(performance.now() - t); } ts.sort((a, b) => a - b); return ts[4]; }")
+    med = c.ev(js_cost, True)
+    poll = c.ev(js_cost, False)
     cdp = c.context.new_cdp_session(p)
     cdp.send("HeapProfiler.enable")
     cdp.send("HeapProfiler.collectGarbage")
@@ -1907,23 +2101,25 @@ def t10_measure(c: Ctx):
     met = {m["name"]: m["value"] for m in cdp.send("Performance.getMetrics")["metrics"]}
     run.measure.append(f"{c.prof} (many, 300 files): response end {nav['resp']:.0f} ms, DOMContentLoaded {nav['dcl']:.0f} ms, "
                        f"list in DOM {nav['rows']:.0f} ms, painted {nav['painted']:.0f} ms after navigation start; "
-                       f"renderList()+layout median {med:.1f} ms; JS heap used {heap['usedSize'] / 1024:.0f} kB "
+                       f"full list rebuild+layout median {med:.1f} ms, render() of an unchanged poll {poll:.2f} ms; JS heap used {heap['usedSize'] / 1024:.0f} kB "
                        f"(total {heap['totalSize'] / 1024:.0f} kB), DOM nodes {met.get('Nodes', 0):.0f}")
     if c.phone:
         cdp.send("Emulation.setCPUThrottlingRate", {"rate": 4})
         p.reload()
         c.wait("() => window.__rowsPainted > 0", None, 30000)
         nav = c.ev("() => { const n = performance.getEntriesByType('navigation')[0]; return {dcl: n.domContentLoadedEventEnd, rows: window.__rowsAt, painted: window.__rowsPainted}; }")
-        med = c.ev("() => { const ts = []; for (let i = 0; i < 5; i++) { const t = performance.now(); renderList(); document.body.offsetHeight; ts.push(performance.now() - t); } ts.sort((a, b) => a - b); return ts[2]; }")
+        med = c.ev(js_cost, True)
+        poll = c.ev(js_cost, False)
         run.measure.append(f"phone with 4x CPU throttling (many): DOMContentLoaded {nav['dcl']:.0f} ms, list in DOM {nav['rows']:.0f} ms, "
-                           f"painted {nav['painted']:.0f} ms; renderList()+layout median {med:.1f} ms (runs on every 3 s status poll)")
+                           f"painted {nav['painted']:.0f} ms; full list rebuild+layout median {med:.1f} ms, unchanged poll {poll:.2f} ms")
         cdp.send("Emulation.setCPUThrottlingRate", {"rate": 1})
     c.reset("truncated")
     p = c.open(wait=False)
     c.wait("() => window.__rowsPainted > 0", None, 30000)
     n = c.ui()["rows"]
-    med = c.ev("() => { const ts = []; for (let i = 0; i < 5; i++) { const t = performance.now(); renderList(); document.body.offsetHeight; ts.push(performance.now() - t); } ts.sort((a, b) => a - b); return ts[2]; }")
-    run.measure.append(f"{c.prof} (truncated, {n} rows): renderList()+layout median {med:.1f} ms")
+    med = c.ev(js_cost, True)
+    poll = c.ev(js_cost, False)
+    run.measure.append(f"{c.prof} (truncated, {n} rows): full list rebuild+layout median {med:.1f} ms, unchanged poll {poll:.2f} ms")
 
 
 # ================================================================== main

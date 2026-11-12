@@ -162,7 +162,7 @@ label.lbl{display:block;font-size:13px;font-weight:600;margin:0 0 6px}
 
 /* ---------- Toasts ---------- */
 .toasts{position:fixed;left:24px;bottom:24px;z-index:60;display:flex;flex-direction:column;align-items:flex-start;gap:8px;pointer-events:none;max-width:min(440px,calc(100vw - 444px))}
-.toast{pointer-events:auto;max-width:520px;padding:12px 16px;border-radius:12px;background:var(--text);color:var(--bg);box-shadow:var(--shadow);font-size:14px;animation:tin .18s ease-out}
+.toast{max-width:520px;padding:12px 16px;border-radius:12px;background:var(--text);color:var(--bg);box-shadow:var(--shadow);font-size:14px;animation:tin .18s ease-out}
 .toast.err{background:var(--danger);color:var(--on-danger)}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
 
@@ -190,7 +190,8 @@ dialog .dacts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;fle
 .group{background:var(--surface);border-radius:var(--r-lg)}
 .item{display:flex;gap:16px;align-items:center;padding:16px 18px}
 .item + .item{border-top:1px solid var(--line)}
-.item .txt{flex:1;min-width:0}
+.item .txt{flex:1 1 170px;min-width:0}
+.item.col>.txt{flex:none}
 .item .txt p{font-size:13px;color:var(--muted);margin-top:2px}
 .item.col{flex-direction:column;align-items:stretch;gap:12px}
 .item .inner{display:flex;gap:16px;align-items:center}
@@ -213,7 +214,7 @@ dialog .dacts{display:flex;gap:10px;justify-content:flex-end;margin-top:14px;fle
 pre.log{margin:0;padding:14px;border-radius:var(--r);background:var(--bg);font:12px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;overflow:auto;max-height:340px}
 .dangerzone .group{box-shadow:inset 0 0 0 1.5px var(--danger-soft)}
 .dangerzone>h2{color:var(--danger)}
-footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom));font-size:13px;color:var(--muted)}
+footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));font-size:13px;color:var(--muted)}
 
 /* ---------- Phone ---------- */
 @media (max-width:720px){
@@ -238,6 +239,7 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom));font-size:13px;co
   .form{grid-template-columns:1fr}
   .list{padding-bottom:calc(var(--ph,0px) + 96px)}
   .item{padding:14px 16px;flex-wrap:wrap}
+  .item .inner{flex-wrap:wrap}
   .toasts{left:16px;right:16px;max-width:none;align-items:stretch;bottom:calc(86px + env(safe-area-inset-bottom))}
   .has-panel .toasts{bottom:calc(var(--ph,0px) + 12px)}
   .has-panel .fab{display:none}
@@ -476,6 +478,7 @@ const post = (path, o = {}) => api(path, Object.assign({method: "POST"}, o));
 
 /* ---------- toasts & dialog ---------- */
 function toast(text, err){
+  Array.from($("#toasts").children).filter(t => t.textContent === text).forEach(t => t.remove());   // same message again: replace, do not stack
   const el = document.createElement("div");
   el.className = "toast" + (err ? " err" : ""); el.setAttribute("role", err ? "alert" : "status"); el.textContent = text;
   $("#toasts").appendChild(el);
@@ -500,7 +503,8 @@ function askNow(o){
     yes.textContent = o.yes || "OK"; yes.className = "btn " + (o.danger ? "danger" : "primary"); yes.disabled = false;
     no.textContent = o.no || "Abbrechen"; no.disabled = false;
     let done = false, running = false;
-    const finish = v => { if (done || running) return; done = true; d.close(); resolve(v); };
+    const finish = v => { if (done) return; done = true; if (d.open) d.close(); resolve(v); };
+    const cancel = () => { if (!running) finish(false); };
     $("#dForm").onsubmit = async e => {
       e.preventDefault();
       const val = o.input ? inp.value.trim() : true;
@@ -509,13 +513,18 @@ function askNow(o){
         running = true; yes.disabled = no.disabled = true; $("#dErr").textContent = "";
         const err = await o.run(val);
         running = false; yes.disabled = no.disabled = false;
+        if (!d.open) {                       // the browser closed the dialog while we waited
+          if (err) toast(err, true);
+          return finish(err ? false : val);
+        }
         if (err) { $("#dErr").textContent = err; return; }
       }
       finish(val);
     };
-    no.onclick = () => finish(false);
-    d.oncancel = e => { e.preventDefault(); finish(false); };
-    d.onclick = e => { if (e.target === d) finish(false); };
+    no.onclick = cancel;
+    d.oncancel = e => { e.preventDefault(); cancel(); };
+    d.onclick = e => { if (e.target === d) cancel(); };
+    d.onclose = () => { if (!d.open) cancel(); };   // a late close event of the previous dialog must not close this one
     d.showModal();
     if (o.input) { inp.focus(); if (o.input.select) inp.setSelectionRange(0, o.input.select); else inp.select(); }
     else (o.danger ? no : yes).focus();
@@ -720,8 +729,8 @@ function openMenu(row, ev){
   m.onclick = async e => {
     const b = e.target.closest("[data-act]"); if (!b) return;
     closeMenu();
-    await ({dl: download, ren: renameFile, del: deleteFile})[b.dataset.act](name);
-    const back = rowButton(name);            // return the focus to the file if it still exists
+    const renamed = await ({dl: download, ren: renameFile, del: deleteFile})[b.dataset.act](name);
+    const back = rowButton(typeof renamed === "string" ? renamed : name);   // focus the file if it still exists
     if (back) back.focus();
   };
   m.onkeydown = e => {
@@ -754,14 +763,14 @@ async function renameFile(name){
     run: async v => {
       if (!v) return "Bitte einen Namen eingeben.";
       if (v === name) return "";
-      if (new TextEncoder().encode(v).length > 120) return "Der Name ist zu lang – möglich sind höchstens 120 Zeichen.";
+      if (new TextEncoder().encode(v).length > 120) return "Der Name ist zu lang. Bitte kürzen – Umlaute und Sonderzeichen zählen doppelt.";
       if (BAD_CHARS.test(v) || /^[. ]|[. ]$/.test(v)) return 'Der Name darf nicht mit Punkt oder Leerzeichen beginnen oder enden und keines dieser Zeichen enthalten: / \\ : * ? " < > |';
       const r = await post(`/api/rename?name=${enc(name)}&to=${enc(v)}`);
       if (r.ok) return "";
       return r.code === "EXISTS" ? "Eine Datei mit diesem Namen gibt es bereits." : r.error;
     }
   });
-  if (to && to !== name) { await refresh(true); toast("Umbenannt in „" + to + "“."); }
+  if (to && to !== name) { await refresh(true); toast("Umbenannt in „" + to + "“."); return to; }
 }
 async function deleteFile(name){
   if (uploading()) return;
@@ -880,7 +889,8 @@ async function uploadOne(u){
       const left = rate ? (e.total - e.loaded) / rate : 0;
       // 100 % only means "sent"; the file counts as saved once the device confirms it.
       u.msg = e.loaded >= e.total ? "Wird gespeichert …" : Math.floor(u.pct) + " %" + (left > 5 ? " · noch " + (left > 90 ? Math.round(left / 60) + " min" : Math.round(left) + " s") : "");
-      paintUpload(u);
+      if (e.loaded >= e.total && !u.sent) { u.sent = true; renderUploads(); }
+      else paintUpload(u);
     };
     x.onload = () => {
       let j = null; try { j = JSON.parse(x.responseText); } catch(e) {}
@@ -909,7 +919,7 @@ function renderUploads(){
     $("#upHead").textContent = active ? `${active === 1 ? "1 Datei wird" : active + " Dateien werden"} hochgeladen` : failed ? `${failed} von ${S.ups.length} nicht gespeichert` : done ? `${done === 1 ? "1 Datei" : done + " Dateien"} gespeichert` : "Uploads";
     $("#upClose").hidden = active > 0;
     $("#upList").innerHTML = S.ups.map(u => {
-      const live = LIVE.includes(u.state);
+      const live = LIVE.includes(u.state) && !u.sent;
       return `<li id="up${u.id}"><div class="l1"><span class="n" title="${esc(u.name)}">${esc(u.name)}</span>
         <span class="s ${u.state === "done" ? "ok" : ""}">${u.state === "err" ? "" : esc(u.msg)}</span>
         ${live ? `<button class="icon-btn x" data-cancel="${u.id}" aria-label="Upload abbrechen" title="Abbrechen">${icon("x")}</button>` : ""}</div>
@@ -922,7 +932,7 @@ function renderUploads(){
 }
 $("#upList").onclick = e => {
   const b = e.target.closest("[data-cancel]"); if (!b) return;
-  const u = S.ups.find(x => x.id === +b.dataset.cancel); if (!u) return;
+  const u = S.ups.find(x => x.id === +b.dataset.cancel); if (!u || u.sent) return;
   if (u.xhr) u.xhr.abort(); else endUp(u, "cancel", "Abgebrochen");
 };
 $("#upClose").onclick = () => { S.ups = []; renderUploads(); };
