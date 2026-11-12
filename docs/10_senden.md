@@ -9,7 +9,8 @@ Es gibt drei Wege, Dateien auf das Laufwerk zu bringen: die Weboberfläche im Br
 3. Unten auf **Teilen** tippen.
 4. **Zum Home-Bildschirm** wählen und mit **Hinzufügen** bestätigen.
 
-Das Icon öffnet die Weboberfläche danach ohne Browser-Leiste.
+Das Icon öffnet die Weboberfläche danach ohne Browser-Leiste. Das ist auf einem echten Handy
+**noch nicht geprüft**; Stand 0.3.0 ist das Icon im Quelltext (Web-App-Manifest) vorhanden.
 
 ## iPhone-Kurzbefehl einrichten
 
@@ -66,7 +67,9 @@ Die Meldungen stammen aus der Antwort des Geräts (`code` und `error`).
 | Meldung / Code | Bedeutung | Was tun |
 |---|---|---|
 | `UNAUTHORIZED` / `BAD_LOGIN` | Benutzer oder Passwort falsch, oder der Header fehlt | Schritt 6a und 6b prüfen. Im Header `Authorization` muss `Basic ` (mit Leerzeichen) vor dem Base64-Text stehen. |
-| `LOCKED` | Nach 5 Fehlversuchen gesperrt | 30 Sekunden warten, dann erneut senden. |
+| `LOCKED` | Nach 5 Fehlversuchen in Folge gesperrt (Anmeldesperre je Adresse) | Die Antwort nennt die Wartezeit im Header `Retry-After`. Sie beginnt bei 30 Sekunden und verdoppelt sich bei jeder neuen Sperre, höchstens 15 Minuten. Während der Wartezeit prüft das Gerät gar nichts. Nach Ablauf setzt eine richtige Anmeldung Zähler und Dauer zurück. |
+| `DRIVE_LOCKED` | Das Laufwerk ist verschlüsselt und gesperrt (seit 0.4.0) | Laufwerk im Browser mit dem Laufwerks-Passwort entsperren, dann erneut senden. Das Anmelde-Passwort reicht dafür nicht. |
+| `MUST_CHANGE_PASSWORD` | Das Konto `admin` hat noch das Auslieferungspasswort | Im Browser einmal anmelden und das Passwort ändern. Ohne Änderung ist keine Anfrage erlaubt, auch nicht per Kurzbefehl. |
 | `HOST_ACTIVE` | Das USB-Gerät nutzt das Laufwerk | Am USB-Gerät (z. B. Drucker) zuerst auswerfen bzw. die Übernahme dort bestätigen. Notfalls in der URL `&force=1` anhängen. Ein laufender Druck von dem Stick wird dann unterbrochen. |
 | `HOST_WRITING` | Das USB-Gerät schreibt gerade auf das Laufwerk | Warten und später erneut senden. Diese Sperre lässt sich nicht erzwingen. |
 | `NO_SPACE` | Nicht genug freier Speicher | Dateien auf dem Laufwerk löschen oder eine microSD verwenden. |

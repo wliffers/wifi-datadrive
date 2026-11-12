@@ -1,6 +1,7 @@
 # 06 – Risiken und Annahmen
 
-Stand: 2026-11-12, Firmware 0.2.0. Bewertung: **hoch** = kann das Projektziel verhindern,
+Stand: 2026-11-12, Firmware 0.4.0. Die Risiken aus 0.2.0 gelten, soweit unten nichts anderes
+steht; Abschnitt 8 behandelt die Verschlüsselung (0.4.0). Bewertung: **hoch** = kann das Projektziel verhindern,
 **mittel** = erfordert Nacharbeit, **niedrig** = Komfort/Randfall.
 
 Das Projekt heißt seit Version 0.2.0 „WiFi DataDrive“ (vorher „WiFi PrintDrive“); interne
@@ -85,7 +86,7 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 | Neue Weboberfläche nur am Testserver durchgetestet | niedrig | Die Oberfläche wurde für 0.2.0 komplett neu geschrieben. Der Browser-Test aller Zustände ist bestanden (T6.4, `tools/ui_test.py` 566/566, PC und Handy-Emulation, hell/dunkel; 26 Fehler gefunden und behoben). Grenzen: Testserver statt Gerät, synthetische Drag-&-Drop-Ereignisse. Am Gerät geprüft sind nur Auslieferung der Endfassung, API und `datadrive.local` (T6.2, T6.3); die Abläufe der Oberfläche am echten Gerät (Zeitverhalten, Re-Plug, Formatieren, Wartungsmodus) und echtes Drag & Drop stehen aus (B14, B16). Fehler in der Oberfläche können die Sicherungen des Laufwerks nicht aushebeln, die liegen in der Firmware. |
 | Weboberfläche am echten Handy ungeprüft | mittel | Die Handy-Ansicht ist nur emuliert geprüft (Chromium mit iPhone-User-Agent, 390×844 und 320 px Breite). Ein echter Handy-Browser fehlt, vor allem iOS Safari: Bildschirmtastatur (verdeckte Eingabefelder und Dialoge), Safe Areas, Herunterladen über das `download`-Attribut, Bottom Sheet (B15). |
 | BOOT-Bestätigung per zweitem Druck | niedrig | Übernahme per BOOT-Taste bei aktivem USB-Gerät verlangt einen zweiten Druck innerhalb von 4 s; am Gerät noch nicht geprüft (T2.2). |
-| Ordner in der Weboberfläche ausgeblendet | niedrig | Die Weboberfläche zeigt nur Dateien im Hauptverzeichnis. Ordner, die ein PC angelegt hat, werden gezählt (`dirs`, Hinweis unter der Liste), ihr Inhalt ist im Web aber weder sichtbar noch herunterladbar oder löschbar. Der belegte Speicher enthält sie trotzdem, und Formatieren löscht sie mit. Ordner-Unterstützung ist machbar, aber zurückgestellt. |
+| Ordner in der Weboberfläche ausgeblendet (Stand 0.2.0, seit 0.3.0 überholt) | niedrig | Ordner sind seit 0.3.0 in der Weboberfläche bedienbar. Ob Ordner, die am PC angelegt wurden, dort richtig erscheinen, ist **noch nicht geprüft**. Der Text zur Zeit vor 0.3.0: Die Weboberfläche zeigte nur Dateien im Hauptverzeichnis. Ordner, die ein PC angelegt hat, werden gezählt (`dirs`, Hinweis unter der Liste), ihr Inhalt ist im Web aber weder sichtbar noch herunterladbar oder löschbar. Der belegte Speicher enthält sie trotzdem, und Formatieren löscht sie mit. Ordner-Unterstützung ist machbar, aber zurückgestellt. |
 | Änderungsdatum hängt an der Browser-Uhr | niedrig | Das Gerät hat keine Uhr. Beim Upload liefert der Browser das Änderungsdatum der Datei (`mtime`) und seine aktuelle Zeit (`now`); gespeichert wird Ortszeit ohne Zeitzone. Eine falsch gestellte Uhr oder Zeitzone im Browser ergibt falsche Zeitstempel, ein Host in einer anderen Zeitzone zeigt sie verschoben. `now` stellt die Geräteuhr nur einmal je Start; Uploads ohne diese Parameter (eigene API-Clients) bekommen kein verlässliches Datum (Anzeige „–“). Ohne Anmeldung kann jeder Client beliebige Zeitstempel setzen. Sortierung „Neueste zuerst“ ist deshalb nur so gut wie die Uhren der Schreiber. |
 | Sehr viele Dateien | niedrig | Die Dateiliste entsteht aus einem 32-KiB-Puffer (ca. 1000 übliche Namen, bei langen Namen weniger). Darüber wird gekürzt (`truncated`, Hinweis in der Oberfläche); die übrigen Dateien sind im Web nicht erreichbar, am USB-Gerät schon. Kürzung und Ladezeit bei sehr vielen Dateien sind am Gerät nicht geprüft (nur im Testserver, Szenarien `truncated` und `many`: 300 Dateien, Neuaufbau der Liste 45–70 ms, seit T6.4 nur noch bei Änderungen). |
 | Weboberfläche nur gzip | niedrig | `index.html` liegt nur komprimiert im Flash und wird immer mit `Content-Encoding: gzip` gesendet, unabhängig vom `Accept-Encoding` des Clients. Alle üblichen Browser können das; einfache Werkzeuge (z. B. `curl` ohne `--compressed`) erhalten komprimierte Daten. |
@@ -103,11 +104,11 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 
 | Risiko | Bew. | Details |
 |---|---|---|
-| Keine Authentifizierung | mittel | Jeder im selben (W)LAN kann alle Dateien lesen und herunterladen, beliebige Dateien hochladen, umbenennen, löschen, formatieren, neu starten und den Wartungsmodus (Flash-Modus) auslösen. Die Weboberfläche weist unter Einstellungen → Sicherheit darauf hin. Ein Passwortschutz ist bewusst zurückgestellt: Er braucht ein Konzept für „Passwort vergessen“. Nur für vertrauenswürdige Heimnetze gedacht. |
+| Anmeldung (seit 0.3.0) | mittel (Restrisiko) | Die Anmeldung mit Benutzern und Rollen ist umgesetzt (API-Test 182/182). Die Passwörter gehen aber **unverschlüsselt** durchs WLAN (nur HTTP), wer den Funkverkehr mitschneidet, kann sie lesen. Die Anmeldesperre gilt je Adresse und verlangsamt nur das Raten über das Netz. Ein vergessenes Passwort setzt der Reset per Taste auf `admin` / `admin` zurück. Die Oberfläche weist darauf hin. Nur für vertrauenswürdige Netze gedacht. Ein Update über die Weboberfläche ist nicht signiert (Vormerkliste, [14](14_vormerkliste.md)). |
 | CSRF | niedrig | POST-Anfragen brauchen `X-PrintDrive: 1` (Headername unverändert). Fremde Webseiten können diesen Header ohne CORS-Freigabe nicht setzen; GET-Endpunkte (Status, Liste, Download, Log) sind ungeschützt lesbar. |
 | WLAN-Zugangsdaten | mittel | STA-Passwort und AP-Passwort liegen **unverschlüsselt** im NVS (keine NVS-Verschlüsselung, kein Flash Encryption). Wer den Dongle hat, kann sie per esptool auslesen. Gleiches gilt für Flash-Backups in `backup\`. |
 | Setup-AP | niedrig | `DataDrive-XXXX`, WPA2 mit gerätespezifischem 10-Zeichen-Passwort; das Passwort steht offen auf dem LCD. Im Log steht es nach aktuellem Quelltext nicht (`setup access point on: SSID '…' (password on the LCD)`). |
-| Kein HTTPS | niedrig | Übertragung im LAN unverschlüsselt. |
+| Kein HTTPS | mittel | Übertragung im LAN unverschlüsselt, auch Passwörter. Seit 0.4.0 gibt es HTTPS nur als Option, die im Build abgeschaltet ist, weil Uploads mit TLS auf diesem Board scheitern (Speicher, siehe [14](14_vormerkliste.md)). |
 
 ## 6. Annahmen (Zusammenfassung)
 
@@ -136,7 +137,30 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 | Neue Weboberfläche | Browser-Test am Testserver bestanden (T6.4, 566/566); Abläufe am echten Gerät und echtes Drag & Drop ungetestet |
 | Weboberfläche am echten Handy (iOS Safari) | ungetestet (T6.4 B15) |
 | BOOT-Bestätigung per zweitem Druck | ungetestet (T2.2) |
-| Keine Authentifizierung der Weboberfläche | bewusst offen, zurückgestellt (Abschnitt 5) |
+| Anmeldung, Passwörter im Klartext durchs WLAN | 0.3.0 umgesetzt; HTTPS offen (Abschnitt 5) |
+| Verschlüsselung: Passwortstärke, Klartext bei entsperrtem Laufwerk, keine Update-Signatur | 0.4.0, siehe Abschnitt 8 |
 | Beliebige Dateitypen ohne Inhaltsprüfung | bewusst so, abschaltbar (Abschnitt 2) |
-| Ordner im Web ausgeblendet | zurückgestellt (Abschnitt 4) |
+| Ordner in der Weboberfläche | seit 0.3.0 umgesetzt; PC-Ordner in der Anzeige noch nicht geprüft |
 | Zeitstempel aus der Browser-Uhr | hingenommen (Abschnitt 4) |
+
+## 8. Verschlüsselung des Laufwerks (seit 0.4.0)
+
+Die Verschlüsselung ist optional und standardmäßig aus. Verfahren und Anleitung: [12](12_api_v4.md)
+Abschnitt 2 und die Anleitung in der [README](../README.md). Was sie schützt, steht in Abschnitt 2.5
+von [12](12_api_v4.md) („Was die Verschlüsselung schützt“). Hier die Risiken und offenen Punkte.
+
+| Risiko | Bew. | Details | Gegenmaßnahme / Stand |
+|---|---|---|---|
+| Passwortstärke | **hoch**, wenn das Passwort kurz ist | Wer die Karte hat, probiert Passwörter offline durch. Das Gerät bremst dabei nicht. Jede Prüfung eines Passworts braucht eine PBKDF2-Ableitung (am Gerät auf 2 s kalibriert). Auf einem PC geht sie schneller als am Gerät; die Geschwindigkeit eines Angreifers ist **nicht gemessen**. | Mindestlänge 12 Zeichen wird erzwungen. Ein langes, zufälliges Passwort oder mehrere Wörter ist nötig. Wiederherstellungsschlüssel ist praktisch nicht zu erraten (160 Bit). |
+| Drosselung nur über das Netz | mittel | Die Wartezeit nach falschen Eingaben (5 s, dann doppelt, höchstens 300 s; die ersten zwei Fehler sind frei) gilt nur für Anfragen an das laufende Gerät. Ein Neustart setzt sie zurück. | Keine Abhilfe gegen den Angriff auf eine entnommene Karte. |
+| Klartext bei entsperrtem Laufwerk | mittel | Drucker und PC sehen die Dateien im Klartext, solange das Laufwerk entsperrt ist. Das ist nötig, damit der Drucker drucken kann. | Stick nach Gebrauch im Browser sperren. Automatisches Sperren beim Abziehen ist für die Vormerkliste vorgesehen (V2 in [14](14_vormerkliste.md)). |
+| Keine Erkennung von Manipulation | mittel | Das Verfahren erkennt gezielte Änderungen an den verschlüsselten Daten nicht. | Kein Gegenmittel in 0.4.0. |
+| Passwörter durchs WLAN | mittel | Das Laufwerks-Passwort geht beim Entsperren im Klartext durchs WLAN, solange kein HTTPS aktiv ist. | HTTPS ist eingebaut, aber im Build aus (Abschnitt 5). |
+| Updates nicht signiert | mittel | Wer Administrator-Zugriff hat, kann geänderte Firmware aufspielen. Die könnte das Passwort beim nächsten Entsperren mitlesen. | Signierte Updates sind in [14](14_vormerkliste.md) empfohlen, Entscheidung des Besitzers offen. |
+| Einrichten löscht die Karte | hoch (Datenverlust) | Einrichten und Ausschalten löschen alle Dateien. Ohne Passwort und ohne Wiederherstellungsschlüssel ist der Inhalt endgültig verloren. | Die Oberfläche warnt vor dem Einrichten. Der Wiederherstellungsschlüssel wird nur einmal angezeigt. |
+| Stromausfall während Einrichtung oder Passwortwechsel | mittel | Der Kopfbereich wird mit einer Sicherungskopie und Prüfsummen geschrieben. Ein Stromausfall in diesen Vorgängen ist **noch nicht geprüft**. | Vor dem Einrichten die Daten sichern. |
+| Verschlüsselung auf dem internen Flash | mittel | Ohne Karte gilt dieselbe Schicht. Ein Test steht **noch aus**. | Nur die microSD-Karte verschlüsseln, bis der interne Flash geprüft ist. |
+| Druck von einem verschlüsselten Stick am X2D | mittel | Der Ablauf „einstecken, im Browser entsperren, drucken“ ist **noch nicht am Drucker geprüft**. | Vor wichtigen Drucken einen Probedruck machen. |
+| Geschwindigkeit | niedrig | Verschlüsselt: USB schreiben 820 KB/s (vorher 832 KB/s), Web-Upload 1,0 MB/s. Der Vergleich beim Lesen und beim Upload unter gleichen Bedingungen ist **noch nicht geprüft**. | – |
+| Größe | niedrig | Das Volumen ist etwa 8 bis 12 MiB kleiner (Kopfbereich, Reserve, Sicherungskopie). | – |
+| Unterschied im Alltag | niedrig | Die Karte ist an anderen Geräten nicht mehr lesbar. Nach jedem Stromausfall ist ein Entsperren nötig. | Siehe Anleitung in der [README](../README.md). |

@@ -214,6 +214,22 @@ Menü „DataDrive Wi-Fi“ (`firmware/components/pd_wifi/Kconfig`):
 | `CONFIG_PD_WIFI_AP_FALLBACK_S` | 20 (5–600) | Setup-AP nach so vielen Sekunden ohne Verbindung |
 | `CONFIG_PD_WIFI_AP_LINGER_S` | 120 (10–3600) | Setup-AP bleibt nach STA-Verbindung so lange an |
 
+Menü „DataDrive encryption“ (`firmware/components/pd_crypt/Kconfig`, seit 0.4.0):
+
+| Option | Default | Wirkung |
+|---|---|---|
+| `CONFIG_PD_CRYPT_SELFTEST` | y | AES-XTS-Selbsttest mit den IEEE-1619-Prüfwerten beim Start; ohne Bestehen keine Verschlüsselung |
+| `CONFIG_PD_CRYPT_HW_DIRECT` | y | AES-Hardware direkt ansprechen (schnell); aus = nur mbedtls |
+| `CONFIG_PD_CRYPT_SCRATCH_KB` | 8 (1–32) | Schreibpuffer der Verschlüsselung, nur im entsperrten Zustand belegt |
+| `CONFIG_PD_CRYPT_KDF_TARGET_MS` | 2000 (500–5000) | Ziel für eine Passwort-Ableitung; bestimmt die PBKDF2-Rundenzahl |
+| `CONFIG_PD_CRYPT_OVERWRITE_MAX_MB` | 64 (0–100000) | Obergrenze für das Überschreiben, falls eine Karte das Löschen verweigert |
+
+Menü „PrintDrive“, zusätzlich seit 0.4.0:
+
+| Option | Default | Wirkung |
+|---|---|---|
+| `CONFIG_PD_HTTPS_OPTION` | n | HTTPS als Schalter anbieten (experimentell). **Aus** lassen: Auf diesem Board scheitern Uploads mit TLS (16-KiB-Puffer nicht frei). Siehe [14](14_vormerkliste.md) |
+
 Weitere relevante Optionen in `firmware/printdrive/sdkconfig.defaults`: TinyUSB
 (`CONFIG_TINYUSB_CDC_ENABLED`, USB-Strings „WiFi DataDrive“/„DataDrive“, MSC-Puffer), Wear Levelling
 (`CONFIG_WL_SECTOR_SIZE_512`, `CONFIG_WL_SECTOR_MODE_SAFE`), FatFs, HTTP, lwIP.
@@ -261,17 +277,34 @@ daher kein sicheres Zeichen für einen Firmware-Fehler.
 
 ## 10. API-Test (`tools/api_test.py`)
 
+Aktuell (API Version 4, 0.4.0):
+
 ```powershell
-python tools\api_test.py 192.168.2.152 --drive E:
+python tools\api_test.py 192.168.2.152 --user admin --password <Passwort> --drive E:
+python tools\api_test.py 192.168.2.152 --user admin --password <Passwort> --drive E: --drive-password <Laufwerks-Passwort> --crypt-test --i-know-this-erases-the-drive
 ```
 
-Braucht `requests` (in der ESP-IDF-Python-Umgebung vorhanden). Der Dongle steckt am PC,
-`--drive` ist sein Laufwerksbuchstabe; `--size-kb` (Default 512) bestimmt die Größe der
-Test-`.3mf`. Das Skript **legt Testdateien an und löscht sie**, übernimmt das Laufwerk
-vom Host (erst ohne, dann mit Bestätigung) und stellt es am Ende wieder bereit.
+- Ohne `--crypt-test` formatiert der Lauf nichts. Ergebnis am Gerät: **250/250**. Die
+  Dateitests legen Testdateien an und löschen sie wieder.
+- Mit `--crypt-test` (nur für ein Laufwerk, das noch nicht verschlüsselt ist): **formatiert das
+  Laufwerk, alle Dateien gehen verloren**. Ergebnis am Gerät: **334/334**.
+- `--drive-password` wird nie ausgegeben. Ist das Laufwerk gesperrt, stoppt der Test mit einer
+  Meldung, wenn kein Passwort angegeben ist.
+- `--keep-encrypted`: stoppt vor dem Ausschalten; das Laufwerk bleibt verschlüsselt und
+  entsperrt, der Wiederherstellungsschlüssel wird einmal ausgegeben.
+- Weitere Optionen: `--skip-destructive`, `--wifi-test` (fügt ein Testnetz hinzu und entfernt
+  es), `--ota-probe`, `--size-kb`. Der Test lässt das Gerät so, wie er es vorgefunden hat.
+
+Die Abschnitte der Version 4 sind: WLAN-Suche, Verschlüsselung ohne Formatieren, Verschlüsselung
+mit Formatieren (opt-in), optionale HTTPS-Prüfung (nur lesend).
+
+Umfang der Version 2 (historisch, 28 Prüfungen, mit `requests` aus der ESP-IDF-Python-Umgebung).
+Der Dongle steckt am PC, `--drive` ist sein Laufwerksbuchstabe; `--size-kb` (Default 512) bestimmt
+die Größe der Test-`.3mf`. Das Skript **legt Testdateien an und löscht sie**, übernimmt das
+Laufwerk vom Host (erst ohne, dann mit Bestätigung) und stellt es am Ende wieder bereit.
 
 Geprüft (28 Prüfungen, wenn das Laufwerk zu Beginn am Host bereitgestellt ist und `--drive`
-angegeben wird): Status erreichbar, CSRF (403), Übernahme `HOST_ACTIVE` → `force`, Besitzer
+angegeben wird; Version 2, ohne Anmeldung): Status erreichbar, CSRF (403), Übernahme `HOST_ACTIVE` → `force`, Besitzer
 `app`, beliebiger Dateityp angenommen (bei `types = "all"`; sonst 415), Pfad im Namen (400),
 zu groß (507 bzw. 413 ab 4 GiB), 5 GiB nicht auf 32 Bit gekürzt (413), kein ZIP /
 abgeschnittenes ZIP als `.3mf` (422), Vorabprüfung, Upload mit Umlaut-Namen inkl. Rate,
@@ -346,3 +379,22 @@ Wie die Firmware bearbeitet der Testserver nur eine Anfrage gleichzeitig, verlan
 
 Der automatische Browser-Test `tools/ui_test.py` (Playwright, einmalig
 `pip install playwright`) läuft gegen diesen Testserver (`python tools/ui_test.py --base http://localhost:8090`).
+Stand 0.4.0: 548/548 Prüfungen für das PC-Profil und 561/561 für das Handy-Profil (Ergebnisse in
+[05](05_testprotokoll.md) Phase 8). Nur einzelne Tests: `--only TEXT`; Liste: `--list`.
+
+## 12. Verschlüsselung unabhängig prüfen (`firmware/components/pd_crypt/tools/pd_crypt_check.py`)
+
+Seit 0.4.0. Ein eigenes Python-Werkzeug auf dem PC, das die Firmware-Verfahren unabhängig nachbaut:
+
+```powershell
+python firmware\components\pd_crypt\tools\pd_crypt_check.py vectors          # AES-XTS-Prüfwerte (IEEE P1619)
+python firmware\components\pd_crypt\tools\pd_crypt_check.py inspect <Abbild oder Gerät>   # beide Kopien prüfen
+python firmware\components\pd_crypt\tools\pd_crypt_check.py unlock <Abbild> --password <PW>  # Kopf prüfen, ersten Sektor entschlüsseln
+```
+
+`vectors` braucht das Paket `cryptography` (in der ESP-IDF-Python-Umgebung vorhanden). `inspect`
+und `unlock` lesen nur die nötigen Sektoren; `unlock --out` schreibt die entschlüsselten Sektoren
+in eine Datei. Der Befehl `gen-vectors` schreibt `xts_vectors.h` neu und ist nur für Änderungen an
+den Prüfwerten gedacht. Für Geräte (`\\.\PhysicalDriveN`) sind Administratorrechte nötig; mit einem
+Abbild einer Karte geht es ohne. Ergebnis dieses Werkzeugs im Testprotokoll: **noch nicht geprüft**
+(nicht in [05](05_testprotokoll.md) eingetragen).

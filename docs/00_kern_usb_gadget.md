@@ -1,6 +1,6 @@
 # WiFi DataDrive – der Kern in Kurzform
 
-Stand: 2026-11-12, Firmware 0.2.0. Alles hier Beschriebene ist auf dem echten Gerät getestet, außer wo „offen“ steht.
+Stand: 2026-11-12, Firmware 0.4.0. Die Abschnitte bis „Weboberfläche und API“ beschreiben den Kern seit 0.2.0 und sind auf dem echten Gerät getestet, außer wo „offen“ steht. Anmeldung, Verschlüsselung und die übrigen Neuerungen von 0.3.0 und 0.4.0 stehen in „Version 0.3.0 und 0.4.0 in Kurzform“ weiter unten, jeweils mit Prüfstand.
 
 Das Projekt hieß bis Version 0.1.0 „WiFi PrintDrive“. Intern bleibt der alte Name stehen: Ordner `firmware/printdrive`, HTTP-Header `X-PrintDrive`, Code-Präfix `pd_`.
 
@@ -12,6 +12,7 @@ Ein **LILYGO T-Dongle-S3** (ESP32-S3, USB-A-Stecker, kleines LCD, microSD-Slot) 
 Browser (PC/Handy) --WLAN/HTTP--> [ ESP32-S3: Webserver | FAT | USB-MSC ] --USB--> PC / Drucker
                                              |
                                    microSD (FAT32) oder interner Flash (10,8 MB)
+                                   optional verschlüsselt (AES-256-XTS, seit 0.4.0)
 ```
 
 ## Das Kernproblem und die Lösung
@@ -25,7 +26,8 @@ Ein FAT-Dateisystem verträgt **nur einen Schreiber**. Der USB-Host greift roh a
 | `USB` | „USB-Laufwerk aktiv“ | lokal nicht eingebunden | Laufwerk mit Dateien | nur Status anzeigen |
 | `APP` | „Dateiverwaltung aktiv“ | lokal unter `/data` eingebunden | „kein Medium“ (wie leerer Kartenleser) | hochladen, auflisten, umbenennen, löschen, herunterladen |
 
-Umgeschaltet wird nur an einer Stelle (`drive_set_owner()` in `drive.c`), unter einem Mutex. Die Weboberfläche nennt den Host „USB-Gerät“ und die beiden Wechsel „Dateiverwaltung aktivieren“ und „USB-Laufwerk bereitstellen“. Die Sicherungen unten sind mit Version 0.2.0 unverändert.
+Umgeschaltet wird nur an einer Stelle (`drive_set_owner()` in `drive.c`), unter einem Mutex. Die Weboberfläche nennt den Host „USB-Gerät“ und die beiden Wechsel „Dateiverwaltung aktivieren“ und „USB-Laufwerk bereitstellen“. Die Sicherungen unten sind seit Version 0.2.0 unverändert. Die Verschlüsselung (0.4.0) liegt
+unterhalb dieser Schicht und ändert nichts an der Besitzer-Logik.
 
 ### Regeln beim Umschalten
 
@@ -168,7 +170,8 @@ Eine einzelne HTML-Datei (`main/web/index.html`, reines JavaScript/CSS, keine ex
 
 Das Gerät hat keine Uhr. Der Browser schickt beim Upload das Änderungsdatum der Datei und seine aktuelle Zeit mit (`mtime`, `now`, als Ortszeit gespeichert).
 
-Die API (Version 2) ist verbindlich in [07_api.md](07_api.md) beschrieben. Kurzfassung:
+Die API Version 2 steht in [07_api.md](07_api.md); seit 0.3.0 gelten [09_api_v3.md](09_api_v3.md)
+und [12_api_v4.md](12_api_v4.md). Kurzfassung der Version 2:
 
 - Lesen per `GET`: `/api/status`, `/api/files` (mit `mtime`, Anzahl ausgeblendeter Ordner `dirs`, `truncated`), `/api/download`, `/api/log`.
 - Ändern per `POST` mit Header `X-PrintDrive: 1` (Schutz vor fremden Webseiten): Upload mit Vorabprüfung, Löschen, **Umbenennen** (`/api/rename`), Besitzer wechseln, Einstellungen, WLAN, Formatieren, Neustart.
@@ -176,20 +179,24 @@ Die API (Version 2) ist verbindlich in [07_api.md](07_api.md) beschrieben. Kurzf
 - Fehler kommen als JSON `{"ok":false,"code":"…","error":"…"}` mit deutschem Klartext.
 - Die Dateiliste entsteht aus einem gepackten 32-KiB-Puffer (ca. 1000 übliche Namen) statt eines festen Felds mit 64 Einträgen.
 
-Nicht vorhanden: Ordner (die Weboberfläche zeigt nur das Hauptverzeichnis und nennt die Zahl ausgeblendeter Ordner) und eine Anmeldung.
+Seit 0.2.0 war die Weboberfläche ohne Anmeldung und ohne Ordner. Beides kam mit 0.3.0 (siehe unten). Die API-Beschreibung für Version 2 steht in [07_api.md](07_api.md) und gilt nur noch als Geschichte; aktuell sind [09_api_v3.md](09_api_v3.md) und [12_api_v4.md](12_api_v4.md).
 
 ## WLAN, Display, Taste
 
 - **WLAN:** Zugangsdaten liegen im NVS auf dem Dongle. Ohne Verbindung startet nach 20 s ein Einrichtungs-WLAN `DataDrive-XXXX` (WPA2, Passwort nur auf dem Display), Adresse `http://192.168.4.1`. Im Heimnetz: IP vom Display oder `http://datadrive.local`.
 - **Display:** farbige Kopfzeile `BOOT` / `USB` (grün) / `BEREIT` (blau) / `UPLOAD` (orange) / `WLAN` / `FEHLER` (rot), darunter IP, Speicherbelegung, Zustand des USB-Geräts (z. B. `Gerät: verbunden`, `Kein USB-Gerät`), letzte Meldung.
 - **BOOT-Taste:** kurz = zwischen USB-Laufwerk und Dateiverwaltung wechseln, 5 s halten = Flash-Modus.
+  Seit 0.3.0 zusätzlich: einfacher Klick zeigt 20 s einen QR-Code mit der Adresse, Doppelklick
+  wechselt die Betriebsart, 5 bis 10 s halten und loslassen = Wartungsmodus, 10 s halten =
+  Benutzer auf `admin` / `admin` zurücksetzen (Dateien und WLAN bleiben). Die Bedienung am
+  Gerät ist noch nicht als eigener Test protokolliert (siehe [05](05_testprotokoll.md)).
 
 ## Bauen und Flashen (Windows, PowerShell)
 
 ```powershell
 .\tools\flash.ps1 -Project printdrive -Build     # bauen + flashen, ohne Tastendruck
 .\tools\monitor.ps1                              # Log über den CDC-Port
-python tools\api_test.py 192.168.2.152 --drive E:   # End-to-End-Test (28 Prüfungen)
+python tools\api_test.py 192.168.2.152 --user admin --password <PW> --drive E:   # End-to-End-Test der API v4 (siehe 04)
 python tools\mock_server.py --port 8090 --scenario files   # Weboberfläche ohne Hardware
 ```
 
@@ -218,11 +225,63 @@ tools/                 idf.ps1, flash.ps1, monitor.ps1
 docs/                  Bestandsaufnahme, Architektur, Plan, Build/Flash, Testprotokoll, Risiken, API (07)
 ```
 
+## Version 0.3.0 und 0.4.0 in Kurzform
+
+Prüfstand: **verifiziert** = am Gerät geprüft (Ergebnis in [05](05_testprotokoll.md)),
+**noch nicht geprüft** = gebaut, aber nicht getestet.
+
+**Version 0.3.0** (API-Test am Gerät 182/182; Weboberfläche vom Besitzer im Browser geprüft):
+
+- **Anmeldung:** Benutzer mit Rolle `admin` oder `user`. Standardkonto `admin` / `admin`; beim
+  ersten Anmelden muss ein neues Passwort gesetzt werden. Vertraute Geräte (höchstens 4 je
+  Benutzer). Nach Fehlversuchen wird die Anmeldung für die Adresse gesperrt, die Wartezeit
+  steigt (30 s, dann doppelt, höchstens 15 Minuten). Details: [09](09_api_v3.md) Abschnitt 2.
+- **Ordner und Dateiverwaltung:** anlegen, umbenennen, verschieben, kopieren, löschen;
+  Mehrfachauswahl und Zwischenablage in der Weboberfläche.
+- **Mehrere WLANs:** bis 5 gespeicherte Netze.
+- **Taste und QR-Code:** Bedienung siehe oben; am Gerät **noch nicht geprüft**.
+- **Senden:** Windows über `tools/sendto` (**noch nicht geprüft**), iPhone-Kurzbefehl nach
+  [10](10_senden.md) (**noch nicht auf einem echten iPhone getestet**).
+- **Firmware-Update über die Weboberfläche:** eingebaut, **noch nicht geprüft**. Alle
+  Versionen bisher wurden per USB aufgespielt.
+- **Deutsch und Englisch** in der Weboberfläche, **App-Icon** für den Home-Bildschirm
+  (Icon am Handy **noch nicht geprüft**).
+- **Bambu X2D:** erkennt den Stick und druckt von ihm (ohne Verschlüsselung, Versionen 0.2.0
+  und 0.3.0); Rückmeldung des Besitzers, keine Messung.
+
+**Version 0.4.0** (API-Lauf am Gerät 334/334 mit Verschlüsselungstest):
+
+- **Verschlüsselung des Laufwerks**, optional, Voreinstellung aus. AES-256-XTS je 512-Byte-Sektor,
+  gerechnet in der AES-Hardware des ESP32-S3. Der Schlüssel wird beim Entsperren aus dem
+  Laufwerks-Passwort abgeleitet (etwa 2 bis 3,5 s) und nicht auf dem Stick gespeichert. Der
+  Wiederherstellungsschlüssel wird nur einmal angezeigt. Einrichten löscht die ganze Karte.
+  Anleitung: [README.md](../README.md), Abschnitt „Verschlüsselung einrichten und am Drucker
+  benutzen“. Was die Verschlüsselung schützt und was nicht: [12](12_api_v4.md) Abschnitt 2.5.
+- **Folgen im Alltag:** Nach jedem Einstecken und Stromausfall ist das Laufwerk gesperrt. Der
+  Drucker sieht dann kein Medium, bis es im Browser entsperrt ist. Die Karte ist an anderen
+  Geräten nicht lesbar. Das Volumen ist etwa 8 bis 12 MiB kleiner.
+- **Selbsttest:** Die Verfahren werden beim Start mit den IEEE-1619-Prüfwerten getestet (bestanden).
+- **Messungen** (64-GB-microSD): Einrichten 51 s; USB schreiben 820 KB/s (vorher 832 KB/s
+  unverschlüsselt); USB lesen 659 KB/s (ein unverschlüsselter Vergleich fehlt, **noch nicht
+  geprüft**); Web-Upload 1,0 MB/s, die Datei war danach auf dem PC bitgleich. Reine
+  Rechenleistung im Selbsttest: 4,7 MB/s über die Hardware, 0,5 MB/s über die Bibliothek.
+- **WLAN-Suche** im Dialog „WLAN hinzufügen“: verifiziert bei bestehender Verbindung (5 Netze in
+  2,9 s); im Einrichtungsmodus **noch nicht geprüft**.
+- **Anzeige „LIO“** auf dem Display, 48 × 40 Pixel, zeigt den Zustand. Urteil des Besitzers: gut.
+- **HTTPS:** im Quelltext vorhanden, im Build abgeschaltet (`PD_HTTPS_OPTION`). Grund: Auf
+  diesem Board ohne PSRAM kann der 16-KiB-TLS-Puffer nicht angelegt werden, Uploads scheitern.
+  Vorgemerkt in [14](14_vormerkliste.md).
+- **Noch nicht geprüft:** Druck am Bambu X2D von einem verschlüsselten, per Handy entsperrten
+  Stick; Stromausfall während des Einrichtens oder Passwortwechsels; Verschlüsselung des
+  internen Flashs (ohne Karte).
+
 ## Offen
 
+- **Verschlüsselung:** die Punkte oben unter „noch nicht geprüft“ und die Grenzen in
+  [12](12_api_v4.md) Abschnitt 2.5 (Passwortstärke, Klartext am Drucker, keine Signatur der Updates).
 - **Bambu X2D:** Grundkompatibilität am 2026-11-12 vom Besitzer bestätigt (Rückmeldung „alles geklappt inklusive Drucken“, keine Messung des Entwicklers): Standard-Build (MSC + CDC-Logport, USB-Gerät darf schreiben), microSD 64 GB FAT32; Drucker erkennt das Laufwerk, zeigt die per Web hochgeladene `.gcode.3mf` und druckt daraus. Ein Build ohne Logport ist für den X2D nicht nötig. Upload vom Handy bei eingestecktem Dongle mit anschließend sichtbarer neuer Datei: laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt. Nicht geprüft bzw. nicht gemessen: lange Drucke, Nur-Lese-Modus am Drucker, „Dateiverwaltung aktivieren“ während eines Drucks, Stromaufnahme, interner Flash als Medium am Drucker, andere Druckermodelle; keine Logs oder Datenraten vom Drucker.
 - **Nur-Lese-Modus für das USB-Gerät:** eingebaut, am Gerät noch nicht geprüft.
-- **Weboberfläche ohne Anmeldung:** jeder im selben WLAN kann zugreifen. Passwortschutz zurückgestellt (braucht ein Konzept für „Passwort vergessen“).
-- **Ordner:** in der Weboberfläche nicht unterstützt (machbar, zurückgestellt).
+- **Anmeldung (seit 0.3.0):** Passwörter gehen unverschlüsselt durchs WLAN (HTTP, kein HTTPS). Die Anmeldung schützt vor anderen Nutzern im selben Netz, nicht vor jemandem, der den Funkverkehr mitschneidet.
+- **Ordner (seit 0.3.0):** in der Weboberfläche vorhanden. Ob Ordner, die am PC angelegt wurden, dort richtig erscheinen: **noch nicht geprüft**.
 - **Weboberfläche am echten Handy:** Der Browser-Test (`tools/ui_test.py`, 566/566 am Testserver) lief mit Chromium im Handyformat; echtes iOS Safari und echtes Drag & Drop sind ungeprüft.
 - **3MF ist nicht automatisch druckbar:** Der Drucker braucht eine geslicete Datei (`.gcode.3mf`); eine solche Datei hat der X2D vom Dongle gedruckt (2026-11-12). Andere Dateiarten am Drucker sind ungeprüft.

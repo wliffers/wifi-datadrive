@@ -149,3 +149,19 @@ LCD, LED, BOOT-Taste, Flash-Größe, Setup-AP, WLAN STA und microSD-Slot sind se
 - Stromaufnahme unter WLAN-Last, mit microSD (offen, kein Messgerät eingeplant)
 
 Ablauf und erwartete Ausgaben: [05_testprotokoll.md](05_testprotokoll.md).
+
+## 7. Nachtrag Firmware 0.3.0 und 0.4.0 (Hardware-Befunde)
+
+Die Hardware ist unverändert (gleicher Dongle, gleiche Pins). Neu sind diese Befunde aus der
+Firmware-Entwicklung:
+
+| Punkt | Stand | Quelle |
+|---|---|---|
+| Kein PSRAM auf diesem Board | **verifiziert** (Board-Revision wie in Abschnitt 1) | Folgen: HTTPS-Puffer passt nicht, siehe [14](14_vormerkliste.md) |
+| AES-Beschleuniger des ESP32-S3 für die Laufwerks-Verschlüsselung | **verifiziert**: Selbsttest mit IEEE-1619-Prüfwerten besteht beim Start; Rechenleistung 4,7 MB/s über die Hardware, 0,5 MB/s über die Bibliothek | [05](05_testprotokoll.md) Phase 8 |
+| Schlüsselableitung (PBKDF2-HMAC-SHA256) | Kconfig-Ziel 2 s pro Ableitung (`CONFIG_PD_CRYPT_KDF_TARGET_MS`); beim Entsperren etwa 2 bis 3,5 s | [12](12_api_v4.md) Abschnitt 2.2; Ableitung im Code `firmware/components/pd_crypt` |
+| microSD 64 GB verschlüsselt: Einrichten 51 s | **verifiziert** | [05](05_testprotokoll.md) Phase 8 |
+| Stromaufnahme mit Verschlüsselung und Karte | **noch nicht geprüft** | – |
+| Verschlüsselung des internen Flashs (ohne Karte) | **noch nicht geprüft** | – |
+
+Weiter offen aus Abschnitt 6: RSSI am Drucker-Standort, UART0 an GPIO43/44 (nicht nachgemessen).

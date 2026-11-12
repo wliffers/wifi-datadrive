@@ -1,6 +1,8 @@
 # 03 – Umsetzungsplan und Status
 
-Stand: 2026-11-12, Firmware 0.2.0 (WiFi DataDrive). Das Projekt hieß bis Version 0.1.0
+Stand: 2026-11-12, Firmware 0.4.0 (WiFi DataDrive). Die Phasen 0 bis 6 gelten für 0.2.0, Phase 7
+(0.3.0) und Phase 8 (0.4.0) stehen am Ende des Abschnitts Phasen. Die Pläne dazu: [08](08_plan_v03.md),
+[11](11_plan_v04.md). Das Projekt hieß bis Version 0.1.0
 „WiFi PrintDrive“; ältere Einträge nennen deshalb noch `PrintDrive-54D5`, `PRINTDRIVE` oder
 `printdrive.local`. Der Ordner `firmware/printdrive` behält seinen Namen.
 
@@ -146,7 +148,55 @@ Schreib-Schutzfrist) bleiben unverändert. Ergebnisse: [05](05_testprotokoll.md)
 | Ordner in der Weboberfläche | nicht umgesetzt (machbar, zurückgestellt) |
 | Passwortschutz der Weboberfläche | nicht umgesetzt (zurückgestellt, braucht ein Konzept für „Passwort vergessen“) |
 
+## Phase 7 – Anmeldung, Ordner, WLANs, Bedienung (Firmware 0.3.0)
+
+Ziel: Der Stick wird ein allgemeiner WLAN-Stick mit Benutzern und Ordnern. Plan:
+[08_plan_v03.md](08_plan_v03.md), Schnittstelle: [09_api_v3.md](09_api_v3.md). Ergebnisse:
+[05](05_testprotokoll.md) Phase 7.
+
+| Abnahmekriterium | Status |
+|---|---|
+| Anmeldung mit Benutzern und Rollen `admin`/`user`; Standardkonto mit erzwungenem Passwortwechsel | **verifiziert** (API-Test 182/182 am Gerät) |
+| Vertraute Geräte (höchstens 4 je Benutzer); Anmeldesperre mit wachsender Wartezeit | **verifiziert** (API-Test 182/182) |
+| Ordner anlegen, umbenennen, verschieben, kopieren, löschen; Mehrfachauswahl und Zwischenablage | **verifiziert** (API-Test 182/182); Weboberfläche vom Besitzer im Browser geprüft |
+| Bis zu 5 gespeicherte WLANs | **verifiziert** (API-Test 182/182) |
+| Taste: Klick zeigt QR-Code, Doppelklick wechselt die Betriebsart, 5 bis 10 s halten = Wartungsmodus, 10 s halten = Benutzer-Reset | **noch nicht geprüft** |
+| Weboberfläche auf Deutsch und Englisch | Besitzer im Browser geprüft |
+| App-Icon für den Home-Bildschirm am Handy | **noch nicht geprüft** |
+| „Senden an“ für Windows (`tools/sendto`) | **noch nicht geprüft** |
+| iPhone-Kurzbefehl (`docs/10_senden.md`) | **noch nicht geprüft** auf einem echten iPhone |
+| Firmware-Update über die Weboberfläche | **noch nicht geprüft**; bisher alle Versionen per USB |
+| Bambu X2D erkennt den Stick und druckt von ihm (ohne Verschlüsselung) | Rückmeldung des Besitzers, keine Messung |
+
+## Phase 8 – Verschlüsselung, WLAN-Suche, Restarbeiten (Firmware 0.4.0)
+
+Ziel: Das Laufwerk lässt sich verschlüsseln; WLAN-Suche; Anzeige „LIO“. Plan:
+[11_plan_v04.md](11_plan_v04.md), Schnittstelle: [12_api_v4.md](12_api_v4.md). Ergebnisse:
+[05](05_testprotokoll.md) Phase 8.
+
+| Abnahmekriterium | Status |
+|---|---|
+| Selbsttest mit IEEE-1619-Prüfwerten besteht beim Start | **verifiziert** |
+| Einrichten, Sperren, falsches Passwort mit Wartezeit, Entsperren mit Passwort und mit Wiederherstellungsschlüssel, Passwort ändern, neuer Wiederherstellungsschlüssel, Löschen, Ausschalten | **verifiziert** (API-Lauf 334/334 mit `--crypt-test`) |
+| Einrichten auf 64-GB-microSD | **verifiziert**: 51 s |
+| Geschwindigkeit verschlüsselt: USB schreiben 820 KB/s, USB lesen 659 KB/s, Web-Upload 1,0 MB/s | **verifiziert**; Vergleich mit unverschlüsselt bei Lesen und Upload **noch nicht geprüft** |
+| Datei per WLAN verschlüsselt auf den Stick, danach auf dem PC bitgleich | **verifiziert** |
+| Stromausfall während Einrichtung oder Passwortwechsel | **noch nicht geprüft** |
+| Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** |
+| Verschlüsselung auf dem internen Flash (ohne Karte) | **noch nicht geprüft** |
+| WLAN-Suche bei bestehender Verbindung (5 Netze in 2,9 s) | **verifiziert** |
+| WLAN-Suche im Einrichtungsmodus | **noch nicht geprüft** |
+| Anzeige „LIO“ mit Zustandsfarben | Besitzer: Aussehen gut |
+| HTTPS | im Quelltext, im Build abgeschaltet (`PD_HTTPS_OPTION`): Uploads scheitern mit TLS, weil der 16-KiB-Puffer nicht am Stück frei ist; siehe [14](14_vormerkliste.md) |
+| Browser-Test der Weboberfläche (`tools/ui_test.py`) | **verifiziert**: 548/548 (PC) und 561/561 (Handy-Emulation), am Testserver |
+| Während des Tests behobene Fehler | Abgelehnte Anfragen mit Formulardaten schlossen die Verbindung, statt zu antworten; eine Übernahme direkt nach dem Entsperren wurde durch das Neu-Einstecken des USB-Geräts rückgängig gemacht. Beides behoben. |
+
 ## Nächste Schritte
+
+Offen aus 0.4.0 (siehe Tabellen oben): Druck am X2D von einem verschlüsselten Stick, Stromausfall
+bei Einrichtung und Passwortwechsel, Vergleichsmessung unverschlüsselt, Einrichtungsmodus bei der
+WLAN-Suche, Taste am Gerät, Firmware-Update über die Weboberfläche, Senden an (Windows) und
+Kurzbefehl (iPhone), App-Icon am Handy. Danach: Phase 6 unten bleibt offen für das echte Handy.
 
 1. Neue Weboberfläche am echten Gerät und an einem echten Handy durchspielen (T6.4 B14–B16:
    Abläufe am Dongle, iOS Safari, echtes Drag & Drop).
@@ -161,10 +211,11 @@ Schreib-Schutzfrist) bleiben unverändert. Ergebnisse: [05](05_testprotokoll.md)
 
 | Thema | Notiz |
 |---|---|
-| Authentifizierung | Zugriffsschutz für die Weboberfläche (bisher nur LAN + CSRF-Header); zurückgestellt, braucht ein Konzept für „Passwort vergessen“ |
-| Ordner | Unterordner in der Weboberfläche anzeigen und anlegen; machbar, zurückgestellt. Bisher nur Hauptverzeichnis, vorhandene Ordner werden gezählt |
+| Authentifizierung | **umgesetzt in 0.3.0** (Benutzer, Rollen, Anmeldesperre); Passwörter gehen trotzdem unverschlüsselt durchs WLAN (HTTPS offen, siehe 14) |
+| Ordner | **umgesetzt in 0.3.0** (anlegen, verschieben, kopieren, löschen). Anzeige von PC-Ordnern: noch nicht geprüft |
+| Laufwerksverschlüsselung | **umgesetzt in 0.4.0**, optional; Restpunkte siehe Phase 8 |
 | Captive Portal | Setup-AP öffnet die Einrichtungsseite automatisch |
-| OTA-Update | Partitionen sind vorbereitet (`ota_0`/`ota_1`), Update-Weg fehlt |
+| OTA-Update | **Eingebaut in 0.3.0** (Update über die Weboberfläche, Rückkehr zur alten Version); am Gerät noch nicht geprüft. Signierte Updates fehlen (Vormerkliste 14) |
 | microSD-Komfort | Hot-Swap nicht möglich (Slot am Stecker); ggf. Anzeige der Karte in der Weboberfläche ausbauen, exFAT nur mit anderer FatFs-Konfiguration |
 | Workflow ALLPLAN / 3MFStudio | Datei direkt aus der Planungs-/Slicer-Umgebung an den Dongle senden; Ablauf offen |
 | NVS-Verschlüsselung | WLAN-Passwort liegt unverschlüsselt im NVS |

@@ -18,7 +18,8 @@ Prozeduren und erwarteten Texte unten beschreiben den Stand 0.2.0; Ergebniszeile
 wie sie am Testtag eingetragen wurden, und nennen deshalb zum Teil die alten Namen
 (`PrintDrive-54D5`, `PRINTDRIVE`, „Host …“ auf dem LCD) und die alte Weboberfläche.
 
-Übersicht Stand 2026-11-12: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
+Stand 0.4.0: Die Ergebnisse für Anmeldung, Verschlüsselung und WLAN-Suche stehen in Phase 7 und 8
+am Ende dieses Dokuments. Die Übersicht gilt für 0.2.0: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
 `tools/api_test.py` weitgehend bestanden (T2.11: Flash 18/18, microSD 21/21), offen T2.2 (3),
 T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 6
 (Umbenennung, API v2 28/28, gzip-Auslieferung) bestanden, Browser-Test der neuen
@@ -519,5 +520,51 @@ Erwartet: alle Prüfungen bestanden. Laufzeit ca. 19 min für beide Profile.
 | B16 | Echtes Drag & Drop aus dem Explorer/Finder in den Browser | **offen** | – |
 
 Weiter offen (nicht Teil des Browser-Tests): Restpunkte am Bambu Lab X2D (Phase 4, X5–X10), Nur-Lese-Modus
-des Hosts auf der Hardware (T1.4), BOOT-Bestätigung per zweitem Druck am Gerät (T2.2), Ordner
-in der Weboberfläche und Passwortschutz (beides nicht umgesetzt, siehe [06](06_risiken.md)).
+des Hosts auf der Hardware (T1.4), BOOT-Bestätigung per zweitem Druck am Gerät (T2.2). Ordner und
+Anmeldung sind seit 0.3.0 umgesetzt, siehe Phase 7 unten.
+
+## Phase 7 – Anmeldung, Ordner, WLANs, Bedienung (Firmware 0.3.0)
+
+Stand 2026-11-12, Commit `9de5179`. Die Prüfungen laufen mit `tools/api_test.py` (Version 3) und
+der Rückmeldung des Besitzers. Die Schritte der Oberfläche sind für 0.3.0 nicht einzeln protokolliert.
+
+| Nr. | Prüfpunkt | Ergebnis | Datum |
+|---|---|---|---|
+| T7.1 | API-Test Version 3 am Gerät (Umfang laut Kopfkommentar von `tools/api_test.py`: Anmeldung, Rollen, Benutzer, vertraute Geräte, Anmeldesperre, Dateien und Ordner, WLAN, Status) | **bestanden** 182/182 | 2026-11-12 |
+| T7.2 | Weboberfläche im Browser (Anmeldung, Ordner, Sprache) | **bestanden** laut Rückmeldung des Besitzers; keine Einzelprotokollierung | 2026-11-12 |
+| T7.3 | Taste: Klick (QR-Code 20 s), Doppelklick, Wartungsmodus (5 bis 10 s halten), Benutzer-Reset (10 s halten) | **noch nicht geprüft** | – |
+| T7.4 | App-Icon auf dem Home-Bildschirm eines Handys | **noch nicht geprüft** | – |
+| T7.5 | „Senden an“ für Windows (`tools/sendto`) | **noch nicht geprüft** | – |
+| T7.6 | iPhone-Kurzbefehl nach [10_senden.md](10_senden.md) auf einem echten iPhone | **noch nicht geprüft** | – |
+| T7.7 | Firmware-Update über die Weboberfläche (ein 0.3.x-Testbuild) | **noch nicht geprüft** | – |
+| T7.8 | Bambu X2D erkennt den Stick und druckt von ihm (ohne Verschlüsselung, Version 0.2.0 und 0.3.0) | Rückmeldung des Besitzers, keine Messung | 2026-11-12 |
+
+## Phase 8 – Verschlüsselung, WLAN-Suche, Restarbeiten (Firmware 0.4.0)
+
+Stand 2026-11-12, Commits `60668c9` bis `0de2267`. Verfahren und Grenzen: [12_api_v4.md](12_api_v4.md)
+Abschnitt 2.5.
+
+| Nr. | Prüfpunkt | Ergebnis | Datum |
+|---|---|---|---|
+| T8.1 | AES-256-XTS-Selbsttest beim Start (IEEE-1619-Prüfwerte, beide Wege) | **bestanden** | 2026-11-12 |
+| T8.2 | Rechenleistung aus dem Selbsttest | Hardware-Pfad 4,7 MB/s, Bibliothek 0,5 MB/s | 2026-11-12 |
+| T8.3 | API-Test Version 4 ohne Formatieren (`tools/api_test.py`) | **bestanden** 250/250 | 2026-11-12 |
+| T8.4 | API-Test mit Verschlüsselungslauf (`--crypt-test`): Einrichten, Sperren, falsches Passwort mit Wartezeit, Entsperren mit Passwort und mit Wiederherstellungsschlüssel, Passwort ändern, neuer Wiederherstellungsschlüssel, Formatieren, Ausschalten, Löschen | **bestanden** 334/334 | 2026-11-12 |
+| T8.5 | Einrichten auf 64-GB-microSD | **bestanden**; Dauer 51 s | 2026-11-12 |
+| T8.6 | Datenrate USB, verschlüsselt: schreiben 820 KB/s (unverschlüsselt vorher 832 KB/s), lesen 659 KB/s | Messung. Vergleich lesen unverschlüsselt: **noch nicht geprüft** | 2026-11-12 |
+| T8.7 | Web-Upload per WLAN, verschlüsselt: 1,0 MB/s; Datei danach auf dem PC bitgleich | **bestanden** | 2026-11-12 |
+| T8.8 | WLAN-Suche bei bestehender Verbindung: 5 Netze in 2,9 s | **bestanden** | 2026-11-12 |
+| T8.9 | WLAN-Suche im Einrichtungsmodus (Handy am Zugangspunkt des Sticks) | **noch nicht geprüft** | – |
+| T8.10 | Browser-Test der Weboberfläche gegen den Testserver (`tools/ui_test.py`, Version 4): PC-Profil | **bestanden** 548/548 | 2026-11-12 |
+| T8.11 | Browser-Test, Handy-Profil (Emulation) | **bestanden** 561/561 | 2026-11-12 |
+| T8.12 | Anzeige „LIO“ auf dem Display (48 × 40 Pixel, Zustandsfarben) | Urteil des Besitzers: gut. Kein Messprotokoll | 2026-11-12 |
+| T8.13 | Stromausfall während der Einrichtung oder des Passwortwechsels | **noch nicht geprüft** | – |
+| T8.14 | Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** | – |
+| T8.15 | Verschlüsselung auf dem internen Flash (ohne Karte) | **noch nicht geprüft** | – |
+| T8.16 | Unabhängige Prüfung der Verfahren mit `firmware/components/pd_crypt/tools/pd_crypt_check.py` | **noch nicht geprüft** (Ergebnis nicht eingetragen) | – |
+| T8.17 | HTTPS (Build-Schalter `PD_HTTPS_OPTION`) | Uploads scheitern mit TLS; Schalter aus. Siehe [14](14_vormerkliste.md) | 2026-11-12 |
+
+Während der Tests am Gerät gefunden und behoben:
+
+- Abgewiesene Anfragen mit Formulardaten schlossen die Verbindung, statt zu antworten.
+- Eine Übernahme direkt nach dem Entsperren wurde durch das Neu-Einstecken des USB-Geräts rückgängig gemacht.

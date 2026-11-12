@@ -1,10 +1,11 @@
 # 02 – Architektur
 
-Beschreibt den Stand des Quellcodes in `firmware/` (WiFi DataDrive, Firmware 0.2.0). Auf
-echter Hardware verifiziert sind USB-Laufwerk, Auswurf/Bereitstellen, Download-Modus,
-Web-API v2/Upload (`tools/api_test.py`) und microSD unter Windows; offen sind
-Nur-Lese-Modus, Browser-Test aller Zustände der Weboberfläche und Drucker (siehe
-[03_umsetzungsplan.md](03_umsetzungsplan.md)).
+Beschreibt den Stand des Quellcodes in `firmware/` (WiFi DataDrive, Firmware 0.4.0). Die
+Abschnitte 1 bis 8 stammen aus 0.2.0 und gelten unverändert, soweit nicht anders vermerkt.
+Neu dazu kommen die Abschnitte 9 bis 11 (Anmeldung, Verschlüsselung, WLAN-Suche) mit ihrem
+Prüfstand. Auf echter Hardware verifiziert sind USB-Laufwerk, Auswurf/Bereitstellen,
+Download-Modus, Web-API und microSD unter Windows; offen sind Nur-Lese-Modus und der
+Drucker (siehe [03_umsetzungsplan.md](03_umsetzungsplan.md)).
 
 Das Projekt hieß bis Version 0.1.0 „WiFi PrintDrive“. Interne Namen bleiben: Ordner
 `firmware/printdrive`, Header `X-PrintDrive`, Code-Präfix `pd_`/`PD_`. Die Weboberfläche
@@ -24,7 +25,12 @@ bereitgestellt und Upload-Modus.
 | `drive` | `printdrive/main/drive.c` | Medienwahl (microSD/Flash), **Besitzer-Verwaltung** des Dateisystems, Formatieren, Dateioperationen, Upload-Pipeline |
 | `usb_dev` | `printdrive/main/usb_dev.c` | TinyUSB-Installation, Konfigurationsdeskriptor, CDC-Log-Port, 1200-Baud-Touch, Soft-Re-Plug, Barrier |
 | `web_server` | `printdrive/main/web_server.c` | HTTP-API ([07_api.md](07_api.md)) und eingebettete Weboberfläche (`web/index.html`, beim Bauen gzip-komprimiert) |
-| `ui` | `printdrive/main/ui.c` | LCD-Statusbild, LED-Farbe, BOOT-Taste |
+| `ui` | `printdrive/main/ui.c` | LCD-Statusbild, LED-Farbe, BOOT-Taste, QR-Code-Anzeige (seit 0.3.0), Anzeige „LIO“ (`anim.c`, seit 0.4.0) |
+| `pd_crypt` | `components/pd_crypt` | Verschlüsselungsschicht zwischen Speichermedium und Dateisystem/USB (seit 0.4.0, Abschnitt 10) |
+| `auth`, `web_auth` | `printdrive/main/auth.c`, `web_auth.c` | Benutzer, Sitzungen, vertraute Geräte, Anmeldesperre (seit 0.3.0, Abschnitt 9) |
+| `web_files`, `web_wifi`, `web_system`, `web_crypt`, `web_ota` | `printdrive/main/web_*.c` | Endpunkte je Bereich (Dateien/Ordner, WLAN inkl. Suche, System, Verschlüsselung, Update); seit 0.3.0 |
+| `ota` | `printdrive/main/ota.c` | Firmware-Update über die Weboberfläche, Rückkehr zur alten Version (seit 0.3.0) |
+| `tls`, `web_static` | `printdrive/main/tls.c`, `web_static.c` | HTTPS-Option (im Build abgeschaltet, seit 0.4.0); statische Auslieferung |
 
 Startreihenfolge (`app_main.c`): `applog_init` → NVS (bei veraltetem Format nur NVS
 löschen) → `board_init` → `ui_init` (BOOT-Bild) → `drive_init` (Speicher + USB; bei
@@ -233,6 +239,8 @@ Dongle zeigt das LCD den Fortschritt. Andere Clients warten bis zum Ende des Upl
   sind, sonst nach `CONFIG_PD_WIFI_AP_FALLBACK_S` (20 s) ohne Verbindung. Passwort:
   10 Zeichen, einmalig pro Gerät erzeugt, in NVS (`pd_wifi/ap_pass`), auf dem LCD angezeigt.
 - AP geht `CONFIG_PD_WIFI_AP_LINGER_S` (120 s) nach erfolgreicher STA-Verbindung aus.
+- Seit 0.3.0: bis zu 5 gespeicherte WLANs; verbunden wird mit dem stärksten bekannten. Die
+  WLAN-Suche (seit 0.4.0) steht in Abschnitt 11.
 - **mDNS**: `http://datadrive.local` (Hostname `CONFIG_PD_WIFI_HOSTNAME`, Default `datadrive`),
   Instanzname „WiFi DataDrive“, Dienst `_http._tcp`.
 
@@ -244,7 +252,8 @@ Verbindlich beschrieben in [07_api.md](07_api.md) (Endpunkte, Parameter, Fehlerc
 HTTP-Status, Ablauf eines Uploads). Kurzfassung:
 
 - Alle zustandsändernden Anfragen sind `POST` und brauchen den Header **`X-PrintDrive: 1`**
-  (CSRF-Schutz), sonst `403 FORBIDDEN`. Keine Authentifizierung.
+  (CSRF-Schutz), sonst `403 FORBIDDEN`. Seit 0.3.0 ist eine Anmeldung Pflicht (Abschnitt 9);
+  der Stand 0.2.0 ohne Anmeldung ist überholt.
 - Antwortformat: `{"ok":bool,"code":"…","error":"<deutscher Klartext>"}`; die Texte stammen
   aus `drive_result_str()`.
 - Lesen: `/api/status`, `/api/files`, `/api/download`, `/api/log`. Ändern: `/api/mode`,
@@ -288,8 +297,12 @@ Verhalten:
 - Status-Polling alle 3 s, ausgesetzt während eigener Uploads und bei verdecktem Tab; die
   Dateiliste wird nur neu geladen, wenn sich Besitzer, Dateizahl oder freier Platz ändern.
 - Formatieren sendet nach der getippten Bestätigung `confirm=FORMAT` an `/api/format`.
-- Ordner zeigt die Liste nicht an; ein Hinweis nennt ihre Anzahl (`dirs`). Bei `truncated`
-  erscheint ein Hinweis, dass nur ein Teil der Dateien gezeigt wird.
+- Die Ordnerbedienung (anlegen, verschieben, kopieren, Mehrfachauswahl, Zwischenablage) ist seit
+  0.3.0 dabei. Ob der Hinweis auf ausgeblendete Ordner (`dirs`) danach noch nötig ist, ist
+  **noch nicht geprüft**. Bei `truncated` erscheint ein Hinweis, dass nur ein Teil der Dateien
+  gezeigt wird.
+- Seit 0.3.0 zweisprachig (Deutsch/Englisch), mit Anmeldung und Passwortwechsel, und
+  mit einem Abschnitt „Verschlüsselung“ unter Speicher & USB (seit 0.4.0).
 
 Entwicklung ohne Hardware: `tools/mock_server.py` bildet die API nach, siehe
 [04_build_und_flash.md](04_build_und_flash.md) Abschnitt 11.
@@ -343,3 +356,66 @@ nachgeliefert, danach läuft das Log live weiter. Wird der Port mit
 
 Konsole der Hauptfirmware: UART0 (GPIO43/44). Logs zusätzlich über CDC und `/api/log`.
 Vor einem Neustart trennt ein Shutdown-Handler USB sauber (`tud_disconnect`, 50 ms).
+
+## 9. Anmeldung und Benutzer (seit 0.3.0)
+
+Prüfstand: API-Test am Gerät 182/182 (0.3.0). Die Regeln und Endpunkte stehen in
+[09_api_v3.md](09_api_v3.md) Abschnitt 2; hier nur der Aufbau.
+
+- **Zwei Wege:** Browser mit Sitzungs-Cookie (`dd_session`, im Arbeitsspeicher, 12 Stunden
+  ohne Anfrage) oder HTTP Basic für Skripte und Kurzbefehle. Ohne Anmeldung sind nur
+  Startseite, Icons, Sitzungsabfrage und Anmeldung erreichbar.
+- **Benutzer:** höchstens 8, Rollen `admin` und `user`. Gespeichert werden Name, Rolle, Salz
+  und ein PBKDF2-HMAC-SHA256-Wert (2000 Runden, 32 Byte) im Einstellungsspeicher, nie das
+  Klartext-Passwort. Ohne Benutzer (erster Start, Reset per Taste) entsteht `admin` / `admin`.
+- **Vertraute Geräte:** Die Sitzung kann dauerhaft gespeichert werden. Im Speicher liegt nur
+  der SHA-256-Wert des Sitzungsschlüssels. Höchstens 4 je Benutzer, insgesamt 8.
+- **Anmeldesperre:** je Adresse nach 5 Fehlversuchen, Wartezeit 30 s, dann doppelt, höchstens
+  900 s. Dazu eine Gesamtgrenze gegen verteiltes Raten. Zähler und Sperren liegen im
+  Arbeitsspeicher und enden mit dem Neustart.
+- **Benutzerdatenbank nicht lesbar:** Das Gerät verweigert jede Anmeldung (`503
+  AUTH_UNAVAILABLE`) und verlangt den Reset per Taste (10 s). Es wird nicht stillschweigend
+  neu angelegt.
+- **Erzwungener Passwortwechsel:** Solange das Auslieferungspasswort gilt, sind nur Anmeldung
+  und Passwortwechsel erreichbar.
+
+## 10. Verschlüsselungsschicht `pd_crypt` (seit 0.4.0)
+
+Prüfstand: verifiziert am Gerät (API-Lauf 334/334 mit `--crypt-test`, Selbsttest beim Start).
+Die Anwender-Sicht steht in [12_api_v4.md](12_api_v4.md) Abschnitt 2, die Grenzen des
+Schutzes in Abschnitt 2.5.
+
+- **Lage:** Zwischen Speichermedium (microSD oder interner Flash) und allem darüber (FatFs,
+  USB-Massenspeicher). Die Besitzer-Logik aus Abschnitt 3 bleibt darüber unverändert.
+- **Verfahren:** AES-256-XTS, 512-Byte-Sektoren, die Sektornummer dient als Tweak. Die
+  Verschlüsselung läuft in der AES-Hardware des ESP32-S3; ein Selbsttest mit den
+  IEEE-1619-Prüfwerten prüft beide Wege (Hardware und Bibliothek) beim Start.
+- **Schlüssel:** ein zufälliger 512-Bit-Hauptschlüssel verschlüsselt die Daten. Er liegt zweimal
+  im Kopfbereich verpackt: einmal mit einem Schlüssel aus dem Laufwerks-Passwort
+  (PBKDF2-HMAC-SHA256; die Rundenzahl wird so gewählt, dass eine Ableitung
+  `CONFIG_PD_CRYPT_KDF_TARGET_MS`, Standard 2 s, dauert), einmal mit einem Schlüssel aus dem
+  Wiederherstellungsschlüssel. Im Speicher liegt der Hauptschlüssel nur, solange das Laufwerk
+  entsperrt ist.
+- **Layout:** Sektor 0 Kopfbereich, letzter Sektor Sicherungskopie, dazwischen ein Abstand
+  (auf der microSD 4 MiB), danach die verschlüsselten Daten. Kopf- und Sicherungsdaten tragen
+  je eine Prüfsumme (SHA-256) und eine Generationsnummer. Beim Schreiben des Kopfes wird zuerst
+  die Sicherung geschrieben, dann das Original.
+- **Einrichten:** löscht zuerst das ganze Medium (SD-Befehl ERASE). Lässt die Karte das nicht
+  zu, werden die Sektoren überschrieben, bis zu `CONFIG_PD_CRYPT_OVERWRITE_MAX_MB` (Standard
+  64 MB); darüber wird das Einrichten verweigert.
+- **Passwortwechsel:** schreibt nur den Kopfbereich neu; die Daten bleiben unberührt.
+- **Zustände:** unverschlüsselt, entsperrt, gesperrt, beschädigt (Schlüsselbereich unlesbar).
+  Gesperrt heißt: kein Medium für den Host, keine Dateioperation der Firmware. Die Tabelle steht
+  in [12](12_api_v4.md) Abschnitt 2.1.
+- **Geschwindigkeit:** Der Schreibpfad nutzt einen Puffer von 8 KiB (Standard), der nur
+  während des Entsperrens belegt ist. Gemessene Werte: [01](01_bestandsaufnahme.md) Abschnitt 7
+  und [05](05_testprotokoll.md) Phase 8.
+
+## 11. WLAN-Suche (seit 0.4.0)
+
+Prüfstand: verifiziert bei bestehender WLAN-Verbindung (5 Netze in 2,9 s). Im
+Einrichtungsmodus (Handy am Zugangspunkt des Sticks) **noch nicht geprüft**.
+
+- Endpunkt `GET /api/wifi/scan` (Rolle `admin`), Antwort in [12](12_api_v4.md) Abschnitt 1.
+- Die Suche dauert 2 bis 3 s und blockiert wie jede Anfrage; es läuft immer nur eine.
+- Sie ändert weder die gespeicherten Netze noch die bestehende Verbindung.
