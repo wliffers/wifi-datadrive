@@ -1,9 +1,10 @@
 // Status screen layout (160 x 80):
-//   y  0..15  header bar, colour = state: BOOT / USB / BEREIT / UPLOAD / WLAN / FEHLER
-//   y 19      address line  (IP, or setup access point SSID)
-//   y 29      second line   (hostname.local, or access point password)
-//   y 40      storage line  + bar at y 50
-//   y 58      host / upload line
+//   y  0..15  header bar, colour = state: BOOT / USB / BEREIT / UPLOAD / WLAN / FEHLER / GESPERRT
+//   y 19      address line  (IP, or setup access point SSID)      } left column x 3..105,
+//   y 29      second line   (hostname.local, or access point password) } max 17 characters
+//   y 40      storage line  + bar at y 50 (x 3..105)                }
+//   x 108..155, y 18..57: animation box (anim.c), nothing else is drawn there
+//   y 59      host / upload line (full width)
 //   y 70      message line
 //
 // BOOT button (polled every 50 ms):
@@ -15,6 +16,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include "anim.h"
 #include "auth.h"
 #include "board.h"
 #include "display.h"
@@ -54,11 +56,32 @@ void ui_notify(const char *msg, bool error)
     s_msg_until_ms = now_ms() + 6000;
 }
 
+// Black text on light backgrounds, white on dark ones (RGB565 -> rough luminance).
+static uint16_t header_fg(uint16_t bg)
+{
+    const int r = (bg >> 8) & 0xF8, g = (bg >> 3) & 0xFC, b = (bg << 3) & 0xF8;
+    return (r * 3 + g * 6 + b) / 10 >= 120 ? DISPLAY_BLACK : DISPLAY_WHITE;
+}
+
 static void header(const char *title, uint16_t bg)
 {
     display_rect(0, 0, DISPLAY_W, 16, bg);
-    display_text(3, 1, title, DISPLAY_WHITE, bg, 2);
+    display_text(3, 1, title, header_fg(bg), bg, 2);
 }
+
+// Accent colour of the mascot per animation state (anim/manifest.json): header bar and LED.
+static const uint16_t s_accent[ANIM_COUNT] = {
+    [ANIM_NONE] = DISPLAY_GREY,
+    [ANIM_READY] = DISPLAY_RGB(0x40, 0xE5, 0xD1),
+    [ANIM_UPLOAD] = DISPLAY_RGB(0x4E, 0xA5, 0xFF),
+    [ANIM_DOWNLOAD] = DISPLAY_RGB(0xB5, 0x8A, 0xFF),
+    [ANIM_PROCESSING] = DISPLAY_RGB(0xFF, 0xB4, 0x54),
+    [ANIM_SUCCESS] = DISPLAY_RGB(0x73, 0xE9, 0x9C),
+    [ANIM_CONNECTING] = DISPLAY_RGB(0x40, 0xE5, 0xD1),
+    [ANIM_DISCONNECTED] = DISPLAY_RGB(0xFF, 0xE0, 0x82),
+    [ANIM_LOCKED] = DISPLAY_RGB(0xB5, 0x8A, 0xFF),
+    [ANIM_ERROR] = DISPLAY_RGB(0xFF, 0x5D, 0x68),
+};
 
 esp_err_t ui_init(void)
 {
@@ -294,6 +317,16 @@ static void do_switch(int64_t t)
     drive_status_t d;
     drive_get_status(&d);
     drive_result_t r;
+    if (d.crypt == DRIVE_CRYPT_DAMAGED) {
+        s_confirm_until_ms = 0;
+        ui_notify("Schlüsselbereich defekt", true);
+        return;
+    }
+    if (d.crypt == DRIVE_CRYPT_LOCKED) {
+        s_confirm_until_ms = 0;
+        ui_notify("Erst im Browser entsperren", true);
+        return;
+    }
     if (d.owner == DRIVE_OWNER_USB) {
         const bool force = t < s_confirm_until_ms;
         r = drive_set_owner(DRIVE_OWNER_APP, force);
@@ -400,50 +433,114 @@ static void handle_button(void)
     }
 }
 
+// Size text for the 104 px wide left column: the unit of the first number is dropped when both
+// share it ("58.2/59.5GB").
+static void fmt_storage(char *out, size_t len, const drive_status_t *d)
+{
+    char a[12], b[12];
+    fmt_size(a, sizeof(a), d->free_bytes);
+    fmt_size(b, sizeof(b), d->total_bytes);
+    const size_t la = strlen(a), lb = strlen(b);
+    if (la >= 2 && lb >= 2 && strcmp(a + la - 2, b + lb - 2) == 0) {
+        a[la - 2] = 0;
+    }
+    snprintf(out, len, "%s %s/%s", d->on_sd ? "SD" : "Fl", a, b);
+}
+
+// Which animation belongs to the current state (same priority as the header title).
+static anim_id_t pick_anim(const drive_status_t *d, const pd_wifi_status_t *w, int64_t t)
+{
+    static drive_crypt_state_t prev_crypt = DRIVE_CRYPT_OFF;
+    static bool unlock_playing;
+    if (prev_crypt == DRIVE_CRYPT_LOCKED && d->crypt != DRIVE_CRYPT_LOCKED) {
+        unlock_playing = true;
+    }
+    prev_crypt = d->crypt;
+    if (d->crypt == DRIVE_CRYPT_LOCKED) {
+        unlock_playing = false;
+        return ANIM_LOCKED;
+    }
+    if (unlock_playing) {
+        if (!anim_finished(t)) {
+            return ANIM_SUCCESS;
+        }
+        unlock_playing = false;
+    }
+    if (d->crypt == DRIVE_CRYPT_DAMAGED) {
+        unlock_playing = false;
+        return ANIM_ERROR;
+    }
+    if (d->owner == DRIVE_OWNER_NONE || !d->fs_ok) {
+        return ANIM_ERROR;
+    }
+    if (d->upload_active) {
+        return ANIM_UPLOAD;
+    }
+    if (anim_is_busy()) {
+        return ANIM_PROCESSING;
+    }
+    if (d->owner == DRIVE_OWNER_USB) {
+        const bool io = d->host_write_idle_ms < CONFIG_PD_HOST_WRITE_GUARD_MS ||
+                        d->host_idle_ms < CONFIG_PD_HOST_WRITE_GUARD_MS;
+        return io ? ANIM_DOWNLOAD : ANIM_READY;
+    }
+    if (!w->sta_connected) {
+        return (w->ap_active || w->sta_configured) ? ANIM_CONNECTING : ANIM_DISCONNECTED;
+    }
+    return ANIM_READY;
+}
+
 static void render(const drive_status_t *d, const pd_wifi_status_t *w, bool draw)
 {
-    char line[DRIVE_NAME_MAX + 16], a[12], b[12];
+    char line[DRIVE_NAME_MAX + 16];
     uint16_t colour;
     const char *title;
+    const bool locked = d->crypt == DRIVE_CRYPT_LOCKED;
+    const bool damaged = d->crypt == DRIVE_CRYPT_DAMAGED;
 
-    if (d->owner == DRIVE_OWNER_NONE || !d->fs_ok) {
+    const int64_t t = now_ms();
+    const anim_id_t an = pick_anim(d, w, t);
+    colour = s_accent[an];
+    if (locked) {                          // before the error case: fs_ok is false while locked
+        title = "GESPERRT";
+    } else if (damaged || d->owner == DRIVE_OWNER_NONE || !d->fs_ok) {
         title = "FEHLER";
-        colour = DISPLAY_RED;
     } else if (d->upload_active) {
         title = "UPLOAD";
-        colour = DISPLAY_ORANGE;
     } else if (d->owner == DRIVE_OWNER_USB) {
         title = "USB";
-        colour = DISPLAY_GREEN;
     } else if (!w->sta_connected && w->ap_active) {
         title = "WLAN";
-        colour = DISPLAY_CYAN;
     } else {
         title = "BEREIT";
-        colour = DISPLAY_BLUE;
     }
 
     // LED in state colour, dim; kept up to date while an overlay owns the LCD
     const uint8_t r = (colour >> 8) & 0xF8, g = (colour >> 3) & 0xFC, bl = (colour << 3) & 0xF8;
     board_led_set(r, g, bl, 1);
+    anim_set(an, t);
     if (!draw) {
         return;
     }
+    anim_tick(t);
 
     display_fill(DISPLAY_BLACK);
     header(title, colour);
     // Wi-Fi indicator in the header
     const char *wtag = w->sta_connected ? "WLAN" : (w->ap_active ? "AP" : "----");
-    display_text(DISPLAY_W - display_text_width(wtag, 1) - 3, 4, wtag, DISPLAY_WHITE, colour, 1);
+    display_text(DISPLAY_W - display_text_width(wtag, 1) - 3, 4, wtag,
+                 header_fg(colour), colour, 1);
 
-    // Address lines
+    // Address lines: left column only (x 3..105 = 17 characters), the animation box starts at x 108
     if (w->sta_connected) {
         display_text(3, 19, w->sta_ip, DISPLAY_YELLOW, DISPLAY_BLACK, 1);
-        snprintf(line, sizeof(line), "%s.local", w->hostname);
+        snprintf(line, sizeof(line), "%.11s.local", w->hostname);
         display_text(3, 29, line, DISPLAY_GREY, DISPLAY_BLACK, 1);
     } else if (w->ap_active) {
-        display_text(3, 19, w->ap_ssid, DISPLAY_CYAN, DISPLAY_BLACK, 1);
-        snprintf(line, sizeof(line), "PW %s", w->ap_pass);
+        snprintf(line, sizeof(line), "%.17s", w->ap_ssid);
+        display_text(3, 19, line, DISPLAY_CYAN, DISPLAY_BLACK, 1);
+        // "PW " + password (10 characters normally); without the prefix if it would not fit
+        snprintf(line, sizeof(line), strlen(w->ap_pass) <= 14 ? "PW %s" : "%.17s", w->ap_pass);
         display_text(3, 29, line, DISPLAY_CYAN, DISPLAY_BLACK, 1);
     } else {
         display_text(3, 19, w->sta_configured ? "WLAN verbinde..." : "WLAN nicht konfig.", DISPLAY_GREY,
@@ -451,25 +548,32 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w, bool draw
     }
 
     // Storage
-    if (d->needs_format) {
+    if (damaged) {
+        display_text(3, 40, "Schlüsselbereich", DISPLAY_RED, DISPLAY_BLACK, 1);
+        display_text(3, 50, "beschädigt", DISPLAY_RED, DISPLAY_BLACK, 1);
+    } else if (locked) {
+        display_text(3, 40, "Im Browser", DISPLAY_YELLOW, DISPLAY_BLACK, 1);
+        display_text(3, 50, "entsperren", DISPLAY_YELLOW, DISPLAY_BLACK, 1);
+    } else if (d->needs_format) {
         display_text(3, 40, "Kein Dateisystem!", DISPLAY_RED, DISPLAY_BLACK, 1);
         display_text(3, 50, "Im Web formatieren", DISPLAY_GREY, DISPLAY_BLACK, 1);
     } else if (d->total_bytes) {
-        fmt_size(a, sizeof(a), d->free_bytes);
-        fmt_size(b, sizeof(b), d->total_bytes);
-        snprintf(line, sizeof(line), "%s %s / %s", d->on_sd ? "SD" : "Frei", a, b);
+        fmt_storage(line, sizeof(line), d);
         display_text(3, 40, line, DISPLAY_WHITE, DISPLAY_BLACK, 1);
-        const int used_w = (int)((DISPLAY_W - 6) * (d->total_bytes - d->free_bytes) / d->total_bytes);
-        display_rect(3, 50, DISPLAY_W - 6, 5, DISPLAY_GREY);
+        const int bar_w = 102;                                  // x 3..104
+        const int used_w = (int)(bar_w * (d->total_bytes - d->free_bytes) / d->total_bytes);
+        display_rect(3, 50, bar_w, 5, DISPLAY_GREY);
         display_rect(3, 50, used_w, 5, d->free_bytes < d->total_bytes / 10 ? DISPLAY_RED : DISPLAY_GREEN);
     }
 
-    // Host / upload line
+    // Host / upload line (below the box, full width)
     if (d->upload_active && d->upload_total) {
         const int pct = (int)(100ULL * d->upload_received / d->upload_total);
         snprintf(line, sizeof(line), "%3d%% %s", pct, d->upload_name);
         display_text(3, 59, line, DISPLAY_ORANGE, DISPLAY_BLACK, 1);
         display_rect(3, 67, (DISPLAY_W - 6) * pct / 100, 2, DISPLAY_ORANGE);
+    } else if (locked || damaged) {
+        // nothing: the lines above already say it
     } else {
         const char *host;
         if (!d->usb_connected) {
@@ -491,10 +595,15 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w, bool draw
     // Message line
     if (now_ms() < s_msg_until_ms) {
         display_text(3, 70, s_msg, s_msg_error ? DISPLAY_RED : DISPLAY_GREEN, DISPLAY_BLACK, 1);
+    } else if (damaged) {
+        display_text(3, 70, "Im Web: Löschen", DISPLAY_GREY, DISPLAY_BLACK, 1);
+    } else if (locked) {
+        display_text(3, 70, "verschlüsselt", DISPLAY_GREY, DISPLAY_BLACK, 1);
     } else {
         snprintf(line, sizeof(line), "%lu Datei(en)", (unsigned long)d->file_count);
         display_text(3, 70, line, DISPLAY_GREY, DISPLAY_BLACK, 1);
     }
+    anim_draw();                 // after the text: the box is the last thing drawn
     display_flush();
 }
 
@@ -516,6 +625,10 @@ static void ui_task(void *arg)
             if (s_overlay == OV_QR) {
                 draw_qr_screen(&w);
             }
+        } else if (s_overlay == OV_NONE && anim_tick(now_ms())) {
+            // animation frame due between two full redraws: send only the box (3.8 kB)
+            anim_draw();
+            display_flush_rect(ANIM_X, ANIM_Y, ANIM_W, ANIM_H);
         }
         vTaskDelay(pdMS_TO_TICKS(POLL_MS));
     }

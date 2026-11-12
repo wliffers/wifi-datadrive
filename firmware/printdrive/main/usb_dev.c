@@ -14,17 +14,118 @@
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
+#include "pd_crypt.h"
 #include "sdkconfig.h"
+#include "sdmmc_cmd.h"
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
+#include "wear_levelling.h"
 #if CONFIG_TINYUSB_CDC_ENABLED
 #include "tinyusb_cdc_acm.h"
 #endif
+// esp_tinyusb private headers (include path set in CMakeLists.txt): storage_medium_t
+#include "storage_sdmmc.h"
+#include "storage_spiflash.h"
 
 static const char *TAG = "usb_dev";
 
 static usb_dev_event_cb_t s_cb;
 static SemaphoreHandle_t s_barrier;
+
+// ---------------------------------------------------------------- MSC medium hook (encryption)
+// esp_tinyusb accesses the card / flash only through a storage_medium_t table: mount(pdrv)
+// registers the FatFs disk driver when the app mounts the drive, read()/write() serve the USB
+// host (write() runs deferred in the TinyUSB task, under esp_tinyusb's storage mutex). The two
+// "open medium" functions are wrapped (CMakeLists.txt) so esp_tinyusb receives the tables below.
+// Unencrypted medium: every call goes unchanged to the real table. Encrypted medium:
+//  - host sectors are en-/decrypted by pd_crypt (volume sector n = physical data_start + n),
+//  - mount() first registers the real driver (so esp_tinyusb's unmount and drive.c still find the
+//    drive number of the card / WL handle) and then replaces it by pd_crypt's driver at that
+//    drive number, before esp_tinyusb mounts the FAT.
+// The volume size the host sees comes from __wrap_tud_msc_capacity_cb() in drive.c.
+static const storage_medium_t *s_real_medium;
+
+static esp_err_t cm_mount(BYTE pdrv)
+{
+    const esp_err_t err = s_real_medium->mount(pdrv);
+    if (err == ESP_OK && pd_crypt_is_encrypted()) {
+        pd_crypt_diskio_register(pdrv);
+    }
+    return err;
+}
+
+static esp_err_t cm_unmount(void)
+{
+    return s_real_medium->unmount();
+}
+
+static esp_err_t cm_read(uint32_t lba, uint32_t offset, size_t size, void *dest)
+{
+    if (!pd_crypt_is_encrypted()) {
+        return s_real_medium->read(lba, offset, size, dest);
+    }
+    // TinyUSB splits transfers at the MSC buffer size (a multiple of 512): whole sectors only.
+    if (offset != 0 || size % PD_CRYPT_SECTOR_SIZE != 0) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return pd_crypt_read(lba, dest, size / PD_CRYPT_SECTOR_SIZE);
+}
+
+static esp_err_t cm_write(uint32_t lba, uint32_t offset, size_t size, const void *src)
+{
+    if (!pd_crypt_is_encrypted()) {
+        return s_real_medium->write(lba, offset, size, src);
+    }
+    if (offset != 0 || size % PD_CRYPT_SECTOR_SIZE != 0) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return pd_crypt_write(lba, src, size / PD_CRYPT_SECTOR_SIZE);
+}
+
+static esp_err_t cm_get_info(storage_info_t *info)
+{
+    return s_real_medium->get_info(info);   // read once at start-up; see __wrap_tud_msc_capacity_cb
+}
+
+static void cm_close(void)
+{
+    s_real_medium->close();
+}
+
+static const storage_medium_t s_crypt_sdmmc = {
+    .type = STORAGE_MEDIUM_TYPE_SDMMC,
+    .mount = cm_mount, .unmount = cm_unmount, .read = cm_read, .write = cm_write,
+    .get_info = cm_get_info, .close = cm_close,
+};
+
+static const storage_medium_t s_crypt_spiflash = {
+    .type = STORAGE_MEDIUM_TYPE_SPIFLASH,
+    .mount = cm_mount, .unmount = cm_unmount, .read = cm_read, .write = cm_write,
+    .get_info = cm_get_info, .close = cm_close,
+};
+
+esp_err_t __real_storage_sdmmc_open_medium(sdmmc_card_t *card, const storage_medium_t **medium);
+esp_err_t __real_storage_spiflash_open_medium(wl_handle_t wl_handle, const storage_medium_t **medium);
+
+esp_err_t __wrap_storage_sdmmc_open_medium(sdmmc_card_t *card, const storage_medium_t **medium)
+{
+    const esp_err_t err = __real_storage_sdmmc_open_medium(card, medium);
+    if (err == ESP_OK) {
+        s_real_medium = *medium;
+        *medium = &s_crypt_sdmmc;
+    }
+    return err;
+}
+
+esp_err_t __wrap_storage_spiflash_open_medium(wl_handle_t wl_handle, const storage_medium_t **medium)
+{
+    const esp_err_t err = __real_storage_spiflash_open_medium(wl_handle, medium);
+    if (err == ESP_OK) {
+        s_real_medium = *medium;
+        *medium = &s_crypt_spiflash;
+    }
+    return err;
+}
 
 // ---------------------------------------------------------------- descriptors
 // Default device descriptor and strings come from esp_tinyusb (strings set in

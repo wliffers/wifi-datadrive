@@ -8,7 +8,11 @@
 #include "auth.h"
 #include "mbedtls/platform_util.h"
 #include "sdkconfig.h"
+#include "tls.h"
 #include "web_common.h"
+
+/** Cookie attribute suffix: "; Secure" while the web UI runs over HTTPS. */
+#define COOKIE_SECURE() (pd_tls_active() ? "; Secure" : "")
 
 #define FORM_MAX  512   // urlencoded body limit (like the mock server)
 #define FIELD_MAX 200   // raw (still encoded) value: 64 password bytes need up to 192 chars
@@ -130,12 +134,13 @@ static esp_err_t h_login(httpd_req_t *req)
     if (r != AUTH_OK) {
         return auth_send_error(req, r);
     }
-    char cookie[AUTH_TOKEN_HEX + 80];
+    char cookie[AUTH_TOKEN_HEX + 96];
     if (persistent) {
-        snprintf(cookie, sizeof(cookie), AUTH_COOKIE_NAME "=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Strict",
-                 token, AUTH_DEVICE_MAX_AGE_S);
+        snprintf(cookie, sizeof(cookie), AUTH_COOKIE_NAME "=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Strict%s",
+                 token, AUTH_DEVICE_MAX_AGE_S, COOKIE_SECURE());
     } else {
-        snprintf(cookie, sizeof(cookie), AUTH_COOKIE_NAME "=%s; Path=/; HttpOnly; SameSite=Strict", token);
+        snprintf(cookie, sizeof(cookie), AUTH_COOKIE_NAME "=%s; Path=/; HttpOnly; SameSite=Strict%s", token,
+                 COOKIE_SECURE());
     }
     const esp_err_t sent = send_session(req, cookie);   // header is sent before cookie goes out of scope
     mbedtls_platform_zeroize(token, sizeof(token));
@@ -146,7 +151,9 @@ static esp_err_t h_login(httpd_req_t *req)
 static esp_err_t h_logout(httpd_req_t *req)
 {
     auth_logout(req);
-    httpd_resp_set_hdr(req, "Set-Cookie", AUTH_COOKIE_NAME "=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+    httpd_resp_set_hdr(req, "Set-Cookie",
+                       pd_tls_active() ? AUTH_COOKIE_NAME "=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure"
+                                    : AUTH_COOKIE_NAME "=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
     return web_send_json(req, "200 OK", "{\"ok\":true}");
 }
 

@@ -1,0 +1,66 @@
+{
+  "mascot": "LIO",
+  "description": "Kompakter modularer Pixel-Roboter mit Leuchtantenne und CAD-würfelförmigem Kopf",
+  "display": "ST7735",
+  "size_px": [
+    48,
+    40
+  ],
+  "position_px": [
+    108,
+    18
+  ],
+  "background": "#000000",
+  "fps": 10,
+  "frames_per_animation": 8,
+  "format": "RGB PNG, opaque, nearest-neighbor only",
+  "frames_layout": "Horizontal sprite sheet, each frame 48x40, total 384x40",
+  "states": [
+    {
+      "name": "01_ready",
+      "label": "Bereit",
+      "accent": "#40E5D1"
+    },
+    {
+      "name": "02_upload",
+      "label": "Upload läuft",
+      "accent": "#4EA5FF"
+    },
+    {
+      "name": "03_download",
+      "label": "Download läuft",
+      "accent": "#B58AFF"
+    },
+    {
+      "name": "04_processing",
+      "label": "Verarbeitung",
+      "accent": "#FFB454"
+    },
+    {
+      "name": "05_success",
+      "label": "Erfolgreich",
+      "accent": "#73E99C"
+    },
+    {
+      "name": "06_connecting",
+      "label": "WLAN verbinden",
+      "accent": "#40E5D1"
+    },
+    {
+      "name": "07_disconnected",
+      "label": "Offline",
+      "accent": "#FFE082"
+    },
+    {
+      "name": "08_locked",
+      "label": "Gesperrt",
+      "accent": "#B58AFF"
+    },
+    {
+      "name": "09_error",
+      "label": "Fehler",
+      "accent": "#FF5D68"
+    }
+  ],
+  "note": "State labels are proposed because the full docs/13_display_animation_briefing.md was not available."
+}

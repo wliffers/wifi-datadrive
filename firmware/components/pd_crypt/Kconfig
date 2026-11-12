@@ -1,0 +1,48 @@
+menu "DataDrive encryption"
+
+    config PD_CRYPT_SELFTEST
+        bool "AES-256-XTS self-test at boot (IEEE P1619 vectors)"
+        default y
+        help
+            Checks both AES-XTS implementations against known answers (and against each other
+            across 20 sectors) before the drive can be unlocked or set up, and logs the crypto
+            throughput. Takes a few milliseconds. If the direct hardware path fails, mbedtls is
+            used; if both fail, encryption is refused. Off: only one known-answer test of the
+            path in use (always run).
+
+    config PD_CRYPT_HW_DIRECT
+        bool "Drive the AES peripheral directly (fast path)"
+        default y
+        help
+            mbedtls' XTS starts one DMA transfer per 16-byte block (33 per sector). The direct
+            path uses the AES peripheral in register mode under the same hardware lock and loads
+            each key once per 16 sectors. Off: mbedtls only.
+
+    config PD_CRYPT_SCRATCH_KB
+        int "Encryption write buffer (KiB, allocated only while unlocked)"
+        default 8
+        range 1 32
+        help
+            Writes are encrypted into this buffer (never in the caller's buffer). 8 KiB matches
+            the USB MSC transfer size; larger values mean fewer, longer SD card writes for
+            uploads at the cost of heap.
+
+    config PD_CRYPT_KDF_TARGET_MS
+        int "Target time of the password key derivation (ms)"
+        default 2000
+        range 500 5000
+        help
+            PBKDF2-HMAC-SHA256 iterations are calibrated at setup / password change so that one
+            derivation takes about this long on the device (fastest of 5 probes; never less
+            than half a second's worth). Unlocking takes about this long, too.
+
+    config PD_CRYPT_OVERWRITE_MAX_MB
+        int "Overwrite fallback limit when the medium cannot be erased (MB)"
+        default 64
+        range 0 100000
+        help
+            Setup erases the whole medium (SD ERASE command, flash erase). If a card refuses
+            ERASE, the affected sectors are overwritten with zeros instead, up to this amount;
+            beyond it setup is refused, because overwriting a large card takes hours.
+
+endmenu

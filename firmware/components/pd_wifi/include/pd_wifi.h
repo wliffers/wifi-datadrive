@@ -62,6 +62,24 @@ esp_err_t pd_wifi_add(const char *ssid, const char *pass);
 /** Remove a stored network. ESP_ERR_NOT_FOUND if unknown. Removing the active one disconnects. */
 esp_err_t pd_wifi_remove(const char *ssid);
 
+typedef struct {
+    char ssid[33];
+    int8_t rssi;
+    bool secure;   // authmode != open
+    bool saved;    // already stored
+} pd_wifi_scan_entry_t;
+
+#define PD_WIFI_SCAN_MAX   20
+#define PD_WIFI_SCAN_BUSY  (-1)   // a scan or connection attempt is in progress, try again later
+#define PD_WIFI_SCAN_FAIL  (-2)
+
+/**
+ * Scan for networks in range (blocks 1-3 s). Duplicate SSIDs are merged (strongest kept), hidden
+ * ones dropped, sorted by RSSI descending, at most max entries. Works in setup mode and while
+ * connected. Returns the number of entries, PD_WIFI_SCAN_BUSY or PD_WIFI_SCAN_FAIL.
+ */
+int pd_wifi_scan(pd_wifi_scan_entry_t *out, size_t max);
+
 /** Wrapper for pd_wifi_add() (version 2 name). */
 esp_err_t pd_wifi_set_credentials(const char *ssid, const char *pass);
 

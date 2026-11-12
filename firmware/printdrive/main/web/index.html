@@ -299,6 +299,59 @@ pre.log{margin:0;padding:14px;border-radius:var(--r);background:var(--bg);font:1
 .role-user .adm{display:none!important}
 footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));font-size:13px;color:var(--muted)}
 
+/* ---------- Encrypted drive: unlock view, recovery key, Wi-Fi scan list ---------- */
+.mode-lock .badge{background:var(--warn-soft);color:var(--warn)}
+.cell.enc .badge{background:var(--accent-soft);color:var(--accent)}
+#stoTitle{display:inline}
+.cell .pill{vertical-align:1px}
+#lockBtn{min-height:40px;padding:0 14px;flex:none}
+@media (max-width:720px){#lockBtn{width:44px;min-height:44px;padding:0}#lockBtn span{display:none}}
+.unlock,.lockedv #toolbar,.lockedv #crumbs,.lockedv .bars,.lockedv #list{display:none!important}
+.lockedv .unlock{display:block!important}
+.ucard{max-width:420px;margin:0 auto 40px;background:var(--surface);border-radius:var(--r-lg);padding:26px 22px 16px;display:grid;gap:12px}
+.ucard .big{width:56px;height:56px;border-radius:18px;background:var(--warn-soft);color:var(--warn);display:grid;place-items:center}
+.ucard .big svg{width:26px;height:26px}
+.ucard .btn{width:100%;white-space:normal;text-align:center;padding:6px 18px}
+.ucard .linkbtn{justify-self:center;white-space:normal;text-align:center}
+.ucard .lost{color:var(--muted);font-size:13px;font-weight:500}
+.dmg,.damagedv .unlock{display:none!important}
+.damagedv .dmg{display:block!important}
+.dmg .big{background:var(--danger-soft);color:var(--danger)}
+#cryptItem .btn{white-space:normal;text-align:center;padding:6px 18px}
+#dFields>.pwm{margin-top:6px}
+.pwm{display:grid;gap:4px}
+.pwm .bar{margin-top:0}
+.dprog{display:flex;gap:14px;align-items:flex-start;padding:14px;border-radius:var(--r);background:var(--accent-soft);margin:4px 0 2px}
+.dprog .spin{width:22px;height:22px;color:var(--accent);margin-top:2px}
+.dprog p{color:var(--text);margin:0 0 6px}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+ul.hl{margin:6px 0 0;padding-left:20px;font-size:13px;color:var(--muted)}
+ul.hl li+li{margin-top:4px}
+.fp{font-size:13px;color:var(--muted)}
+.fp code{display:block;color:var(--text);font:12px/1.5 ui-monospace,Consolas,monospace;overflow-wrap:anywhere;word-break:break-all}
+.dprog p.small{color:var(--muted);margin:0;font-variant-numeric:tabular-nums}
+.pwrow{display:flex;gap:6px}
+.mono{font-family:ui-monospace,Consolas,monospace;letter-spacing:.03em}
+dialog ul.wl{margin:0 0 12px;padding-left:20px;font-size:14px}
+dialog ul.wl li+li{margin-top:6px}
+.rkey{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:14px;border-radius:var(--r);background:var(--bg);margin:4px 0 6px}
+.rkey code{flex:1 1 200px;font:600 19px/1.5 ui-monospace,Consolas,monospace;letter-spacing:.03em}
+.rkey code span{display:block;white-space:nowrap}
+.scan{margin:2px 0 14px}
+.scanhead{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.scanhead .lbl{margin:0}
+.scanlist{max-height:228px;overflow:auto;border:1.5px solid var(--line);border-radius:var(--r);margin-top:2px}
+.net{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:6px 12px;border:0;background:none;text-align:left;cursor:pointer;color:inherit}
+.net+.net{border-top:1px solid var(--line)}
+.net:hover{background:var(--hover)}
+.net.on{background:var(--accent-soft)}
+.net .nn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre}
+.net .pill{margin:0}
+.net svg.i{width:17px;height:17px;color:var(--muted)}
+.sig{width:18px;height:18px;flex:none;fill:var(--accent)}
+.sig .off{fill:var(--line)}
+.scanmsg{display:flex;gap:10px;align-items:center;padding:12px;color:var(--muted);font-size:14px}
+
 /* ---------- Phone ---------- */
 @media (max-width:720px){
   h1{font-size:20px}
@@ -373,7 +426,8 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
   <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="M10.5 12.5 19 4M15.5 7.5 18 10"/></symbol>
   <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
   <symbol id="i-device" viewBox="0 0 24 24"><rect x="2.5" y="5" width="13" height="10" rx="1.5"/><path d="M6.5 19h5M9 15v4"/><rect x="16.5" y="9" width="5" height="10" rx="1.2"/></symbol>
-  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-logout"viewBox="0 0 24 24"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 16l-4-4 4-4M6 12h10"/></symbol>
   <symbol id="logo" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="var(--accent)"/><g fill="none" stroke="var(--on-accent)" stroke-width="2.2" stroke-linecap="round"><path d="M9.5 13a9.2 9.2 0 0 1 13 0"/><path d="M12.7 16.2a4.7 4.7 0 0 1 6.6 0"/></g><rect x="8" y="19.5" width="16" height="6" rx="2" fill="var(--on-accent)"/><circle cx="20.5" cy="22.5" r="1.1" fill="var(--accent)"/></symbol>
 </svg>
 
@@ -425,10 +479,36 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
         <span class="txt"><span class="title" id="modeTitle" data-t="connecting"></span><span class="sub" id="modeSub">&nbsp;</span></span>
         <button class="btn" id="modeBtn" hidden></button>
       </div>
-      <div class="cell">
-        <span class="badge"><svg class="i"><use href="#i-card"/></svg></span>
-        <span class="txt"><span class="title" id="stoTitle" data-t="storage"></span><span class="sub" id="stoSub">&nbsp;</span>
+      <div class="cell" id="stoCell">
+        <span class="badge"><svg class="i"><use id="stoIcon" href="#i-card"/></svg></span>
+        <span class="txt"><span class="title" id="stoTitle" data-t="storage"></span> <span class="pill" id="encTag" data-t="cOnTag" hidden></span><span class="sub" id="stoSub">&nbsp;</span>
           <span class="bar" id="stoBar"><i></i></span></span>
+        <button class="btn" id="lockBtn" data-tl="cLockNow" hidden><svg class="i"><use href="#i-lock"/></svg><span data-t="cLockYes"></span></button>
+      </div>
+    </section>
+
+    <section class="unlock" id="unlock">
+      <form class="ucard" id="ulForm" novalidate>
+        <span class="big"><svg class="i"><use href="#i-lock"/></svg></span>
+        <div><h2 data-t="ulT"></h2><p class="muted" data-t="ulX"></p></div>
+        <div><label class="lbl" for="ulPass" id="ulLbl" data-t="ulPassL"></label>
+          <div class="pwrow"><input class="field" id="ulPass" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="80">
+          <button class="icon-btn" type="button" id="ulEye" data-tt="ulShow" aria-pressed="false"><svg class="i"><use href="#i-eye"/></svg></button></div></div>
+        <div class="formmsg err" id="ulMsg" role="alert"></div>
+        <button class="btn primary" id="ulBtn" type="submit" data-t="ulBtn"></button>
+        <button class="linkbtn" type="button" id="ulMode" data-t="ulUseKey"></button>
+        <p class="small" id="ulForgot" data-t="ulForgot" hidden></p>
+        <p class="small" data-t="ulHint"></p>
+        <button class="linkbtn lost adm" type="button" id="ulLost" data-t="ulLost"></button>
+      </form>
+    </section>
+
+    <section class="dmg" id="damaged">
+      <div class="ucard" role="alert">
+        <span class="big"><svg class="i"><use href="#i-alert"/></svg></span>
+        <div><h2 data-t="dmgT"></h2><p class="muted" data-t="dmgX"></p></div>
+        <p class="muted" id="dmgWho"></p>
+        <button class="btn danger adm" type="button" id="dmgErase" data-t="dmgErase"></button>
       </div>
     </section>
 
@@ -470,7 +550,7 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
     <a class="back" href="#/" id="backLink"><svg class="i"><use href="#i-back"/></svg><span data-t="myFiles"></span></a>
     <h1 data-t="settings"></h1>
     <nav class="tabs" data-tl="areas">
-      <a href="#s-gen" data-t="secGen"></a><a href="#s-dev" data-t="secDev"></a><a href="#s-net" class="adm" data-t="secNet"></a><a href="#s-usb" data-t="secUsb"></a><a href="#s-users" class="adm" data-t="secUsers"></a><a href="#s-sys" class="adm" data-t="secSys"></a>
+      <a href="#s-gen" data-t="secGen"></a><a href="#s-dev" data-t="secDev"></a><a href="#s-net" class="adm" data-t="secNet"></a><a href="#s-usb" data-t="secUsb"></a><a href="#s-sec" id="secChip" data-t="secSec" hidden></a><a href="#s-users" class="adm" data-t="secUsers"></a><a href="#s-sys" class="adm" data-t="secSys"></a>
     </nav>
 
     <section class="sec" id="s-gen"><h2 data-t="secGen"></h2>
@@ -509,11 +589,32 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
         <div class="item col"><div class="kv"><span data-t="medium"></span><span id="suMedium">–</span></div>
           <div class="kv"><span data-t="used"></span><span id="suUsed">–</span></div>
           <div class="kv"><span data-t="free"></span><span id="suFree">–</span></div></div>
+        <div class="item col" id="cryptItem" hidden><div class="txt"><h3 data-t="cT"></h3><p id="cState"></p><p data-t="cSep"></p></div>
+          <div class="acts"><a class="btn primary" id="cUnlock" href="#/" data-t="cUnlock" hidden></a><button class="btn" id="cLock" data-t="cLockNow" hidden></button>
+            <button class="btn adm" id="cSetup" data-t="cSetup" hidden></button><button class="btn adm" id="cPw" data-t="cPw" hidden></button>
+            <button class="btn adm" id="cRec" data-t="cRec" hidden></button>
+            <button class="btn outline-danger adm" id="cOff" data-t="cDisable" hidden></button><button class="btn outline-danger adm" id="cErase" data-t="cErase" hidden></button></div></div>
         <div class="item adm"><div class="txt"><h3 data-t="usbWriteT"></h3><p data-t="usbWriteX"></p></div>
           <label class="switch"><input type="checkbox" id="swWrite" data-tl="usbWriteT"><i></i></label></div>
         <div class="item"><div class="txt"><h3 data-t="autoT"></h3><p data-t="autoX"></p></div>
           <label class="switch"><input type="checkbox" id="swAuto" data-tl="autoT"><i></i></label></div>
         <div class="item"><div class="txt"><h3 data-t="typesT"></h3><p id="secTypes">–</p></div></div>
+      </div>
+    </section>
+
+    <section class="sec" id="s-sec" hidden><h2 data-t="secSec"></h2>
+      <div class="group">
+        <div class="item"><div class="txt"><h3><span data-t="httpsT"></span><span class="pill warn adm" data-t="exp"></span></h3><p id="httpsState"></p></div>
+          <label class="switch adm"><input type="checkbox" id="swHttps" data-tl="httpsT"><i></i></label></div>
+        <div class="item col adm" id="httpsPend" hidden><div class="notice info"><svg class="i"><use href="#i-alert"/></svg><span data-t="httpsPend"></span></div>
+          <div class="acts"><button class="btn" id="httpsBoot" data-t="httpsBoot"></button></div></div>
+        <div class="item col adm"><div class="txt"><p data-t="httpsX"></p><ul class="hl" id="httpsList"></ul></div></div>
+        <div class="item col adm"><div class="txt"><h3 data-t="certT"></h3><p data-t="certX"></p><ul class="hl" id="certHow"></ul></div>
+          <div class="fp"><span data-t="fpCa"></span><code id="fpCa">–</code></div>
+          <div class="fp"><span data-t="fpCert"></span><code id="fpCert">–</code></div>
+          <div class="kv"><span data-t="certExp"></span><span id="certExp">–</span></div>
+          <div class="acts"><a class="btn" id="caDl" href="/api/https/ca.cer" download="WiFi-DataDrive-CA.cer"><svg class="i"><use href="#i-download"/></svg><span data-t="caDl"></span></a>
+            <button class="btn" id="certRenew" data-t="certRenew"></button></div></div>
       </div>
     </section>
 
@@ -573,6 +674,7 @@ footer{padding:28px 0 calc(40px + env(safe-area-inset-bottom) + var(--ph,0px));f
 <dialog id="dlg" aria-labelledby="dTitle">
   <form method="dialog" id="dForm" novalidate>
     <h2 id="dTitle"></h2><div id="dBody"></div><div id="dFields"></div>
+    <div class="dprog" id="dProg" role="status" hidden><span class="spin"></span><div><p id="dProgX"></p><p class="small" id="dProgT"></p></div></div>
     <div class="derr" id="dErr" role="alert"></div>
     <div class="dacts"><button class="btn" type="button" id="dNo"></button><button class="btn primary" type="submit" id="dYes"></button></div>
   </form>
@@ -590,6 +692,7 @@ const join = (dir, name) => dir ? dir + "/" + name : name;
 const base = p => p.slice(p.lastIndexOf("/") + 1);
 const same = (a, b) => a.toLowerCase() === b.toLowerCase();
 const form = o => new URLSearchParams(o).toString();
+const nfc = s => String(s).normalize("NFC");   // drive passwords: phones and desktops may encode umlauts differently
 const GIB4 = 4294967296, OTA_MIN = 65536, OTA_MAX = 0x280000;   // OTA_MAX: size of one firmware partition
 
 /* ---------- Texts: one dictionary per language. Functions take the variable parts. E = server errors by `code` ("ctx.CODE" overrides a code in one place). ---------- */
@@ -600,7 +703,8 @@ de: {
   loginLead: "Melde dich an, um deine Dateien zu verwalten.", userName: "Benutzername", password: "Passwort", signIn: "Anmelden",
   loginHelp: "Passwort vergessen? Die Taste am Laufwerk 10 Sekunden lang halten – danach gilt wieder admin / admin.",
   loginEmpty: "Bitte Benutzername und Passwort eingeben.",
-  locked: s => `Zu viele Fehlversuche. Bitte warte noch ${s} Sekunden.`,
+  locked: s => `Zu viele Fehlversuche. Bitte warte noch ${s < 120 ? s + " Sekunden" : Math.ceil(s / 60) + " Minuten"}. Jede weitere Sperre dauert länger.`,
+  why_unavail: () => L.de.E.AUTH_UNAVAILABLE,
   why_expired: "Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.",
   why_restart: "Das Laufwerk wurde neu gestartet. Bitte melde dich erneut an.",
   why_offline: "Keine Antwort vom Laufwerk. Neuer Versuch läuft …",
@@ -749,6 +853,92 @@ de: {
   fmtWord: "LÖSCHEN", fmtConfirm: "Bestätigung", fmtWrong: "Bitte genau das Wort LÖSCHEN eingeben.", fmtYes: "Alles löschen", fmtOwner: "Bitte zuerst die Dateiverwaltung aktivieren.",
   maintT: "Wartungsmodus", maintX: "Startet das Laufwerk so, dass neue Gerätesoftware per USB-Kabel aufgespielt werden kann. Diese Oberfläche ist danach nicht erreichbar, bis das Laufwerk aus- und wieder eingesteckt wird.",
   start: "Starten …", maintQ: "Wartungsmodus starten?", maintYes: "Wartungsmodus starten",
+  scanT: "WLANs in Reichweite", scanAgain: "Erneut suchen", scanning: "Suche nach WLANs …", scanNone: "Kein WLAN gefunden.",
+  scanBusy: "Gerade läuft eine Dateiübertragung – die Suche ist erst danach möglich.", scanErr: "Die Suche hat nicht geklappt.",
+  scanHidden: "Verstecktes WLAN oder nicht in der Liste? Den Namen unten von Hand eingeben.", saved: "gespeichert",
+  netL: (s, q, sec, sv) => `${s}, Empfang ${["schwach", "mäßig", "gut", "sehr gut"][q - 1]}, ${sec ? "verschlüsselt" : "offen"}${sv ? ", gespeichert" : ""}`,
+  openNet: "Offenes WLAN – kein Passwort nötig", needPw: "Dieses WLAN ist verschlüsselt – bitte das Passwort eingeben.",
+  ulT: "Laufwerk gesperrt", ulX: "Die Dateien sind verschlüsselt. Gib das Laufwerks-Passwort ein, um sie zu öffnen – das ist nicht dein Anmelde-Passwort.",
+  ulPassL: "Laufwerks-Passwort", ulKeyL: "Wiederherstellungsschlüssel", ulShow: "Eingabe anzeigen",
+  ulUseKey: "Stattdessen den Wiederherstellungsschlüssel verwenden", ulUsePw: "Stattdessen das Laufwerks-Passwort verwenden",
+  ulBtn: "Entsperren", ulBusy: "Wird entsperrt …",
+  ulHint: "Solange das Laufwerk gesperrt ist, sieht auch der Drucker oder PC kein Laufwerk. Nach jedem Einstecken und jedem Stromausfall ist es wieder gesperrt.",
+  ulEmptyPw: "Bitte das Laufwerks-Passwort eingeben.", ulEmptyKey: "Bitte den Wiederherstellungsschlüssel eingeben.",
+  ulWrongPw: "Das Laufwerks-Passwort ist falsch.", ulWrongKey: "Der Wiederherstellungsschlüssel ist falsch.", ulDone: "Das Laufwerk ist entsperrt.",
+  mLockT: "Laufwerk gesperrt", mLockX: "Die Dateien sind erst nach dem Entsperren zugänglich.", mLockUsb: "Das USB-Gerät sieht kein Laufwerk, bis es entsperrt ist.",
+  stoLocked: "Größe erst nach dem Entsperren sichtbar", cOnTag: "verschlüsselt",
+  cLockNow: "Laufwerk sperren", cLockYes: "Sperren", cLockQ: "Laufwerk jetzt sperren?",
+  cLockX: "Ein angeschlossener Drucker oder PC verliert das Laufwerk sofort – ein laufender Druck vom Laufwerk kann abbrechen. Zum Öffnen ist danach das Laufwerks-Passwort nötig.",
+  cLocked: "Das Laufwerk ist gesperrt.", cLockedNow: "Das Laufwerk ist jetzt gesperrt. Zum Weiterarbeiten bitte entsperren.",
+  cT: "Verschlüsselung", cOff: "Aus. Wer die Speicherkarte entnimmt, kann die Dateien an jedem PC lesen.",
+  cOnU: "Ein, das Laufwerk ist entsperrt. Ohne Laufwerks-Passwort ist der Speicher nicht lesbar.", cOnL: "Ein, das Laufwerk ist gesperrt.",
+  cSep: "Das Laufwerks-Passwort ist ein eigenes Passwort, unabhängig von der Anmeldung. Das Zurücksetzen per Taste öffnet das Laufwerk nicht.",
+  cSetup: "Einrichten …", cPw: "Laufwerks-Passwort ändern …", cDisable: "Ausschalten …", cUnlock: "Entsperren",
+  cSetupT: "Laufwerk verschlüsseln?",
+  cSetupX: w => `<p>Danach kann niemand die Dateien lesen, der die Speicherkarte entnimmt oder den Stick ohne Laufwerks-Passwort in die Hand bekommt. Bitte vorher genau lesen:</p><ul class="wl"><li><b>Alle Dateien auf ${w} werden gelöscht.</b></li><li>Der Speicher ist danach nur noch in diesem Stick lesbar – an keinem PC und keinem anderen Gerät.</li><li>Nach jedem Einstecken und jedem Stromausfall muss das Laufwerk mit dem Laufwerks-Passwort entsperrt werden, auch am Drucker. Bis dahin sieht der Drucker kein Laufwerk.</li><li><b>Ohne Laufwerks-Passwort und ohne Wiederherstellungsschlüssel sind die Daten endgültig verloren.</b> Auch das Zurücksetzen per Taste hilft dann nicht.</li><li>Das Laufwerks-Passwort ist nicht dein Anmelde-Passwort. Wähle ein eigenes.</li></ul>`,
+  cNewL: "Laufwerks-Passwort (mindestens 12 Zeichen)", cNew2L: "Laufwerks-Passwort wiederholen",
+  cNewL2: "Neues Laufwerks-Passwort (mindestens 12 Zeichen)", cWordL: w => `Zur Bestätigung ${w} eintippen`,
+  cShort: "Das Laufwerks-Passwort muss mindestens 12 Zeichen lang sein.", cLong: "Das Laufwerks-Passwort darf höchstens 64 Bytes lang sein (Umlaute und Sonderzeichen zählen doppelt).",
+  cDiff: "Die beiden Laufwerks-Passwörter stimmen nicht überein.", cSame: "Das neue Laufwerks-Passwort muss sich vom bisherigen unterscheiden.",
+  cSetupYes: "Löschen und verschlüsseln", cSetupBusy: "Wird eingerichtet …",
+  cKeyT: "Wiederherstellungsschlüssel aufschreiben",
+  cKeyX: "<p>Damit lässt sich das Laufwerk öffnen, falls das Laufwerks-Passwort vergessen ist. Er wird <b>nur dieses eine Mal</b> angezeigt. Schreibe ihn auf und bewahre ihn getrennt vom Stick auf.</p>",
+  cKeyOk: "Ich habe den Schlüssel aufgeschrieben", cKeyNeed: "Bitte bestätige, dass du den Schlüssel aufgeschrieben hast.", cDone: "Fertig",
+  copied: "Kopiert.", copyFail: "Kopieren geht hier nicht – bitte abschreiben.", cSetupDone: "Das Laufwerk ist jetzt verschlüsselt und entsperrt.",
+  cPwT: "Laufwerks-Passwort ändern", cPwX: "Die Dateien bleiben erhalten, der Wiederherstellungsschlüssel bleibt gültig. Dein Anmelde-Passwort ändert sich dadurch nicht.",
+  cPwDone: "Das Laufwerks-Passwort wurde geändert.", cWait: "Bitte warten …",
+  cOffT: "Verschlüsselung ausschalten?", cOffX: w => `<p><b>Alle Dateien auf ${w} werden gelöscht.</b> Danach ist der Speicher unverschlüsselt und wieder an jedem Gerät lesbar.</p>`,
+  cOffYes: "Löschen und ausschalten", cOffBusy: "Wird ausgeschaltet …", cOffDone: "Die Verschlüsselung ist aus. Das Laufwerk ist leer.", fmtLocked: "Erst nach dem Entsperren möglich.",
+  secs: s => s < 60 ? (s === 1 ? "1 Sekunde" : s + " Sekunden") : Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + " Minuten",
+  ulTooMany: "Zu viele falsche Eingaben.", ulNext: s => `Nächster Versuch in ${t("secs", s)}.`,
+  ulRule: "Jeder weitere Fehlversuch verdoppelt die Wartezeit (höchstens 5 Minuten); sie gilt für alle Geräte.",
+  ulForgot: "Passwort vergessen? Mit dem Wiederherstellungsschlüssel entsperren und danach in den Einstellungen unter „Verschlüsselung“ ein neues Laufwerks-Passwort festlegen – als bisheriges Passwort dient dabei der Wiederherstellungsschlüssel.",
+  ulDoneKey: "Das Laufwerk ist entsperrt. Neues Laufwerks-Passwort festlegen: Einstellungen › Verschlüsselung, als bisheriges Passwort den Wiederherstellungsschlüssel eingeben.",
+  ulLost: "Passwort und Wiederherstellungsschlüssel verloren?",
+  dmgT: "Schlüsselbereich des Laufwerks beschädigt",
+  dmgX: "Der Bereich, in dem der Schlüssel des verschlüsselten Laufwerks liegt, ist nicht lesbar. Ohne ihn lassen sich die Dateien nicht mehr lesen – weder mit dem Laufwerks-Passwort noch mit dem Wiederherstellungsschlüssel.",
+  dmgAdm: "Das Laufwerk lässt sich nur noch löschen und neu formatieren. Dabei gehen alle Dateien endgültig verloren.",
+  dmgUser: "Ein Administrator kann das Laufwerk löschen und neu formatieren. Die Dateien sind dabei endgültig verloren.",
+  dmgErase: "Laufwerk löschen und neu formatieren", mDmgT: "Laufwerk beschädigt", mDmgX: "Der Schlüsselbereich ist nicht lesbar.", stoDmg: "Dateien nicht lesbar",
+  cDmg: "Ein, aber der Schlüsselbereich ist beschädigt – die Dateien sind nicht lesbar.", fmtDmg: "Bei beschädigtem Schlüsselbereich: „Löschen und neu formatieren“ unter Speicher & USB › Verschlüsselung.",
+  cErase: "Löschen und neu formatieren …", erT: "Laufwerk löschen und neu formatieren?", erYes: "Endgültig löschen", erBusy: "Wird gelöscht …",
+  erXLost: w => `<p>Ohne Laufwerks-Passwort und ohne Wiederherstellungsschlüssel lässt sich das Laufwerk nicht mehr öffnen – auch nicht vom Hersteller. Es bleibt nur, alles auf ${w} zu löschen und den Speicher neu zu formatieren.</p><p><b>Alle Dateien gehen dabei endgültig verloren.</b> Danach ist das Laufwerk leer und unverschlüsselt.</p>`,
+  erXDmg: w => `<p>Der Schlüsselbereich ist beschädigt, die Dateien sind nicht mehr lesbar. Alles auf ${w} wird gelöscht und der Speicher neu formatiert.</p><p><b>Alle Dateien gehen dabei endgültig verloren.</b> Danach ist das Laufwerk leer und unverschlüsselt.</p>`,
+  erDone: "Das Laufwerk ist gelöscht und neu formatiert. Die Verschlüsselung lässt sich in den Einstellungen neu einrichten.",
+  cOldL2: "Bisheriges Laufwerks-Passwort oder Wiederherstellungsschlüssel",
+  cPwKey: "Passwort vergessen? Dann ins erste Feld den Wiederherstellungsschlüssel eintragen.",
+  cRec: "Neuen Wiederherstellungsschlüssel erzeugen …", cRecT: "Neuen Wiederherstellungsschlüssel erzeugen?", cRecYes: "Erzeugen",
+  cRecX: "<p>Zum Beispiel, wenn der bisherige Schlüssel verloren ist oder jemand anderes ihn gesehen hat. <b>Der bisherige Wiederherstellungsschlüssel funktioniert danach nicht mehr.</b> Der neue wird nur einmal angezeigt.</p>",
+  cKeyOld: "Der bisherige Wiederherstellungsschlüssel funktioniert ab sofort nicht mehr.", cRecDone: "Der neue Wiederherstellungsschlüssel gilt.",
+  cProbT: "Hinweis zur Verschlüsselung",
+  longSetup: "Das Laufwerk löscht jetzt den gesamten Speicher und richtet die Verschlüsselung ein. Das dauert meist 10 Sekunden bis 2 Minuten, bei großen oder langsamen Karten auch länger. Währenddessen antwortet das Laufwerk auf nichts anderes. Bitte das Laufwerk nicht abziehen und diese Seite offen lassen.",
+  longOff: "Das Passwort wird geprüft, dann wird der Speicher gelöscht und unverschlüsselt neu eingerichtet. Das kann einige Minuten dauern; das Laufwerk antwortet währenddessen nicht. Bitte nicht abziehen.",
+  longErase: "Der Speicher wird gelöscht und neu eingerichtet. Das kann einige Minuten dauern; das Laufwerk antwortet währenddessen nicht. Bitte nicht abziehen.",
+  running: s => `Läuft seit ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`,
+  longLost: "Keine Antwort vom Laufwerk. Sobald es wieder antwortet, zeigen die Einstellungen unter „Verschlüsselung“, ob der Vorgang abgeschlossen ist.",
+  cSetupLost: "Keine Antwort vom Laufwerk. Sobald es wieder antwortet, zeigen die Einstellungen unter „Verschlüsselung“, ob die Einrichtung geklappt hat. Ist das Laufwerk verschlüsselt, dort bitte sofort einen neuen Wiederherstellungsschlüssel erzeugen – der bisherige ist hier nicht angekommen.",
+  pwmL: s => `Stärke: ${s}`, pwmNone: "–", pwm0: "zu kurz", pwm1: "schwach", pwm2: "mittel", pwm3: "gut", pwm4: "stark",
+  pwmX: "Dieses Passwort ist der eigentliche Schutz, falls die Karte gestohlen wird. Am besten ein Satz aus mehreren Wörtern oder ein zufällig erzeugtes Passwort.",
+  fmtDone: "Der Speicher wurde formatiert. Die Verschlüsselung bleibt eingeschaltet.",
+  cRecL: "Laufwerks-Passwort oder aktueller Wiederherstellungsschlüssel",
+  secSec: "Sicherheit", httpsT: "Verschlüsselte Verbindung (HTTPS)", exp: "experimentell",
+  httpsOn: "Aktiv: Die Verbindung zu diesem Laufwerk ist verschlüsselt.", httpsOff: "Aus: Passwörter und Dateien gehen lesbar durchs WLAN.",
+  httpsPend: "Geändert – wirksam nach dem nächsten Neustart des Laufwerks.", httpsBoot: "Jetzt neu starten", bootLater: "Später",
+  httpsX: "Mit HTTPS gehen Passwörter und Dateien nicht mehr lesbar durchs WLAN. Gut zu wissen:",
+  httpsL: "<li>Jeder Browser warnt beim ersten Aufruf, weil der Stick sein eigenes Zertifikat ausstellt. Die Warnung verschwindet, sobald das Zertifikat des Sticks auf dem Gerät installiert ist.</li><li>Die Adresse beginnt dann mit https://. Ein Symbol auf dem Home-Bildschirm muss danach neu angelegt werden.</li><li>Skripte mit http:// (zum Beispiel „Senden an“ oder ein Kurzbefehl) müssen auf https:// umgestellt werden.</li>",
+  certT: "Zertifikat des Sticks", certX: "Einmal auf jedem Gerät installieren, dann warnt der Browser nicht mehr. Die Fingerabdrücke lassen sich mit den Zertifikatsdetails im Browser vergleichen.",
+  certHow: "<li><b>iPhone:</b> in Safari herunterladen, dann Einstellungen › Profil geladen › Installieren.<br>Danach Allgemein › Info › Zertifikatsvertrauenseinstellungen: Vertrauen einschalten.</li><li><b>Windows:</b> Datei öffnen › Zertifikat installieren › Lokaler Computer.<br>Speicher „Vertrauenswürdige Stammzertifizierungsstellen“ wählen und fertigstellen.</li>",
+  fpCa: "Zertifizierungsstelle des Sticks (SHA-256)", fpCert: "Server-Zertifikat (SHA-256)", certExp: "Server-Zertifikat gültig bis",
+  caDl: "Zertifikat herunterladen", certRenew: "Zertifikat erneuern …",
+  httpsOnT: "HTTPS einschalten?", httpsOffT: "HTTPS ausschalten?", httpsYesOn: "Einschalten", httpsYesOff: "Ausschalten",
+  httpsOnX: u => `<p>Die Änderung gilt nach einem Neustart. Danach ist das Laufwerk unter <b>${u}</b> erreichbar.</p><ul class="wl">${L.de.httpsL}</ul>`,
+  httpsOffX: u => `<p>Danach gehen Passwörter und Dateien wieder lesbar durchs WLAN. Die Änderung gilt nach einem Neustart; das Laufwerk ist dann unter <b>${u}</b> erreichbar. Symbole auf dem Home-Bildschirm und Skripte müssen wieder auf http:// umgestellt werden.</p>`,
+  bootQ: "Jetzt neu starten?", bootX: "Die Änderung gilt erst nach dem Neustart. Ein angeschlossenes USB-Gerät verliert das Laufwerk kurz, und alle müssen sich danach neu anmelden.",
+  httpsSaved: "Gespeichert. Wirksam nach dem nächsten Neustart.",
+  nProto: "Das Laufwerk startet neu. Die Seite wechselt gleich zur neuen Adresse – warnt der Browser dort vor dem Zertifikat, ist das beim ersten Mal normal.", openNow: "Jetzt öffnen",
+  renewT: "Zertifikat erneuern?", renewYes: "Erneuern",
+  renewX: "<p>Das Laufwerk stellt ein neues Server-Zertifikat für seine aktuelle Adresse aus, zum Beispiel nach einem Wechsel des WLANs. Das installierte Zertifikat des Sticks bleibt gültig. Wirksam nach einem Neustart.</p>",
+  renewCa: "Auch die Zertifizierungsstelle neu erzeugen (danach muss das Zertifikat auf allen Geräten neu installiert werden)",
   today: "Heute", yesterday: "Gestern",
   dur: s => s < 90 ? "gerade eben" : s < 5400 ? Math.round(s / 60) + " Minuten" : s < 129600 ? Math.round(s / 3600) + " Stunden" : Math.round(s / 86400) + " Tagen",
   E: {
@@ -768,7 +958,16 @@ de: {
     FORBIDDEN_ROLE: "Dafür sind Administratorrechte nötig.", MUST_CHANGE_PASSWORD: "Bitte lege zuerst ein eigenes Passwort fest.",
     DIR_NOT_EMPTY: "Der Ordner ist nicht leer.", LAST_ADMIN: "Der letzte Administrator kann weder gelöscht noch herabgestuft werden.",
     USER_LIMIT: "Es sind bereits 8 Benutzer angelegt. Bitte zuerst einen löschen.", WIFI_LIMIT: "Es sind bereits 5 WLANs gespeichert. Bitte zuerst eines entfernen.",
-    LOCKED: "Zu viele Fehlversuche. Bitte in 30 Sekunden erneut versuchen.",
+    LOCKED: r => r.retry ? t("locked", r.retry) : "Zu viele Fehlversuche. Bitte etwas warten und dann erneut versuchen.",
+    AUTH_UNAVAILABLE: "Die Benutzerverwaltung des Laufwerks ist nicht lesbar, deshalb ist keine Anmeldung möglich. Abhilfe: die Taste am Laufwerk 10 Sekunden lang halten – danach gilt wieder admin / admin. Die Dateien bleiben erhalten.",
+    CRYPT_WEAK_PASSWORD: "Das Laufwerks-Passwort muss mindestens 12 Zeichen lang sein.", CRYPT_WRONG_PASSWORD: "Das Laufwerks-Passwort ist falsch.",
+    CRYPT_NOT_ENABLED: "Die Verschlüsselung ist nicht eingeschaltet.", CRYPT_ALREADY_ENABLED: "Die Verschlüsselung ist bereits eingeschaltet.",
+    DRIVE_LOCKED: "Das Laufwerk ist gesperrt. Bitte zuerst entsperren.",
+    "crypt.BAD_REQUEST": "Das Laufwerks-Passwort darf höchstens 64 Bytes lang sein.", "cpw.CRYPT_WRONG_PASSWORD": "Das bisherige Laufwerks-Passwort ist falsch.",
+    "crypt.WRONG_OWNER": "Bitte zuerst die Dateiverwaltung aktivieren.",
+    CRYPT_DAMAGED: "Der Schlüsselbereich des Laufwerks ist beschädigt. Die Dateien sind nicht lesbar.",
+    CRYPT_UNAVAILABLE: "Auf diesem Speichermedium ist keine Verschlüsselung möglich: Der Selbsttest ist fehlgeschlagen oder die Karte lässt sich nicht sicher löschen.",
+    "crypt.LOCKED": r => t("ulTooMany") + (r.retry ? " " + t("ulNext", r.retry) : "") + " " + t("ulRule"), "cpw.LOCKED": r => errText(r, "crypt"),
     OFFLINE: "Keine Antwort vom Laufwerk.", HTTP: r => `Unerwartete Antwort des Laufwerks (${r.status}).`,
     "pw.BAD_LOGIN": "Das aktuelle Passwort stimmt nicht.",
     "up.NOT_FOUND": "Der Zielordner existiert nicht mehr – nicht hochgeladen.",
@@ -787,7 +986,8 @@ en: {
   loginLead: "Sign in to manage your files.", userName: "User name", password: "Password", signIn: "Sign in",
   loginHelp: "Forgot your password? Hold the button on the drive for 10 seconds to reset the sign-in to admin / admin.",
   loginEmpty: "Please enter your user name and password.",
-  locked: s => `Too many failed attempts. Please wait ${s} seconds.`,
+  locked: s => `Too many failed attempts. Please wait ${s < 120 ? s + " seconds" : Math.ceil(s / 60) + " minutes"}. Each further lock-out lasts longer.`,
+  why_unavail: () => L.en.E.AUTH_UNAVAILABLE,
   why_expired: "Your session has ended. Please sign in again.",
   why_restart: "The drive has restarted. Please sign in again.",
   why_offline: "The drive is not responding. Trying again …",
@@ -936,6 +1136,92 @@ en: {
   fmtWord: "ERASE", fmtConfirm: "Confirmation", fmtWrong: "Please type exactly ERASE.", fmtYes: "Erase everything", fmtOwner: "Please switch to file management first.",
   maintT: "Maintenance mode", maintX: "Restarts the drive so that new firmware can be installed over the USB cable. This page is unreachable afterwards until the drive is unplugged and plugged back in.",
   start: "Start …", maintQ: "Start maintenance mode?", maintYes: "Start maintenance mode",
+  scanT: "Networks in range", scanAgain: "Search again", scanning: "Searching for networks …", scanNone: "No networks found.",
+  scanBusy: "A file transfer is in progress — searching is possible once it has finished.", scanErr: "The search didn’t work.",
+  scanHidden: "Hidden network, or not in the list? Enter its name below.", saved: "saved",
+  netL: (s, q, sec, sv) => `${s}, ${["weak", "fair", "good", "excellent"][q - 1]} signal, ${sec ? "secured" : "open"}${sv ? ", saved" : ""}`,
+  openNet: "Open network — no password needed", needPw: "This network is secured — please enter its password.",
+  ulT: "Drive locked", ulX: "The files are encrypted. Enter the drive password to open them — this is not your sign-in password.",
+  ulPassL: "Drive password", ulKeyL: "Recovery key", ulShow: "Show what you type",
+  ulUseKey: "Use the recovery key instead", ulUsePw: "Use the drive password instead",
+  ulBtn: "Unlock", ulBusy: "Unlocking …",
+  ulHint: "While the drive is locked, the printer or computer can’t see it either. It locks again every time it is plugged in or loses power.",
+  ulEmptyPw: "Please enter the drive password.", ulEmptyKey: "Please enter the recovery key.",
+  ulWrongPw: "The drive password is wrong.", ulWrongKey: "The recovery key is wrong.", ulDone: "The drive is unlocked.",
+  mLockT: "Drive locked", mLockX: "The files are accessible only after unlocking.", mLockUsb: "The USB device sees no drive until it is unlocked.",
+  stoLocked: "Size visible after unlocking", cOnTag: "encrypted",
+  cLockNow: "Lock drive", cLockYes: "Lock", cLockQ: "Lock the drive now?",
+  cLockX: "A connected printer or computer loses the drive at once — a print running from the drive may stop. Opening it again needs the drive password.",
+  cLocked: "The drive is locked.", cLockedNow: "The drive is now locked. Please unlock it to continue.",
+  cT: "Encryption", cOff: "Off. Anyone who removes the memory card can read the files on any computer.",
+  cOnU: "On, the drive is unlocked. Without the drive password the storage can’t be read.", cOnL: "On, the drive is locked.",
+  cSep: "The drive password is a separate password, independent of the sign-in. Resetting with the button does not open the drive.",
+  cSetup: "Set up …", cPw: "Change drive password …", cDisable: "Turn off …", cUnlock: "Unlock",
+  cSetupT: "Encrypt the drive?",
+  cSetupX: w => `<p>Afterwards nobody can read the files by removing the memory card or by getting hold of the stick without the drive password. Please read carefully first:</p><ul class="wl"><li><b>All files on ${w} will be erased.</b></li><li>The storage can then be read only in this stick — not on any computer or other device.</li><li>Every time the drive is plugged in or loses power, it has to be unlocked with the drive password, also at the printer. Until then the printer sees no drive.</li><li><b>Without the drive password and without the recovery key the data is lost for good.</b> Resetting with the button doesn’t help then either.</li><li>The drive password is not your sign-in password. Choose a separate one.</li></ul>`,
+  cNewL: "Drive password (at least 12 characters)", cNew2L: "Repeat drive password",
+  cNewL2: "New drive password (at least 12 characters)", cWordL: w => `Type ${w} to confirm`,
+  cShort: "The drive password must be at least 12 characters long.", cLong: "The drive password can be at most 64 bytes long (accented letters and symbols count double).",
+  cDiff: "The two drive passwords do not match.", cSame: "The new drive password must be different from the current one.",
+  cSetupYes: "Erase and encrypt", cSetupBusy: "Setting up …",
+  cKeyT: "Write down the recovery key",
+  cKeyX: "<p>It opens the drive if the drive password is forgotten. It is shown <b>only this once</b>. Write it down and keep it apart from the stick.</p>",
+  cKeyOk: "I have written the key down", cKeyNeed: "Please confirm that you have written the key down.", cDone: "Done",
+  copied: "Copied.", copyFail: "Copying isn’t possible here — please write it down.", cSetupDone: "The drive is now encrypted and unlocked.",
+  cPwT: "Change drive password", cPwX: "The files stay, and the recovery key stays valid. Your sign-in password is not affected.",
+  cPwDone: "The drive password has been changed.", cWait: "Please wait …",
+  cOffT: "Turn off encryption?", cOffX: w => `<p><b>All files on ${w} will be erased.</b> The storage is then unencrypted and readable on any device again.</p>`,
+  cOffYes: "Erase and turn off", cOffBusy: "Turning off …", cOffDone: "Encryption is off. The drive is empty.", fmtLocked: "Possible only after unlocking.",
+  secs: s => s < 60 ? (s === 1 ? "1 second" : s + " seconds") : Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + " minutes",
+  ulTooMany: "Too many wrong entries.", ulNext: s => `Next try in ${t("secs", s)}.`,
+  ulRule: "Each further wrong entry doubles the wait (at most 5 minutes); it applies to all devices.",
+  ulForgot: "Forgot the password? Unlock with the recovery key, then set a new drive password under Settings › Encryption — enter the recovery key as the current password.",
+  ulDoneKey: "The drive is unlocked. To set a new drive password: Settings › Encryption, enter the recovery key as the current password.",
+  ulLost: "Lost both the password and the recovery key?",
+  dmgT: "The drive’s key area is damaged",
+  dmgX: "The area that holds the key of the encrypted drive can’t be read. Without it the files can no longer be read — neither with the drive password nor with the recovery key.",
+  dmgAdm: "The only option left is to erase and reformat the drive. All files will be lost for good.",
+  dmgUser: "An administrator can erase and reformat the drive. All files will be lost for good.",
+  dmgErase: "Erase and reformat the drive", mDmgT: "Drive damaged", mDmgX: "The key area can’t be read.", stoDmg: "Files can’t be read",
+  cDmg: "On, but the key area is damaged — the files can’t be read.", fmtDmg: "With a damaged key area: use “Erase and reformat” under Storage & USB › Encryption.",
+  cErase: "Erase and reformat …", erT: "Erase and reformat the drive?", erYes: "Erase for good", erBusy: "Erasing …",
+  erXLost: w => `<p>Without the drive password and without the recovery key the drive can never be opened again — not even by the manufacturer. The only option is to erase and reformat ${w}.</p><p><b>All files will be lost for good.</b> Afterwards the drive is empty and unencrypted.</p>`,
+  erXDmg: w => `<p>The key area is damaged and the files can no longer be read. ${w[0].toUpperCase() + w.slice(1)} will be erased and reformatted.</p><p><b>All files will be lost for good.</b> Afterwards the drive is empty and unencrypted.</p>`,
+  erDone: "The drive has been erased and reformatted. Encryption can be set up again in the settings.",
+  cOldL2: "Current drive password or recovery key",
+  cPwKey: "Forgot the password? Enter the recovery key in the first field instead.",
+  cRec: "Create a new recovery key …", cRecT: "Create a new recovery key?", cRecYes: "Create",
+  cRecX: "<p>For example when the current key is lost or someone else has seen it. <b>The current recovery key stops working.</b> The new one is shown only once.</p>",
+  cKeyOld: "The previous recovery key no longer works.", cRecDone: "The new recovery key is in effect.",
+  cProbT: "About the encryption",
+  longSetup: "The drive is now erasing the whole storage and setting up encryption. This usually takes 10 seconds to 2 minutes, longer with large or slow cards. Meanwhile the drive answers nothing else. Please don’t unplug the drive, and keep this page open.",
+  longOff: "The password is checked, then the storage is erased and set up again without encryption. This may take a few minutes; the drive doesn’t answer meanwhile. Please don’t unplug it.",
+  longErase: "The storage is being erased and set up again. This may take a few minutes; the drive doesn’t answer meanwhile. Please don’t unplug it.",
+  running: s => `Running for ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`,
+  longLost: "The drive isn’t responding. Once it answers again, Settings › Encryption shows whether the operation finished.",
+  cSetupLost: "The drive isn’t responding. Once it answers again, Settings › Encryption shows whether the setup worked. If the drive is encrypted, create a new recovery key there right away — the first one never arrived here.",
+  pwmL: s => `Strength: ${s}`, pwmNone: "–", pwm0: "too short", pwm1: "weak", pwm2: "fair", pwm3: "good", pwm4: "strong",
+  pwmX: "This password is the real protection if the card is stolen. Best use a sentence of several words or a randomly generated password.",
+  fmtDone: "The storage has been formatted. Encryption stays on.",
+  cRecL: "Drive password or current recovery key",
+  secSec: "Security", httpsT: "Encrypted connection (HTTPS)", exp: "experimental",
+  httpsOn: "Active: the connection to this drive is encrypted.", httpsOff: "Off: passwords and files travel readable over Wi-Fi.",
+  httpsPend: "Changed — takes effect after the next restart of the drive.", httpsBoot: "Restart now", bootLater: "Later",
+  httpsX: "With HTTPS, passwords and files no longer travel readable over Wi-Fi. Good to know:",
+  httpsL: "<li>Every browser warns on the first visit, because the stick issues its own certificate. The warning goes away once the stick’s certificate is installed on the device.</li><li>The address then starts with https://. A home-screen icon has to be added again afterwards.</li><li>Scripts using http:// (for example “Send to” or a shortcut) have to be switched to https://.</li>",
+  certT: "The stick’s certificate", certX: "Install it once on every device and the browser stops warning. The fingerprints can be compared with the certificate details in the browser.",
+  certHow: "<li><b>iPhone:</b> download in Safari, then Settings › Profile Downloaded › Install.<br>Then General › About › Certificate Trust Settings: turn on trust.</li><li><b>Windows:</b> open the file › Install Certificate › Local Machine.<br>Choose the store “Trusted Root Certification Authorities” and finish.</li>",
+  fpCa: "The stick’s certificate authority (SHA-256)", fpCert: "Server certificate (SHA-256)", certExp: "Server certificate valid until",
+  caDl: "Download certificate", certRenew: "Renew certificate …",
+  httpsOnT: "Turn on HTTPS?", httpsOffT: "Turn off HTTPS?", httpsYesOn: "Turn on", httpsYesOff: "Turn off",
+  httpsOnX: u => `<p>The change takes effect after a restart. The drive is then reachable at <b>${u}</b>.</p><ul class="wl">${L.en.httpsL}</ul>`,
+  httpsOffX: u => `<p>Passwords and files will travel readable over Wi-Fi again. The change takes effect after a restart; the drive is then reachable at <b>${u}</b>. Home-screen icons and scripts have to be switched back to http://.</p>`,
+  bootQ: "Restart now?", bootX: "The change takes effect only after the restart. A connected USB device briefly loses the drive, and everyone has to sign in again.",
+  httpsSaved: "Saved. Takes effect after the next restart.",
+  nProto: "The drive is restarting. The page will switch to the new address shortly — if the browser warns about the certificate there, that is normal the first time.", openNow: "Open now",
+  renewT: "Renew the certificate?", renewYes: "Renew",
+  renewX: "<p>The drive issues a new server certificate for its current address, for example after changing the Wi-Fi network. The stick’s installed certificate stays valid. Takes effect after a restart.</p>",
+  renewCa: "Also create a new certificate authority (the certificate then has to be installed again on every device)",
   today: "Today", yesterday: "Yesterday",
   dur: s => s < 90 ? "less than a minute" : s < 5400 ? Math.round(s / 60) + " minutes" : s < 129600 ? Math.round(s / 3600) + " hours" : Math.round(s / 86400) + " days",
   E: {
@@ -955,7 +1241,16 @@ en: {
     FORBIDDEN_ROLE: "This requires administrator rights.", MUST_CHANGE_PASSWORD: "Please set your own password first.",
     DIR_NOT_EMPTY: "The folder isn’t empty.", LAST_ADMIN: "The last administrator can’t be deleted or demoted.",
     USER_LIMIT: "There are already 8 users. Please delete one first.", WIFI_LIMIT: "There are already 5 saved networks. Please remove one first.",
-    LOCKED: "Too many failed attempts. Please try again in 30 seconds.",
+    LOCKED: r => r.retry ? t("locked", r.retry) : "Too many failed attempts. Please wait a while, then try again.",
+    AUTH_UNAVAILABLE: "The drive can’t read its user database, so nobody can sign in. To fix this, hold the button on the drive for 10 seconds — the sign-in is then reset to admin / admin. Your files are kept.",
+    CRYPT_WEAK_PASSWORD: "The drive password must be at least 12 characters long.", CRYPT_WRONG_PASSWORD: "The drive password is wrong.",
+    CRYPT_NOT_ENABLED: "Encryption is not turned on.", CRYPT_ALREADY_ENABLED: "Encryption is already turned on.",
+    DRIVE_LOCKED: "The drive is locked. Please unlock it first.",
+    "crypt.BAD_REQUEST": "The drive password can be at most 64 bytes long.", "cpw.CRYPT_WRONG_PASSWORD": "The current drive password is wrong.",
+    "crypt.WRONG_OWNER": "Please switch to file management first.",
+    CRYPT_DAMAGED: "The key area of the drive is damaged. The files can’t be read.",
+    CRYPT_UNAVAILABLE: "Encryption isn’t possible on this storage medium: the self-test failed or the card can’t be erased securely.",
+    "crypt.LOCKED": r => t("ulTooMany") + (r.retry ? " " + t("ulNext", r.retry) : "") + " " + t("ulRule"), "cpw.LOCKED": r => errText(r, "crypt"),
     OFFLINE: "The drive is not responding.", HTTP: r => `Unexpected answer from the drive (${r.status}).`,
     "pw.BAD_LOGIN": "The current password is wrong.",
     "up.NOT_FOUND": "The target folder no longer exists — not uploaded.",
@@ -1052,6 +1347,8 @@ async function api(path, o = {}){
     if (o.text && r.ok) return await r.text();
     try { j = await r.json(); } catch(e) {}
     if (!j) j = {ok: false, code: "HTTP", status: r.status};
+    const ra = parseInt(r.headers.get("Retry-After"), 10);   // lock-outs: seconds until the next try
+    if (ra > 0) j.retry = ra; else if (j.retry_after > 0) j.retry = Math.ceil(j.retry_after);
   } catch(e) {
     j = {ok: false, code: "OFFLINE"};
   } finally { clearTimeout(timer); }
@@ -1063,6 +1360,9 @@ function authFail(j){
   if (j.code === "UNAUTHORIZED") lost();
   else if (j.code === "MUST_CHANGE_PASSWORD" && S.auth === "ok") { S.auth = "pw"; leaveApp(t("upPw")); if (S.me) S.me.def = true; showPw(); }
   else if (j.code === "FORBIDDEN_ROLE") recheck();
+  else if (j.code === "DRIVE_LOCKED") driveLocked();
+  else if (j.code === "CRYPT_DAMAGED") driveDamaged();
+  else if (j.code === "AUTH_UNAVAILABLE" && S.auth === "ok") { S.auth = "login"; leaveApp(t("upOut")); showLogin("unavail"); bootTimer = setTimeout(boot, 5000); }
 }
 
 /* ---------- Toasts, dialogs, menus, busy overlay ---------- */
@@ -1088,6 +1388,7 @@ function askNow(o){
   return new Promise(resolve => {
     if (S.auth !== "ok") return resolve(false);          // signed out meanwhile: drop queued questions
     const d = $("#dlg"), yes = $("#dYes"), no = $("#dNo"), fields = o.fields || (o.input ? [o.input] : []);
+    dlgProg("");
     $("#dTitle").textContent = o.title;
     $("#dBody").innerHTML = o.html || (o.text ? `<p>${esc(o.text)}</p>` : "");
     $("#dErr").textContent = "";
@@ -1099,10 +1400,10 @@ function askNow(o){
     const els = fields.map((f, i) => { const el = $("#dF" + i); if (el.tagName === "INPUT" && f.type !== "check") { el.value = f.value || ""; el.placeholder = f.placeholder || ""; } return el; });
     const vals = () => fields.map((f, i) => f.type === "check" ? els[i].checked : f.type === "password" || f.raw || f.options ? els[i].value : els[i].value.trim());
     yes.textContent = o.yes || t("ok"); yes.className = "btn " + (o.danger ? "danger" : "primary"); yes.disabled = false;
-    no.textContent = o.no || t("cancel"); no.disabled = false;
+    no.textContent = o.no || t("cancel"); no.disabled = false; no.hidden = !!o.must;   // must: only the main button closes it
     let done = false, running = false;
     const finish = v => { if (done) return; done = true; dlgCancel = null; if (d.open) d.close(); resolve(v); };
-    const cancel = () => { if (!running) { o.out = vals(); finish(false); } };
+    const cancel = () => { if (!running && !o.must) { o.out = vals(); finish(false); } };
     dlgCancel = () => { running = false; finish(false); };
     $("#dForm").onsubmit = async e => {
       e.preventDefault();
@@ -1110,9 +1411,11 @@ function askNow(o){
       const v = vals(), val = !fields.length ? true : o.input ? v[0] : v;
       if (o.run) {
         running = true; yes.disabled = no.disabled = true; $("#dErr").textContent = "";
+        if (o.wait) yes.innerHTML = `<span class="spin"></span>${esc(o.wait)}`;   // long requests: say that it works
         const err = await o.run(val);
         if (done) return;                    // signed out while waiting
         running = false; yes.disabled = no.disabled = false;
+        if (o.wait) yes.textContent = o.yes;
         if (!d.open) {                       // the browser closed the dialog while we waited
           if (err) toast(err, true);
           return finish(err ? false : val);
@@ -1129,7 +1432,27 @@ function askNow(o){
     const first = els[0];
     if (first && first.type !== "checkbox") { first.focus(); if (first.select) { if (fields[0].select) first.setSelectionRange(0, fields[0].select); else first.select(); } }
     else (o.danger ? no : yes).focus();
+    if (o.init) o.init(els, yes);            // extra behaviour of one dialog (scan list, copy button …)
   });
+}
+
+const errBox = (title, text) => ask({title, text, must: true, yes: t("ok")});
+/* Long request from an open dialog (erasing the card): the dialog shows a progress note instead of its content and stays
+   blocking; status polling pauses (S.busy), so its missing answers do not count as "offline". */
+let progTimer = 0;
+function dlgProg(text){
+  const on = !!text, t0 = Date.now();
+  $("#dBody").hidden = $("#dFields").hidden = on; $("#dProg").hidden = !on;
+  clearInterval(progTimer);
+  if (!on) return;
+  $("#dProgX").textContent = text;
+  const tick = () => { $("#dProgT").textContent = t("running", Math.floor((Date.now() - t0) / 1000)); };
+  tick(); progTimer = setInterval(tick, 1000);
+}
+async function longReq(path, body, text){
+  S.busy = "crypt"; clearTimeout(pollTimer); dlgProg(text);
+  try { return await post(path, {body: form(body), timeout: 900000}); }
+  finally { S.busy = ""; S.fails = 0; dlgProg(""); schedule(1000); }
 }
 
 let menuFrom = null;
@@ -1180,7 +1503,7 @@ async function boot(){
   const j = await api("/api/session", {auth: true, timeout: 8000});
   if (S.auth === "ok" || S.auth === "pw") return;
   if (j.ok) return signedIn(j);
-  const why = j.code === "UNAUTHORIZED" ? (S.why === "offline" ? "" : S.why) : "offline";
+  const why = j.code === "UNAUTHORIZED" ? (S.why === "offline" || S.why === "unavail" ? "" : S.why) : j.code === "AUTH_UNAVAILABLE" ? "unavail" : "offline";
   if (S.auth !== "login" || why !== S.why) showLogin(why, S.auth === "login");
   if (j.code !== "UNAUTHORIZED") bootTimer = setTimeout(boot, 3000);
 }
@@ -1203,7 +1526,7 @@ function signedIn(j){
 }
 function renderWhy(){
   const n = $("#loginNote"), w = S.why;
-  n.textContent = w ? t("why_" + w) : ""; n.hidden = !w; n.className = "notice" + (w === "offline" ? "" : " info");
+  n.textContent = w ? t("why_" + w) : ""; n.hidden = !w; n.className = "notice" + (w === "offline" || w === "unavail" ? "" : " info");
 }
 function showLogin(why, keepFocus){
   S.auth = "login"; S.why = why || ""; S.me = null;
@@ -1261,7 +1584,8 @@ $("#loginForm").onsubmit = async e => {
   const j = await post("/api/login", {auth: true, body: form(body)});
   btn.disabled = false;
   if (j.ok) { $("#lPass").value = ""; return signedIn(j); }
-  if (j.code === "LOCKED") { S.lockUntil = Date.now() + 30000; return lockTick(); }
+  if (j.code === "LOCKED") { S.lockUntil = Date.now() + (j.retry || 30) * 1000; return lockTick(); }
+  if (j.code === "AUTH_UNAVAILABLE") { S.why = "unavail"; renderWhy(); clearTimeout(bootTimer); bootTimer = setTimeout(boot, 5000); return; }   // the notice explains it
   loginMsg(errText(j, "login"));
   if (j.code === "BAD_LOGIN") { $("#lPass").select(); $("#lPass").focus(); }
 };
@@ -1320,7 +1644,8 @@ async function changeOwnPw(){
   if (ok) { toast(t("pwSaved")); if (inSettings()) loadDevices(); }
 }
 $("#userBtn").onclick = () => showMenu($("#userBtn"), null, `${esc(S.me.user)}<small>${esc(roleName(S.me.role))}</small>`,
-  [["pw", "key", t("changePw")], ["out", "logout", t("signOut")]], a => a === "pw" ? changeOwnPw() : logout(), null, true);
+  (canLock() ? [["lock", "lock", t("cLockNow")]] : []).concat([["pw", "key", t("changePw")], ["out", "logout", t("signOut")]]),
+  a => a === "lock" ? lockNow() : a === "pw" ? changeOwnPw() : logout(), null, true);
 $("#pwBtn").onclick = changeOwnPw;
 $("#outBtn").onclick = logout;
 
@@ -1329,7 +1654,8 @@ let pollTimer = 0;
 function schedule(ms){ clearTimeout(pollTimer); if (S.auth === "ok") pollTimer = setTimeout(poll, ms); }
 async function poll(){
   if (S.auth !== "ok") return;
-  if (S.working || S.busy || document.hidden) return schedule(3000);   // the device handles one request at a time
+  if (S.restart === "proto") return;                                                 // the page moves to the other protocol
+  if (S.working || S.busy || S.scanning || document.hidden) return schedule(3000);   // the device handles one request at a time
   await refresh();
   schedule(S.restart || S.fails ? 2000 : 3000);
 }
@@ -1344,7 +1670,12 @@ async function refresh(forceList){
   }
   // A restart counts as finished only once the device was unreachable or reports a fresh start.
   if (S.restart && (S.sawDown || j.uptime_s < 15)) { toast(t("ready")); S.restart = ""; S.sawDown = false; }
+  const wasLocked = S.st ? isLocked() : true;
   S.fails = 0; S.st = j;
+  if (!wasLocked && isLocked()) {          // locked elsewhere (or restarted): questions about files are void now
+    toast(t(isDamaged() ? "dmgT" : "cLockedNow")); S.sel.clear(); S.selMode = false;
+    if (!inSettings()) { if (dlgCancel) dlgCancel(); closeMenu(); }
+  }
   const d = j.drive, key = [d.owner, d.fs_ok, d.files, d.free, S.dir].join("|");
   if (d.owner === "app" && d.fs_ok) {
     if (forceList || key !== S.listKey || S.entries === null) await loadFiles();
@@ -1365,12 +1696,113 @@ async function loadFiles(){
 }
 
 /* ---------- Rendering ---------- */
-function render(){ if (S.auth !== "ok") return; renderNotice(); renderStatus(); renderList(); renderSettings(); }
+function render(){ if (S.auth !== "ok") return; renderNotice(); renderStatus(); renderList(); renderSettings(); renderLock(); }
+
+/* ---------- Encrypted drive (API v4): state, unlock view, lock ---------- */
+const crypt = () => (S.st && S.st.crypt) || {enabled: false, unlocked: true};   // firmware before v4: no encryption
+const isDamaged = () => !!crypt().damaged;      // key area unreadable: nothing opens the drive any more
+const isLocked = () => crypt().enabled && !crypt().unlocked || isDamaged();
+const canLock = () => crypt().enabled && crypt().unlocked && !isDamaged();
+let ulKey = false, ulUntil = 0, ulTimer = 0, ulShown = false, ulPre = "";
+function renderLock(){
+  const dmg = isDamaged(), lk = isLocked() && !dmg, v = $("#vFiles");
+  v.classList.toggle("lockedv", lk || dmg); v.classList.toggle("damagedv", dmg);
+  if (dmg) $("#dmgWho").textContent = t(isAdmin() ? "dmgAdm" : "dmgUser");
+  if (lk && !ulShown && !v.hidden) {
+    ulCheck();
+    if (!$("#dlg").open && matchMedia("(hover:hover)").matches) setTimeout(() => $("#ulPass").focus());
+  }
+  ulShown = lk && !v.hidden;
+}
+// The unlock view opens: a running wait after wrong passwords (one counter for all devices) shows at once.
+async function ulCheck(){
+  if (crypt().retry_after > 0) return ulWait(crypt().retry_after);
+  if (S.busy || S.working) return;
+  const r = await api("/api/crypt", {timeout: 8000});
+  if (!r.ok || S.auth !== "ok" || !S.st || !S.st.crypt) return;
+  if (r.damaged && !isDamaged()) { S.st.crypt.damaged = true; listSig = ""; return render(); }
+  if (r.retry_after > 0) ulWait(r.retry_after);
+}
+function ulWait(s, pre){
+  const until = Date.now() + Math.ceil(s) * 1000;
+  if (pre === undefined && until <= ulUntil) return;
+  ulUntil = until; ulPre = pre || ""; ulTick();
+}
+// Some request answered 423 CRYPT_DAMAGED: show the explanation instead of the unlock form.
+function driveDamaged(){
+  if (S.auth !== "ok") return;
+  if (S.st) S.st.crypt = Object.assign({}, crypt(), {enabled: true, unlocked: false, damaged: true});
+  S.entries = null; S.sel.clear(); S.selMode = false;
+  if (dlgCancel && !S.busy) dlgCancel();
+  closeMenu();
+  if (inSettings()) location.hash = dirHash(S.dir); else { listSig = ""; render(); }
+}
+// Some request answered 423 DRIVE_LOCKED: the drive was locked meanwhile. Back to the unlock view.
+function driveLocked(){
+  if (S.auth !== "ok") return;
+  if (!isLocked()) toast(t("cLockedNow"));
+  if (S.st) S.st.crypt = {enabled: true, unlocked: false};
+  S.entries = null; S.sel.clear(); S.selMode = false;
+  if (dlgCancel) dlgCancel();
+  closeMenu();
+  if (inSettings()) location.hash = dirHash(S.dir); else { listSig = ""; render(); }
+  schedule(0);
+}
+function ulMode(key){
+  ulKey = key;
+  const f = $("#ulPass");
+  f.value = ""; f.type = key ? "text" : "password"; f.classList.toggle("mono", key);
+  f.autocapitalize = key ? "characters" : "none";
+  $("#ulEye").hidden = key; $("#ulEye").setAttribute("aria-pressed", "false"); $("#ulForgot").hidden = !key;
+  [["#ulLbl", key ? "ulKeyL" : "ulPassL"], ["#ulMode", key ? "ulUsePw" : "ulUseKey"]].forEach(([s, k]) => { $(s).dataset.t = k; $(s).textContent = t(k); });
+  if (!ulUntil) $("#ulMsg").textContent = "";
+}
+function ulTick(){
+  clearTimeout(ulTimer);
+  const s = Math.ceil((ulUntil - Date.now()) / 1000);
+  $("#ulBtn").disabled = s > 0;
+  if (s > 0) { $("#ulMsg").textContent = (ulPre || t("ulTooMany")) + " " + t("ulNext", s) + (ulPre ? "" : " " + t("ulRule")); ulTimer = setTimeout(ulTick, 1000); }
+  else if (ulUntil) { ulUntil = 0; ulPre = ""; $("#ulMsg").textContent = ""; }
+}
+$("#ulMode").onclick = () => { ulMode(!ulKey); $("#ulPass").focus(); };
+$("#ulEye").onclick = () => {
+  const f = $("#ulPass"), show = f.type === "password";
+  f.type = show ? "text" : "password"; $("#ulEye").setAttribute("aria-pressed", String(show)); f.focus();
+};
+$("#ulForm").onsubmit = async e => {
+  e.preventDefault();
+  if (ulUntil > Date.now() || $("#ulBtn").disabled) return;
+  const f = $("#ulPass"), v = ulKey ? f.value.trim() : nfc(f.value), btn = $("#ulBtn"), byKey = ulKey;
+  if (!v) { $("#ulMsg").textContent = t(ulKey ? "ulEmptyKey" : "ulEmptyPw"); return f.focus(); }
+  btn.disabled = true; btn.innerHTML = `<span class="spin"></span>${esc(t("ulBusy"))}`; $("#ulMsg").textContent = "";   // takes about 2 s
+  const r = await post("/api/crypt/unlock", {body: form(ulKey ? {recovery_key: v} : {password: v}), timeout: 30000});
+  btn.disabled = false; btn.textContent = t("ulBtn");
+  if (S.auth !== "ok") return;
+  if (r.ok) { ulMode(false); toast(t(byKey ? "ulDoneKey" : "ulDone")); S.entries = null; await refresh(true); return; }
+  if (r.code === "LOCKED") return ulWait(r.retry || 5, "");
+  const wrong = t(ulKey ? "ulWrongKey" : "ulWrongPw");
+  if (r.code === "CRYPT_WRONG_PASSWORD" && r.retry) ulWait(r.retry, wrong);   // from the third wrong entry on: wait before the next one
+  else $("#ulMsg").textContent = r.code === "CRYPT_WRONG_PASSWORD" ? wrong : errText(r);
+  if (r.code === "CRYPT_WRONG_PASSWORD") { f.select(); f.focus(); }
+  if (r.code === "CRYPT_NOT_ENABLED") refresh(true);
+};
+async function lockNow(){
+  if (blocked()) return;
+  const ok = await ask({title: t("cLockQ"), text: t("cLockX"), yes: t("cLockYes"),
+    run: async () => { const r = await post("/api/crypt/lock", {timeout: 15000}); return r.ok || r.code === "CRYPT_NOT_ENABLED" ? "" : errText(r, "crypt"); }});
+  if (!ok || S.auth !== "ok") return;
+  if (S.st && S.st.crypt && S.st.crypt.enabled) S.st.crypt.unlocked = false;   // no "locked elsewhere" toast
+  S.entries = null; S.sel.clear(); S.selMode = false;
+  toast(t("cLocked"));
+  await refresh(true);
+}
+$("#lockBtn").onclick = $("#cLock").onclick = lockNow;
 
 function renderNotice(){
   const n = $("#notice");
   let html = "", cls = "notice";
   if (S.restart === "download") { cls += " info"; html = icon("alert") + `<span>${t("nMaint")}</span>`; }
+  else if (S.restart === "proto") { cls += " info"; html = `<span class="spin"></span><span>${esc(t("nProto"))} <a href="${esc(S.protoUrl)}">${esc(t("openNow"))}</a></span>`; }
   else if (S.restart) { cls += " info"; html = `<span class="spin"></span><span>${t("nRestart")}</span>`; }
   else if (S.fails >= 2) html = icon("alert") + `<span>${t("nOffline")}</span>`;
   else if (S.st && S.st.upload.active && !S.working) { cls += " info"; html = `<span class="spin"></span><span>${t("nOther")}</span>`; }
@@ -1391,7 +1823,10 @@ function renderStatus(){
   const st = S.st; if (!st) return;
   const d = st.drive, cell = $("#modeCell"), btn = $("#modeBtn");
   let mode, ic, title, sub, label = "", primary = false;
-  if (broken(d)) { mode = "err"; ic = "alert"; title = t("mErrT"); sub = t("mErrX"); }
+  const lk = isLocked(), enc = crypt().enabled, dmg = isDamaged();
+  if (dmg) { mode = "err"; ic = "alert"; title = t("mDmgT"); sub = t("mDmgX"); }
+  else if (lk) { mode = "lock"; ic = "lock"; title = t("mLockT"); sub = t(d.usb_connected ? "mLockUsb" : "mLockX"); }
+  else if (broken(d)) { mode = "err"; ic = "alert"; title = t("mErrT"); sub = t("mErrX"); }
   else if (d.owner === "usb") { mode = "usb"; ic = "usb"; title = t("mUsbT"); sub = hostText(d); label = t("mToApp"); primary = true; }
   else { mode = "app"; ic = "folder"; title = t("mAppT"); sub = t(d.usb_connected ? "hHidden" : "hNone"); label = t("mToUsb"); }
   cell.className = "cell mode mode-" + mode;
@@ -1406,7 +1841,12 @@ function renderStatus(){
   }
   const used = Math.max(0, d.total - d.free), pct = d.total ? used / d.total * 100 : 0, bar = $("#stoBar");
   $("#stoTitle").textContent = t(st.medium.sd ? "sd" : "flash");
-  $("#stoSub").textContent = d.total ? t("usedOf", fsize(used), fsize(d.total)) : t("sizeUnknown");
+  $("#stoSub").textContent = dmg ? t("stoDmg") : lk ? t("stoLocked") : d.total ? t("usedOf", fsize(used), fsize(d.total)) : t("sizeUnknown");
+  $("#stoCell").classList.toggle("enc", enc);
+  $("#stoIcon").setAttribute("href", enc ? "#i-lock" : "#i-card");
+  $("#encTag").hidden = !enc;
+  $("#lockBtn").hidden = !canLock();
+  $("#lockBtn").disabled = !!S.switching || S.working || !!S.busy;
   bar.className = "bar" + (pct > 97 ? " full" : pct > 85 ? " high" : "");
   bar.firstElementChild.style.width = (used && pct < 1 ? 1 : pct).toFixed(1) + "%";
 }
@@ -1457,7 +1897,7 @@ function renderList(){
   renderCrumbs(); renderClip();
 
   // Rebuild the list only when something visible changed (keeps focus, scroll and open menus).
-  const sig = [lang, d.owner, broken(d), d.files, S.filesVer, ents === null, S.q, S.sort.k, S.sort.d, !!S.switching, S.working, S.trunc, S.dir, isAdmin()].join("|");
+  const sig = [lang, d.owner, broken(d), d.files, S.filesVer, ents === null, S.q, S.sort.k, S.sort.d, !!S.switching, S.working, S.trunc, S.dir, isAdmin(), isLocked()].join("|");
   if (sig !== listSig) {
     listSig = sig;
     buildList(box, d, fm, ents, has);
@@ -1469,6 +1909,7 @@ function buildList(box, d, fm, ents, has){
   cnt.textContent = has ? (S.q ? t("nOf", visible().length, ents.length) : `${ents.length}`) : "";
   if (has) cnt.setAttribute("aria-label", t("nItems", ents.length)); else cnt.removeAttribute("aria-label");
 
+  if (isLocked()) { box.innerHTML = ""; return; }      // the unlock view replaces the list (never offer formatting)
   if (broken(d)) {
     box.innerHTML = `<div class="state"><div class="big">${icon("alert")}</div><h2>${t("brokenT")}</h2>
       <p>${t(isAdmin() ? "brokenX" : "brokenUser")}</p>${isAdmin() ? `<div class="acts"><a class="btn primary" href="#s-danger">${t("toFormat")}</a></div>` : ""}</div>`;
@@ -1702,7 +2143,7 @@ function freeName(name, taken, isDir){
   const stem = split ? name.slice(0, dot) : name, ext = split ? name.slice(dot) : "";
   for (let n = 2; ; n++) { const c = `${stem} (${n})${ext}`; if (!taken.has(c.toLowerCase())) return c; }
 }
-const FATAL = ["NO_SPACE", "OFFLINE", "WRONG_OWNER", "BUSY", "IO", "UNAUTHORIZED", "MUST_CHANGE_PASSWORD", "FORBIDDEN_ROLE", "HTTP"];
+const FATAL = ["NO_SPACE", "OFFLINE", "WRONG_OWNER", "BUSY", "IO", "UNAUTHORIZED", "MUST_CHANGE_PASSWORD", "FORBIDDEN_ROLE", "HTTP", "DRIVE_LOCKED", "CRYPT_DAMAGED"];
 async function paste(){
   const c = S.clip; if (!c || blocked()) return;
   const dest = S.dir, copy = c.op === "copy";
@@ -1804,7 +2245,7 @@ async function work(){
   const failQueued = msg => S.ups.filter(u => u.state === "queued").forEach(u => endUp(u, "err", msg));
   try {
     if (!await refresh()) failQueued(t(S.auth === "ok" ? "upNoConn" : "upOut"));
-    else if (broken(S.st.drive)) failQueued(t("upBroken"));
+    else if (broken(S.st.drive)) failQueued(isLocked() ? errText({code: isDamaged() ? "CRYPT_DAMAGED" : "DRIVE_LOCKED"}) : t("upBroken"));
     else {
       if (S.st.drive.owner === "usb") {
         if (await activate()) tookOver = true;
@@ -1941,8 +2382,20 @@ function renderSettings(){
   const w = st.wifi, d = st.drive, used = Math.max(0, d.total - d.free);
   $("#netTitle").textContent = w.sta_connected ? t("netOn", w.ssid) : w.sta_configured ? t("netConnecting", w.ssid) : t("netNone");
   $("#netSub").textContent = w.sta_connected ? t(w.rssi >= -60 ? "rssi3" : w.rssi >= -72 ? "rssi2" : "rssi1") : w.ap_active ? t("apOn", w.ap_ssid) : "";
-  $("#netAddr").textContent = w.sta_connected ? "http://" + w.ip : w.ap_active ? "http://" + w.ap_ip : "–";
-  $("#netHost").textContent = "http://" + w.hostname + ".local";
+  const pr = location.protocol + "//";
+  $("#netAddr").textContent = w.sta_connected ? pr + w.ip : w.ap_active ? pr + w.ap_ip : "–";
+  $("#netHost").textContent = pr + w.hostname + ".local";
+  const hs = "https" in st;                  // firmware without HTTPS: no section
+  $("#s-sec").hidden = $("#secChip").hidden = !hs;
+  if (hs) {
+    $("#httpsState").textContent = t(st.https_active ? "httpsOn" : "httpsOff");
+    if (document.activeElement !== $("#swHttps")) $("#swHttps").checked = !!st.https;
+    $("#httpsPend").hidden = !st.https_restart;
+    if ($("#httpsList").dataset.l !== lang) { $("#httpsList").innerHTML = t("httpsL"); $("#certHow").innerHTML = t("certHow"); $("#httpsList").dataset.l = lang; }
+    $("#fpCa").textContent = st.ca_sha256 || "–"; $("#fpCert").textContent = st.cert_sha256 || "–";
+    const x = st.cert_expires, ed = x ? new Date(typeof x === "number" ? x * 1000 : x) : null;
+    $("#certExp").textContent = !ed ? "–" : isNaN(ed) ? String(x) : DF.format(ed);
+  }
   $("#secAp").textContent = (w.ap_active ? t("apOn", w.ap_ssid) + " " : "") + t("apX");
   $("#suMedium").textContent = st.medium.sd ? t("sd") + (st.medium.name ? " (" + st.medium.name + ")" : "") : t("flash");
   $("#suUsed").textContent = d.total ? t("nOf", fsize(used), fsize(d.total)) : "–";
@@ -1954,8 +2407,165 @@ function renderSettings(){
   $("#otaPend").hidden = !(st.ota && st.ota.pending_verify);
   $("#sysUp").textContent = t("dur", st.uptime_s);
   $("#sysHeap").textContent = fsize(st.heap);
-  $("#fmtSub").textContent = t("fmtX", t(st.medium.sd ? "whereSd" : "whereFlash"));
+  const c = crypt(), lk = isLocked(), dmg = isDamaged();
+  $("#fmtSub").textContent = t("fmtX", t(st.medium.sd ? "whereSd" : "whereFlash")) + (lk ? " " + t(dmg ? "fmtDmg" : "fmtLocked") : "");
+  $("#fmtBtn").disabled = lk;
+  $("#cryptItem").hidden = !st.crypt;
+  $("#cState").textContent = t(dmg ? "cDmg" : !c.enabled ? "cOff" : lk ? "cOnL" : "cOnU");
+  $("#cUnlock").hidden = !lk || dmg; $("#cLock").hidden = !canLock();
+  $("#cSetup").hidden = c.enabled || dmg;
+  $("#cPw").hidden = $("#cRec").hidden = !canLock();          // changing the password and a new key need an unlocked drive
+  $("#cOff").hidden = !c.enabled || dmg; $("#cErase").hidden = !dmg;
   $("#foot").textContent = "WiFi DataDrive " + st.version;
+}
+
+const medTxt = () => t(S.st.medium.sd ? "whereSd" : "whereFlash");
+const cpwErr = (a, b) => [...a].length < 12 ? t("cShort") : bytes(a) > 64 ? t("cLong") : a === b ? "" : t("cDiff");
+$("#cSetup").onclick = async () => {
+  if (!S.st || blocked()) return;
+  const took = S.st.drive.owner === "usb";   // setting up formats: the file management must own the drive
+  if (took && !await activate()) return;
+  let key = "", late = "";
+  const ok = await ask({title: t("cSetupT"), html: t("cSetupX", esc(medTxt())), yes: t("cSetupYes"), danger: true, wait: t("cSetupBusy"),
+    fields: [{label: t("cNewL"), type: "password", auto: "new-password"}, {label: t("cNew2L"), type: "password", auto: "new-password"},
+      {label: t("cWordL", t("fmtWord")), placeholder: t("fmtWord")}],
+    init: ([a]) => pwMeter(a),
+    run: async ([a, b, w]) => {
+      a = nfc(a); b = nfc(b);
+      const err = cpwErr(a, b); if (err) return err;
+      if (w.toUpperCase() !== t("fmtWord")) return t("fmtWrong");
+      const r = await longReq("/api/crypt/setup", {password: a}, t("longSetup"));
+      key = String(r.recovery_key || "");
+      if (r.ok) return "";
+      if (key) { late = errText(r, "crypt"); return ""; }        // encrypted although the answer is an error: the key first, then the error
+      if (r.code === "OFFLINE") { late = t("cSetupLost"); return ""; }   // outcome unknown
+      return errText(r, "crypt");
+    }});
+  if (!ok) { if (took && S.auth === "ok") await provide(); return; }
+  S.entries = null; S.clip = null;
+  await refresh(true);
+  if (key) await showKey(key);
+  if (late) await errBox(t("cProbT"), late); else toast(t("cSetupDone"));
+};
+// The recovery key comes exactly once: the dialog closes only after "written down" is ticked.
+function showKey(key, renewed){
+  const g = key.split("-"), half = Math.ceil(g.length / 2);
+  return ask({title: t("cKeyT"), must: true, yes: t("cDone"),
+    html: t("cKeyX") + (renewed ? `<p><b>${esc(t("cKeyOld"))}</b></p>` : "") + `<div class="rkey"><code id="rkey"><span>${esc(g.slice(0, half).join("-"))}${g.length > 1 ? "-" : ""}</span><span>${esc(g.slice(half).join("-"))}</span></code><button type="button" class="btn" id="rkCopy">${icon("copy")}${esc(t("copy"))}</button></div>`,
+    fields: [{type: "check", label: t("cKeyOk")}],
+    init: ([ck], yes) => {
+      yes.disabled = true; ck.onchange = () => { yes.disabled = !ck.checked; }; ck.focus();
+      $("#rkCopy").onclick = async () => {
+        let ok = false;
+        try { if (navigator.clipboard && isSecureContext) { await navigator.clipboard.writeText(key); ok = true; } } catch(e) {}
+        if (!ok) {                                  // plain HTTP: no clipboard API; copy through a selected text field inside the dialog
+          const ta = document.createElement("textarea");
+          ta.value = key; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;opacity:0;left:0;top:0";
+          $("#dForm").appendChild(ta); ta.select();
+          try { ok = document.execCommand("copy"); } catch(e) {}
+          ta.remove();
+        }
+        toast(t(ok ? "copied" : "copyFail"), !ok);
+      };
+    },
+    run: async ([c]) => c ? "" : t("cKeyNeed")});
+}
+$("#cPw").onclick = async () => {
+  if (blocked()) return;
+  const ok = await ask({title: t("cPwT"), text: t("cPwX") + " " + t("cPwKey"), yes: t("save"), wait: t("cWait"),
+    fields: [{label: t("cOldL2"), type: "password", auto: "off"}, {label: t("cNewL2"), type: "password", auto: "new-password"}, {label: t("cNew2L"), type: "password", auto: "new-password"}],
+    init: ([, a]) => pwMeter(a),
+    run: async ([o, a, b]) => {
+      o = nfc(o); a = nfc(a); b = nfc(b);              // the old field may also hold the recovery key (the device accepts both)
+      if (!o) return t("ulEmptyPw");
+      const err = cpwErr(a, b); if (err) return err;
+      if (a === o) return t("cSame");
+      const r = await post("/api/crypt/password", {body: form({old: o, new: a}), timeout: 30000});
+      return r.ok ? "" : cErr(r, "cpw");
+    }});
+  if (ok) toast(t("cPwDone"));
+};
+// Wrong drive password: from the third wrong entry on the answer also says how long to wait.
+const cErr = (r, ctx) => errText(r, ctx) + (r.code === "CRYPT_WRONG_PASSWORD" && r.retry ? " " + t("ulNext", r.retry) : "");
+$("#cRec").onclick = async () => {
+  if (blocked()) return;
+  let key = "", late = "";
+  const ok = await ask({title: t("cRecT"), html: t("cRecX"), yes: t("cRecYes"), wait: t("cWait"),
+    fields: [{label: t("cRecL"), type: "password", auto: "off"}],
+    run: async ([p]) => {
+      if (!p) return t("ulEmptyPw");
+      const r = await post("/api/crypt/recovery", {body: form({password: nfc(p)}), timeout: 30000});
+      key = String(r.recovery_key || "");
+      if (key) { if (!r.ok) late = errText(r, "crypt"); return ""; }
+      return r.ok ? errText({code: "HTTP", status: 200}) : cErr(r, "crypt");
+    }});
+  if (!ok || !key) return;
+  await showKey(key, true);
+  if (late) await errBox(t("cProbT"), late); else toast(t("cRecDone"));
+};
+$("#cOff").onclick = async () => {
+  if (!S.st || blocked()) return;
+  const took = !isLocked() && S.st.drive.owner === "usb";   // a locked drive can be turned off without changing the owner
+  if (took && !await activate()) return;
+  let late = "";
+  const ok = await ask({title: t("cOffT"), html: t("cOffX", esc(medTxt())), yes: t("cOffYes"), danger: true, wait: t("cOffBusy"),
+    fields: [{label: t("ulPassL"), type: "password", auto: "off"}, {label: t("cWordL", t("fmtWord")), placeholder: t("fmtWord")}],
+    run: async ([p, w]) => {
+      if (!p) return t("ulEmptyPw");
+      if (w.toUpperCase() !== t("fmtWord")) return t("fmtWrong");
+      const r = await longReq("/api/crypt/disable", {password: nfc(p)}, t("longOff"));
+      if (r.ok) return "";
+      if (r.code === "OFFLINE") { late = t("longLost"); return ""; }
+      return cErr(r, "crypt");
+    }});
+  if (!ok) { if (took && S.auth === "ok") await provide(); return; }
+  S.entries = null; S.clip = null;
+  if (late) errBox(t("cProbT"), late); else toast(t("cOffDone"));
+  await refresh(true);
+};
+// Damaged key area, or drive password and recovery key both lost: erase and reformat (admin, typed confirmation).
+async function eraseDrive(){
+  if (!S.st || blocked()) return;
+  let late = "", restart = false;
+  const ok = await ask({title: t("erT"), html: t(isDamaged() ? "erXDmg" : "erXLost", esc(medTxt())), yes: t("erYes"), danger: true, wait: t("erBusy"),
+    input: {label: t("cWordL", t("fmtWord")), placeholder: t("fmtWord")},
+    run: async w => {
+      if (w.toUpperCase() !== t("fmtWord")) return t("fmtWrong");
+      const r = await longReq("/api/crypt/erase", {confirm: "ERASE"}, t("longErase"));
+      if (r.ok) { restart = r.restart === true; return ""; }
+      if (r.code === "OFFLINE") { late = t("longLost"); return ""; }
+      return errText(r, "crypt");
+    }});
+  if (!ok || S.auth !== "ok") return;
+  S.entries = null; S.clip = null; S.sel.clear(); S.selMode = false; ulUntil = 0; ulTick();
+  if (late) { errBox(t("erT"), late); return refresh(true); }
+  toast(t("erDone"));
+  if (restart) return awaitRestart("format");
+  if (S.st) S.st.crypt = {enabled: false, unlocked: true, damaged: false};
+  await refresh(true);
+}
+$("#ulLost").onclick = $("#dmgErase").onclick = $("#cErase").onclick = eraseDrive;
+// Strength hint under a new drive password: length and variety only (no dictionary).
+function pwScore(p){
+  const n = [...p].length;
+  if (n < 12) return 0;
+  const pool = (/[a-z]/.test(p) ? 26 : 0) + (/[A-Z]/.test(p) ? 26 : 0) + (/\d/.test(p) ? 10 : 0) + (/[^A-Za-z0-9]/.test(p) ? 33 : 0);
+  const bits = Math.min(n, 2 * new Set(p).size) * Math.log2(pool);   // repeated characters count less
+  return bits < 50 ? 1 : bits < 70 ? 2 : bits < 90 ? 3 : 4;
+}
+function pwMeter(f){
+  const box = document.createElement("div");
+  box.className = "pwm";
+  box.innerHTML = `<span class="bar"><i></i></span><span class="small"></span><span class="small">${esc(t("pwmX"))}</span>`;
+  f.parentNode.after(box);
+  const bar = box.children[0], lbl = box.children[1];
+  const upd = () => {
+    const v = nfc(f.value), s = v ? pwScore(v) : -1;
+    bar.className = "bar" + (s < 2 ? " full" : s < 3 ? " high" : "");
+    bar.firstChild.style.width = (s < 0 ? 0 : s ? s * 25 : 8) + "%";
+    lbl.textContent = t("pwmL", t(s < 0 ? "pwmNone" : "pwm" + s));
+  };
+  f.addEventListener("input", upd); upd();
 }
 async function loadAdmin(){
   if (S.working || S.busy) return;
@@ -1980,6 +2590,38 @@ $("#swWrite").onchange = async e => {
   await refresh();
   toast(t(want ? "usbWriteOn" : "usbWriteOff"));
 };
+
+/* ---------- HTTPS (admin; takes effect after a restart) ---------- */
+const protoUrl = on => (on ? "https:" : "http:") + "//" + location.hostname + "/";
+$("#swHttps").onchange = async e => {
+  const want = e.target.checked;
+  e.target.checked = !want;                 // only the device's answer changes the switch
+  if (blocked()) return;
+  const ok = await ask({title: t(want ? "httpsOnT" : "httpsOffT"), html: t(want ? "httpsOnX" : "httpsOffX", esc(protoUrl(want))), yes: t(want ? "httpsYesOn" : "httpsYesOff"),
+    run: async () => { const r = await post("/api/settings/https?value=" + (want ? 1 : 0)); return r.ok ? "" : errText(r); }});
+  if (!ok || S.auth !== "ok") return;
+  await refresh();
+  offerBoot();
+};
+$("#certRenew").onclick = async () => {
+  if (!S.st || blocked()) return;
+  const ok = await ask({title: t("renewT"), html: t("renewX"), yes: t("renewYes"), fields: [{type: "check", label: t("renewCa")}],
+    run: async ([ca]) => { const r = await post(`/api/settings/https?value=${S.st.https ? 1 : 0}&renew=1${ca ? "&regenerate=1" : ""}`); return r.ok ? "" : errText(r); }});
+  if (!ok || S.auth !== "ok") return;
+  await refresh();
+  offerBoot();
+};
+$("#httpsBoot").onclick = () => { if (!blocked()) offerBoot(); };
+// Offer the restart; when the protocol changes, the page cannot follow by polling (other port, untrusted certificate): it moves after a while.
+async function offerBoot(){
+  const ok = await ask({title: t("bootQ"), text: t("bootX"), yes: t("httpsBoot"), no: t("bootLater"),
+    run: async () => { const r = await post("/api/reboot?mode=normal"); return r.ok ? "" : errText(r); }});
+  if (!ok) { if (S.auth === "ok") toast(t("httpsSaved")); return; }
+  const url = protoUrl(!!(S.st && S.st.https));
+  if (url.startsWith(location.protocol)) return awaitRestart("normal");
+  S.restart = "proto"; S.protoUrl = url; S.entries = null; clearTimeout(pollTimer); renderNotice();
+  setTimeout(() => { location.href = url; }, 12000);
+}
 
 /* ---------- trusted devices (own ones; administrators see all) ---------- */
 async function loadDevices(){ const j = await api("/api/devices"); S.devs = j.ok ? j : null; renderDevices(); }
@@ -2011,14 +2653,59 @@ function renderWifi(){
     <button class="icon-btn" data-wdel="${esc(n.ssid)}" aria-label="${esc(t("removeX", n.ssid))}" title="${esc(t("removeX", n.ssid))}">${icon("trash")}</button></div>`).join("")
     || `<div class="li"><span class="txt small">${t("wifiNone")}</span></div>`;
 }
+/* Networks in range (API v4) for the "add network" dialog. SSIDs are untrusted text: only ever set via textContent / attributes. */
+let scanSeq = 0, scanNets = [];
+const sigLevel = r => r >= -55 ? 4 : r >= -67 ? 3 : r >= -75 ? 2 : 1;
+const sigSvg = q => `<svg class="sig" viewBox="0 0 18 18" aria-hidden="true">${[0, 1, 2, 3].map(i => `<rect x="${1 + i * 4.3}" y="${13 - i * 4}" width="3" height="${4 + i * 4}" rx="1"${i < q ? "" : ' class="off"'}/>`).join("")}</svg>`;
+async function scan(ssid, pass, yes){
+  const box = $("#scanList"), again = $("#scanAgain"), seq = ++scanSeq;
+  const msg = h => { box.innerHTML = `<div class="scanmsg">${h}</div>`; };
+  msg(`<span class="spin"></span>${esc(t("scanning"))}`); again.disabled = true;
+  S.scanning = true;
+  let r;
+  try {
+    for (let i = 0; i < 2; i++) {             // setup mode: the connection may drop during the scan, so try once more quietly
+      r = await api("/api/wifi/scan", {timeout: 15000});
+      if (r.code !== "OFFLINE" || i || !box.isConnected) break;
+      await new Promise(res => setTimeout(res, 1500));
+    }
+  } finally { if (seq === scanSeq) S.scanning = false; }
+  if (seq !== scanSeq || !box.isConnected) return;     // dialog closed or a newer search runs
+  again.disabled = false;
+  if (!r.ok) return msg(icon("alert") + `<span>${esc(r.code === "BUSY" ? t("scanBusy") : t("scanErr") + " " + errText(r))}</span>`);
+  scanNets = (r.networks || []).filter(n => n && typeof n.ssid === "string" && n.ssid);
+  if (!scanNets.length) return msg(esc(t("scanNone")));
+  box.textContent = "";
+  for (const n of scanNets) {
+    const b = document.createElement("button"), q = sigLevel(+n.rssi || -100);
+    b.type = "button"; b.className = "net"; b.title = n.ssid;
+    b.innerHTML = sigSvg(q) + '<span class="nn"></span>' + (n.saved ? `<span class="pill">${esc(t("saved"))}</span>` : "") + (n.secure ? icon("lock") : "");
+    b.querySelector(".nn").textContent = n.ssid;
+    b.setAttribute("aria-label", t("netL", n.ssid, q, !!n.secure, !!n.saved));
+    b.onclick = () => {
+      box.querySelectorAll(".net").forEach(x => x.classList.toggle("on", x === b));
+      ssid.value = n.ssid; pass.placeholder = n.secure ? "" : t("openNet"); $("#dErr").textContent = "";
+      if (n.secure) pass.focus(); else { pass.value = ""; yes.focus(); }
+    };
+    box.appendChild(b);
+  }
+}
 $("#wifiAdd").onclick = async () => {
   if (blocked()) return;
-  const v = await ask({title: t("wifiAdd"), text: t("wifiAddX"), yes: t("save"),
+  scanNets = [];
+  const v = await ask({title: t("wifiAdd"), yes: t("save"),
+    html: `<p>${esc(t("wifiAddX"))}</p><div class="scan"><div class="scanhead"><span class="lbl">${esc(t("scanT"))}</span><button type="button" class="linkbtn" id="scanAgain">${esc(t("scanAgain"))}</button></div><div class="scanlist" id="scanList" aria-live="polite"></div><p class="small">${esc(t("scanHidden"))}</p></div>`,
     fields: [{label: t("ssid"), max: 32, raw: true}, {label: t("wifiPassL"), type: "password", auto: "new-password", max: 63}],
+    init: ([ssid, pass], yes) => {
+      ssid.addEventListener("input", () => { $$("#scanList .net.on").forEach(x => x.classList.remove("on")); pass.placeholder = ""; });
+      $("#scanAgain").onclick = () => scan(ssid, pass, yes);
+      scan(ssid, pass, yes);
+    },
     run: async ([ssid, pass]) => {
       if (!ssid.trim()) return t("ssidEmpty");
       if (bytes(ssid) > 32) return t("ssidLong");
       if (pass.length && (pass.length < 8 || pass.length > 63)) return t("wifiPwLen");
+      if (!pass && scanNets.some(n => n.ssid === ssid && n.secure)) return t("needPw");
       const r = await post("/api/wifi/add", {body: form({ssid, pass})});
       return r.ok ? "" : errText(r, "wifi");
     }});
@@ -2112,14 +2799,17 @@ $("#fmtBtn").onclick = async () => {
   const took = S.st.drive.owner === "usb";   // formatting needs the file management to own the drive
   if (took && !await activate()) return;
   const where = t(S.st.medium.sd ? "whereSd" : "whereFlash");
+  let restart = true;
   const ok = await ask({title: t("fmtQ"), yes: t("fmtYes"), danger: true, text: t("fmtQX", where),
     input: {label: t("fmtConfirm"), placeholder: t("fmtWord")},
     run: async v => {
       if (v.toUpperCase() !== t("fmtWord")) return t("fmtWrong");
-      const r = await post("/api/format?confirm=FORMAT");
+      const r = await post("/api/format?confirm=FORMAT", {timeout: 120000});
+      restart = r.restart === true;      // encrypted, unlocked drive: new file system without a restart, stays unlocked
       return r.ok ? "" : r.code === "WRONG_OWNER" ? t("fmtOwner") : errText(r);
     }});
-  if (ok) awaitRestart("format");
+  if (ok && restart) awaitRestart("format");
+  else if (ok) { S.entries = null; S.clip = null; S.sel.clear(); S.selMode = false; toast(t("fmtDone")); await refresh(true); }
   else if (took && S.auth === "ok") await provide();            // cancelled: give the drive back to the USB device
 };
 

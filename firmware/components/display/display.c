@@ -193,6 +193,62 @@ int display_text(int x, int y, const char *utf8, uint16_t fg, uint16_t bg, int s
     return x;
 }
 
+void display_blit(int x, int y, int w, int h, const uint16_t *rgb565)
+{
+    if (!s_fb || !rgb565) {
+        return;
+    }
+    for (int row = 0; row < h; row++) {
+        const int py = y + row;
+        if (py < 0 || py >= DISPLAY_H) {
+            continue;
+        }
+        for (int col = 0; col < w; col++) {
+            const int px = x + col;
+            if (px >= 0 && px < DISPLAY_W) {
+                s_fb[py * DISPLAY_W + px] = swap16(rgb565[row * w + col]);
+            }
+        }
+    }
+}
+
+#define FLUSH_RECT_MAX_PIXELS 2048   // 48 x 40 animation box = 1920
+
+esp_err_t display_flush_rect(int x, int y, int w, int h)
+{
+    if (!s_panel) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > DISPLAY_W) { w = DISPLAY_W - x; }
+    if (y + h > DISPLAY_H) { h = DISPLAY_H - y; }
+    if (w <= 0 || h <= 0) {
+        return ESP_OK;
+    }
+    if (w * h > FLUSH_RECT_MAX_PIXELS) {
+        return display_flush();
+    }
+    // The panel driver needs a tightly packed bitmap: copy the rectangle into a small DMA buffer.
+    static uint16_t *blk;
+    if (!blk) {
+        blk = heap_caps_malloc(FLUSH_RECT_MAX_PIXELS * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        if (!blk) {
+            return display_flush();
+        }
+    }
+    for (int row = 0; row < h; row++) {
+        memcpy(&blk[row * w], &s_fb[(y + row) * DISPLAY_W + x], w * sizeof(uint16_t));
+    }
+    xSemaphoreTake(s_flush_done, 0);
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_draw_bitmap(s_panel, x, y, x + w, y + h, blk), TAG, "draw rect");
+    if (xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(200)) != pdTRUE) {
+        ESP_LOGW(TAG, "flush timeout");
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
+}
+
 esp_err_t display_flush(void)
 {
     if (!s_panel) {

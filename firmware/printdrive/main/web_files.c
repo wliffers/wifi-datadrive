@@ -10,6 +10,8 @@
 #include "esp_timer.h"
 #include "sdkconfig.h"
 #include "web_common.h"
+#include "anim.h"
+#include "web_crypt.h"
 
 static const char *TAG = "web";
 
@@ -83,6 +85,10 @@ static bool drain_body(httpd_req_t *req, size_t remaining)
 
 static esp_err_t h_files(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char *mem = malloc(LIST_BUF_SIZE + PATH_BUF_SIZE + ITEM_BUF_SIZE);
     if (!mem) {
         return web_send_error(req, "500 Internal Server Error", "NO_MEM", "Zu wenig Arbeitsspeicher.");
@@ -128,6 +134,10 @@ static esp_err_t h_files(httpd_req_t *req)
 
 static esp_err_t h_download(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char path[PATH_BUF_SIZE];
     const param_t p = path_param(req, "path", path);
     if (p != PARAM_OK) {
@@ -167,6 +177,10 @@ static esp_err_t h_download(httpd_req_t *req)
 /** Validate an upload before sending data: path, type, folder, existence, free space. */
 static esp_err_t h_upload_check(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char path[PATH_BUF_SIZE], size_s[21];   // at most 20 digits, like the test server
     const param_t p = path_param(req, "path", path);
     if (p != PARAM_OK) {
@@ -251,6 +265,10 @@ static esp_err_t receive_upload(httpd_req_t *req, const char *path, bool overwri
 
 static esp_err_t h_upload(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return drain_body(req, req->content_len) ? web_send_result(req, blk) : ESP_FAIL;
+    }
     char path[PATH_BUF_SIZE];
     const param_t p = path_param(req, "path", path);
     if (p != PARAM_OK) {
@@ -288,6 +306,10 @@ static esp_err_t send_push_result(httpd_req_t *req, drive_result_t r, bool took_
  */
 static esp_err_t h_push(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return drain_body(req, req->content_len) ? send_push_result(req, blk, false, false) : ESP_FAIL;
+    }
     char path[PATH_BUF_SIZE], v[8];
     const size_t total = req->content_len;
     const param_t p = path_param(req, "path", path);
@@ -349,6 +371,10 @@ static esp_err_t h_push(httpd_req_t *req)
 
 static esp_err_t h_mkdir(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char path[PATH_BUF_SIZE];
     const param_t p = path_param(req, "path", path);
     if (p != PARAM_OK) {
@@ -359,12 +385,24 @@ static esp_err_t h_mkdir(httpd_req_t *req)
 
 static esp_err_t h_delete(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char path[PATH_BUF_SIZE];
     const param_t p = path_param(req, "path", path);
     if (p != PARAM_OK) {
         return send_param_error(req, p, "path");
     }
-    return web_send_result(req, drive_delete(path, web_query_flag(req, "recursive")));
+    const bool recursive = web_query_flag(req, "recursive");
+    if (recursive) {
+        anim_set_busy(true);
+    }
+    const drive_result_t r = drive_delete(path, recursive);
+    if (recursive) {
+        anim_set_busy(false);
+    }
+    return web_send_result(req, r);
 }
 
 /** Shared by move and copy: reads "from" and "to"; returns false after answering an error. */
@@ -385,6 +423,10 @@ static bool from_to_params(httpd_req_t *req, char *from, char *to, esp_err_t *re
 
 static esp_err_t h_move(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char from[PATH_BUF_SIZE], to[PATH_BUF_SIZE];
     esp_err_t ret = ESP_OK;
     if (!from_to_params(req, from, to, &ret)) {
@@ -395,13 +437,20 @@ static esp_err_t h_move(httpd_req_t *req)
 
 static esp_err_t h_copy(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char from[PATH_BUF_SIZE], to[PATH_BUF_SIZE];
     esp_err_t ret = ESP_OK;
     if (!from_to_params(req, from, to, &ret)) {
         return ret;
     }
     // Blocks the (single) HTTP task until the copy is done; drive.c logs size and duration.
-    return web_send_result(req, drive_copy(from, to));
+    anim_set_busy(true);
+    const drive_result_t r = drive_copy(from, to);
+    anim_set_busy(false);
+    return web_send_result(req, r);
 }
 
 static const web_route_t s_routes[] = {

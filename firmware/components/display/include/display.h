@@ -48,6 +48,12 @@ int display_text(int x, int y, const char *utf8, uint16_t fg, uint16_t bg, int s
 /** Width in pixels that display_text() would use. */
 int display_text_width(const char *utf8, int scale);
 
+/** Copy a w x h block of native RGB565 pixels (row-major, e.g. DISPLAY_RGB()) into the framebuffer, clipped. */
+void display_blit(int x, int y, int w, int h, const uint16_t *rgb565);
+
+/** Transfer only a rectangle of the framebuffer (at most 2048 pixels, else the whole frame). */
+esp_err_t display_flush_rect(int x, int y, int w, int h);
+
 /** Transfer the framebuffer to the panel (blocks until the DMA transfer is done). */
 esp_err_t display_flush(void);
 

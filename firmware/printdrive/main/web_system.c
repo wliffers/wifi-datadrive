@@ -2,6 +2,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "anim.h"
 #include "applog.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
@@ -12,7 +13,9 @@
 #include "ota.h"
 #include "pd_wifi.h"
 #include "sdkconfig.h"
+#include "tls.h"
 #include "web_common.h"
+#include "web_crypt.h"
 
 static const char *TAG = "web";
 
@@ -40,8 +43,17 @@ static esp_err_t h_status(httpd_req_t *req)
     pd_wifi_status_t w;
     drive_get_status(&d);
     pd_wifi_get_status(&w);
+    // Locked (API v4, 2.3): no owner, no sizes. The drive layer reports owner APP with fs_ok=false.
+    const bool locked = d.crypt == DRIVE_CRYPT_LOCKED || d.crypt == DRIVE_CRYPT_DAMAGED;
+    if (locked) {
+        d.owner = DRIVE_OWNER_NONE;
+        d.fs_ok = false;
+        d.needs_format = false;
+        d.total_bytes = d.free_bytes = 0;
+        d.file_count = 0;
+    }
 
-    char buf[1600] = "";
+    char buf[2048] = "";
     web_appendf(buf, sizeof(buf), "{\"version\":");
     web_json_str(buf, sizeof(buf), esp_app_get_description()->version);
     web_appendf(buf, sizeof(buf), ",\"uptime_s\":%lld,\"heap\":%lu,\"types\":\"%s\"",
@@ -76,13 +88,27 @@ static esp_err_t h_status(httpd_req_t *req)
     char part[17];
     bool pending;
     ota_get_info(part, sizeof(part), &pending);
-    web_appendf(buf, sizeof(buf), ",\"ota\":{\"partition\":\"%s\",\"pending_verify\":%s}}", part,
+    web_appendf(buf, sizeof(buf), ",\"ota\":{\"partition\":\"%s\",\"pending_verify\":%s}", part,
                 pending ? "true" : "false");
+    web_appendf(buf, sizeof(buf), ",\"crypt\":{\"enabled\":%s,\"unlocked\":%s,\"damaged\":%s}",
+                d.crypt != DRIVE_CRYPT_OFF ? "true" : "false", locked ? "false" : "true",
+                d.crypt == DRIVE_CRYPT_DAMAGED ? "true" : "false");
+    pd_tls_info_t t;
+    pd_tls_get_info(&t);
+    web_appendf(buf, sizeof(buf),
+                ",\"https\":%s,\"https_active\":%s,\"https_restart\":%s,\"cert_sha256\":\"%s\",\"ca_sha256\":\"%s\","
+                "\"cert_expires\":\"%s\"}",
+                t.enabled ? "true" : "false", t.active ? "true" : "false", t.restart_pending ? "true" : "false",
+                t.cert_sha256, t.ca_sha256, t.cert_expires);
     return web_send_json(req, "200 OK", buf);
 }
 
 static esp_err_t h_mode(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char target[8];
     if (!web_query_param(req, "target", target, sizeof(target))) {
         return web_send_error(req, "400 Bad Request", "BAD_REQUEST", "target fehlt");
@@ -106,19 +132,36 @@ static esp_err_t h_host_writable(httpd_req_t *req)
 
 static esp_err_t h_format(httpd_req_t *req)
 {
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
+    }
     char confirm[16];
     if (!web_query_param(req, "confirm", confirm, sizeof(confirm)) || strcmp(confirm, "FORMAT") != 0) {
         return web_send_error(req, "400 Bad Request", "BAD_REQUEST", "Bestätigung fehlt");
     }
-    // drive_format() restarts the device on success; answer first.
     drive_status_t d;
     drive_get_status(&d);
     if (d.owner != DRIVE_OWNER_APP) {
         return web_send_result(req, DRIVE_ERR_WRONG_OWNER);
     }
+    if (d.crypt != DRIVE_CRYPT_OFF) {
+        // Encrypted and unlocked: formatted right away, no restart (the drive stays unlocked).
+        anim_set_busy(true);
+        const drive_result_t r = drive_format();
+        anim_set_busy(false);
+        if (r != DRIVE_OK) {
+            ESP_LOGE(TAG, "format failed: %s", drive_result_str(r));
+            return web_send_result(req, r);
+        }
+        return web_send_json(req, "200 OK", "{\"ok\":true,\"restart\":false}");
+    }
+    // Not encrypted: drive_format() restarts the device on success; answer first.
     web_send_json(req, "200 OK", "{\"ok\":true,\"restart\":true}");
     vTaskDelay(pdMS_TO_TICKS(200));
+    anim_set_busy(true);
     const drive_result_t r = drive_format();
+    anim_set_busy(false);
     ESP_LOGE(TAG, "format failed: %s", drive_result_str(r));
     return ESP_OK;
 }

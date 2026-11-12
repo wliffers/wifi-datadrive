@@ -12,6 +12,12 @@
 // Switching is only done by drive_set_owner() under a mutex, never while an upload
 // is in progress, and USB -> APP only when the host has ejected the drive, is gone,
 // or the caller explicitly forces it while the host has been write-idle for a while.
+//
+// Optional encryption (drive_crypt_*): an encrypted drive is LOCKED after every power-up.
+// Locked, neither owner has a file system (host: "no medium", app: DRIVE_ERR_LOCKED);
+// unlocking leads into the normal states above. A drive whose key header is damaged or
+// unreadable is blocked the same way (DRIVE_CRYPT_DAMAGED, DRIVE_ERR_CRYPT_DAMAGED) and is
+// never taken for an unencrypted one.
 #pragma once
 
 #include <stdbool.h>
@@ -46,6 +52,20 @@ typedef enum {
     DRIVE_OWNER_USB,
 } drive_owner_t;
 
+// Drive encryption (components/pd_crypt). While LOCKED the owner is APP with fs_ok = false:
+// the USB host sees "no medium", every file operation returns DRIVE_ERR_LOCKED.
+typedef enum {
+    DRIVE_CRYPT_OFF = 0,              // medium is not encrypted
+    DRIVE_CRYPT_LOCKED,               // encrypted, password needed (state after every power-up)
+    DRIVE_CRYPT_UNLOCKED,             // encrypted, works like an unencrypted drive
+    DRIVE_CRYPT_DAMAGED,              // key header present but invalid, or unreadable: blocked like
+                                      // LOCKED (DRIVE_ERR_CRYPT_DAMAGED); only drive_crypt_force_format()
+} drive_crypt_state_t;
+
+#define DRIVE_CRYPT_PW_MIN_CHARS  12      // drive password: at least 12 characters ...
+#define DRIVE_CRYPT_PW_MAX_BYTES  128     // ... and at most 128 bytes (UTF-8)
+#define DRIVE_CRYPT_RECOVERY_LEN  40      // buffer for the recovery key "XXXX-XXXX-...-XXXX" + NUL
+
 typedef struct {
     drive_owner_t owner;
     bool fs_ok;                       // file system mounted and usable (APP) / was usable (USB)
@@ -67,7 +87,19 @@ typedef struct {
     char upload_name[DRIVE_NAME_MAX + 1];
     uint32_t upload_received;
     uint32_t upload_total;
+    drive_crypt_state_t crypt;        // encryption state (live, also during long operations)
 } drive_status_t;
+
+/** Details of the drive encryption, see drive_crypt_get_info(). */
+typedef struct {
+    drive_crypt_state_t state;
+    bool available;                   // encryption possible here (self-test passed, medium large enough)
+    bool hw_fast_path;                // AES peripheral driven directly (else slower mbedtls path)
+    uint32_t retry_after_s;           // > 0: unlock/disable/change are refused for this many seconds
+    uint32_t failed_attempts;         // wrong secrets in a row since boot (RAM only)
+    uint32_t kdf_iterations;          // PBKDF2 iterations of the password (encrypted only)
+    uint64_t volume_bytes;            // size the file system / host sees (0 while locked)
+} drive_crypt_info_t;
 
 /** Result summary of drive_list(). */
 typedef struct {
@@ -94,6 +126,16 @@ typedef enum {
     DRIVE_ERR_IO,
     DRIVE_ERR_DIR_NOT_EMPTY,          // folder not empty and recursive delete not requested
     DRIVE_ERR_IS_DIR,                 // a file was expected, the path names a folder
+    // Drive encryption
+    DRIVE_ERR_LOCKED,                 // drive is encrypted and locked: unlock first
+    DRIVE_ERR_AUTH,                   // wrong drive password / recovery key
+    DRIVE_ERR_RETRY_LATER,            // too many wrong attempts: wait retry_after_s
+    DRIVE_ERR_WEAK_PASSWORD,          // new password < DRIVE_CRYPT_PW_MIN_CHARS chars or > MAX_BYTES
+    DRIVE_ERR_NOT_ENCRYPTED,          // operation needs an encrypted drive
+    DRIVE_ERR_ALREADY_ENCRYPTED,      // setup on a drive that is already encrypted
+    DRIVE_ERR_CRYPT_UNAVAILABLE,      // encryption not possible (self-test failed, medium too small
+                                      // or not erasable)
+    DRIVE_ERR_CRYPT_DAMAGED,          // key header damaged / unreadable (or fails authentication)
 } drive_result_t;
 
 /** Human readable (German) text for a result code. */
@@ -158,7 +200,12 @@ drive_result_t drive_move(const char *from, const char *to);
  */
 drive_result_t drive_copy(const char *from, const char *to);
 
-/** Re-create an empty FAT file system (APP only, erases all files). */
+/**
+ * Re-create an empty FAT file system (APP only, erases all files).
+ * Not encrypted: the device restarts and formats at boot (does not return on success).
+ * Encrypted and unlocked: formatted immediately, returns DRIVE_OK (no restart - after a restart
+ * the drive would be locked). Locked: DRIVE_ERR_LOCKED.
+ */
 drive_result_t drive_format(void);
 
 /** Validate a file name (characters, length, allowed extension). */
@@ -192,6 +239,86 @@ drive_result_t drive_prepare_restart(bool force);
 
 /** Restart into ROM download mode (USB is detached first). */
 void drive_restart_to_download(void) __attribute__((noreturn));
+
+// ---- Drive encryption (AES-256-XTS, see components/pd_crypt/include/pd_crypt.h) ----
+//
+// All functions block the caller. Checking a secret takes one key derivation, about 2 s
+// (CONFIG_PD_CRYPT_KDF_TARGET_MS; twice that if a damaged header copy has to be tried as well).
+// Setup additionally ERASES the whole medium: about 2 min on the internal flash, typically
+// 10 s - 2 min on a 64 GB card (card-dependent, can be longer), then formats (10-30 s on a big
+// card). Meanwhile drive_get_status() returns the state from the start and other drive
+// operations get DRIVE_ERR_BUSY. Common results: DRIVE_ERR_BUSY (long folder operation, upload or
+// download running), DRIVE_ERR_NOT_ENCRYPTED, DRIVE_ERR_CRYPT_DAMAGED, DRIVE_ERR_IO.
+// Wrong secrets: DRIVE_ERR_AUTH, after the second one in a row also a wait (5 s, doubling up to
+// 300 s, RAM only); during the wait DRIVE_ERR_RETRY_LATER. *retry_after_s (may be NULL) is set
+// in both cases (or see drive_crypt_get_info()). The password and the recovery key are accepted
+// wherever "secret" is asked.
+
+/** Encryption state and details. Never blocks (no lock taken). */
+void drive_crypt_get_info(drive_crypt_info_t *out);
+
+/**
+ * Encrypt the drive: ERASES and FORMATS it (all files are lost) and leaves it unlocked and
+ * mounted for the app. Needs owner APP (else DRIVE_ERR_WRONG_OWNER) and an unencrypted drive
+ * (else DRIVE_ERR_ALREADY_ENCRYPTED / DRIVE_ERR_CRYPT_DAMAGED). DRIVE_ERR_WEAK_PASSWORD,
+ * DRIVE_ERR_CRYPT_UNAVAILABLE (also: card refuses ERASE and is too large to overwrite).
+ * recovery_out (>= DRIVE_CRYPT_RECOVERY_LEN bytes) receives the recovery key. IMPORTANT: whenever
+ * recovery_out is non-empty after the call the drive IS encrypted - show the key even if the
+ * result is not DRIVE_OK (e.g. DRIVE_ERR_IO when only the formatting failed: the drive is then
+ * unlocked with needs_format set). A failed setup that left the drive unencrypted may already
+ * have erased it (needs_format set). If the key got lost: drive_crypt_new_recovery_key().
+ */
+drive_result_t drive_crypt_setup(const char *password, char *recovery_out, size_t recovery_len);
+
+/**
+ * Unlock with the password or the recovery key. Afterwards the drive behaves as after a change
+ * of owner: mounted for the app, and if a USB host is connected (CONFIG_PD_PROVIDE_ON_ATTACH)
+ * provided to it with the usual media-change signalling / soft re-plug. Already unlocked:
+ * DRIVE_OK. A volume without a readable FAT unlocks with needs_format set (drive_format()).
+ * DRIVE_ERR_CRYPT_DAMAGED: the secret was right but the header fails its authentication.
+ */
+drive_result_t drive_crypt_unlock(const char *secret, uint32_t *retry_after_s);
+
+/**
+ * Lock: keys are wiped, the host sees "no medium", file operations get DRIVE_ERR_LOCKED.
+ * If the USB host holds the drive, the rules of drive_set_owner(APP, force) apply:
+ * DRIVE_ERR_HOST_WRITING (never forced), DRIVE_ERR_HOST_ACTIVE unless force. Already locked: OK.
+ */
+drive_result_t drive_crypt_lock(bool force);
+
+/**
+ * Change the password (unlocked only, else DRIVE_ERR_LOCKED). old_secret may be the current
+ * password or the recovery key (= "password forgotten": unlock with the recovery key, then set a
+ * new password with it). Files are not touched; works for either owner, but not while the host
+ * is writing (DRIVE_ERR_HOST_WRITING). DRIVE_ERR_WEAK_PASSWORD for the new one.
+ */
+drive_result_t drive_crypt_change_password(const char *old_secret, const char *new_password,
+                                           uint32_t *retry_after_s);
+
+/**
+ * New recovery key (unlocked only; preconditions as drive_crypt_change_password()). password may
+ * be the password or the current recovery key. The old recovery key stops working. recovery_out
+ * (>= DRIVE_CRYPT_RECOVERY_LEN bytes) receives the new one, the only time it is available.
+ * Wrong secret: DRIVE_ERR_AUTH / DRIVE_ERR_RETRY_LATER (wait: drive_crypt_get_info()).
+ */
+drive_result_t drive_crypt_new_recovery_key(const char *password, char *recovery_out, size_t recovery_len);
+
+/**
+ * Remove the encryption: checks the secret first, then erases the key header and FORMATS the
+ * drive plain (all files are lost). Works locked or unlocked; when unlocked it needs owner APP
+ * (DRIVE_ERR_WRONG_OWNER). DRIVE_ERR_IO after a correct secret means only the formatting
+ * failed: the drive is then plain with needs_format set.
+ */
+drive_result_t drive_crypt_disable(const char *secret, uint32_t *retry_after_s);
+
+/**
+ * "Erase and format anyway" (ADMIN ONLY, confirm in the UI): for a DAMAGED drive, or a LOCKED one
+ * whose password and recovery key are lost. Overwrites the key header without a secret and
+ * formats the drive plain - all data is lost for good. Needs no upload/download running.
+ * DRIVE_ERR_ALREADY_ENCRYPTED when unlocked (use drive_crypt_disable() or drive_format()),
+ * DRIVE_ERR_NOT_ENCRYPTED when not encrypted, DRIVE_ERR_IO if the medium cannot be written.
+ */
+drive_result_t drive_crypt_force_format(void);
 
 #ifdef __cplusplus
 }

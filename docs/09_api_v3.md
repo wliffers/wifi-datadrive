@@ -17,17 +17,27 @@ Verbindlicher Vertrag für Firmware, Weboberfläche, Testserver, Tests und Werkz
 
 Alles andere antwortet ohne gültige Anmeldung mit `401` und `code: "UNAUTHORIZED"`.
 
+**Benutzerdatenbank nicht lesbar:** Ist die gespeicherte Benutzerdatenbank vorhanden, aber nicht lesbar oder beschädigt, verweigert das Gerät sicherheitshalber jede Anmeldung: `GET /api/session`, `POST /api/login` und jede geschützte Anfrage antworten mit `503` und `code: "AUTH_UNAVAILABLE"` („Die Benutzerverwaltung ist nicht lesbar. Bitte die Taste am Gerät 10 Sekunden halten, um die Anmeldung zurückzusetzen.“). Abhilfe nur der Benutzer-Reset per Taste (Abschnitt 9). Eine fehlende Datenbank (erster Start) ist dagegen kein Fehler: es entsteht `admin` / `admin`.
+
 ### 2.2 Zwei Wege der Anmeldung
 
 1. **Sitzung (Browser):** `POST /api/login` setzt das Cookie `dd_session=<64 Hex-Zeichen>; Path=/; HttpOnly; SameSite=Strict`. Sitzungen liegen im Arbeitsspeicher (höchstens 8, die älteste wird verdrängt), laufen nach 12 Stunden ohne Anfrage ab und enden mit einem Neustart.
 2. **HTTP Basic (Skripte, Kurzbefehle):** Header `Authorization: Basic base64(benutzer:passwort)` bei jeder Anfrage. Es wird kein Cookie gesetzt.
 
-Fehlversuche: Nach 5 falschen Passwörtern in Folge wird jede Anmeldung 30 Sekunden lang mit `429` und `code: "LOCKED"` abgewiesen.
+Fehlversuche (Anmeldesperre, je Adresse des Anfragenden):
+
+- Nach 5 falschen Passwörtern in Folge wird jede Passwortprüfung von dieser Adresse mit `429` und `code: "LOCKED"` abgewiesen, zuerst 30 Sekunden lang. Jede weitere Sperre derselben Adresse dauert doppelt so lang (30, 60, 120, 240, 480 Sekunden, dann höchstens 900 Sekunden = 15 Minuten). Ein bestätigtes Passwort von dieser Adresse setzt Zähler und Dauer zurück.
+- Die Antwort trägt den Header `Retry-After: <Sekunden>` (aufgerundet, mindestens 1) bis zum frühesten neuen Versuch. Während der Sperre wird gar nicht geprüft, auch ein richtiges Passwort nicht. Sie gilt für `POST /api/login`, für HTTP Basic (auch bei gespeichertem Prüfwert) und für das alte Passwort in `POST /api/users/password`; Anfragen mit gültigem Cookie sind nicht betroffen.
+- Die Sperre betrifft nur die Adresse, von der die Fehlversuche kamen (höchstens 16 Adressen werden verfolgt, die am längsten unbenutzte wird ersetzt). Dazu gibt es eine Gesamtgrenze gegen verteiltes Raten: Mehr als 30 Fehlversuche innerhalb von 60 Sekunden von allen Adressen zusammen sperren die Passwortprüfung für Adressen ohne bestätigtes Passwort in den letzten 12 Stunden für 30 Sekunden (`429 LOCKED` mit `Retry-After`).
+- Text: „Zu viele Fehlversuche. Bitte etwas warten und dann erneut versuchen.“ Die Dauer steht nur im Header, nicht im Text.
+- Zähler und Sperren liegen im Arbeitsspeicher und enden mit einem Neustart.
 
 ### 2.2a Vertraute Geräte
 
 - `POST /api/login` nimmt zusätzlich `remember=1` und `device=<Bezeichnung>` (höchstens 32 Bytes, z. B. „iPhone“, „Windows-PC“; von der Oberfläche aus dem Browser abgeleitet). Dann wird die Sitzung als **vertrautes Gerät** dauerhaft gespeichert: Das Cookie bekommt `Max-Age=31536000`, und im Einstellungsspeicher liegt der SHA-256-Wert des Sitzungsschlüssels samt Benutzer und Bezeichnung (nie der Schlüssel selbst). Vertraute Geräte überstehen einen Neustart und haben keinen Zeitablauf (das Gerät hat keine Uhr).
-- Höchstens 8 vertraute Geräte insgesamt; ein weiteres verdrängt das älteste. Ohne `remember` gilt die flüchtige Sitzung aus 2.2 (12 Stunden, endet mit dem Neustart).
+- Höchstens 8 vertraute Geräte insgesamt und **höchstens 4 je Benutzer**. Meldet sich derselbe Benutzer mit derselben Bezeichnung (`device`) erneut an, ersetzt der neue Eintrag den alten (alter Schlüssel ungültig). Hat der Benutzer schon 4 andere, wird sein ältester ersetzt. Geräte anderer Benutzer werden nie verdrängt; ist das Gerät mit 8 Einträgen voll und der Benutzer hat keinen eigenen zum Ersetzen, bekommt die Anmeldung nur eine flüchtige Sitzung (Cookie ohne `Max-Age`, Antwort sonst wie gewohnt). Dasselbe gilt, wenn zu oft gespeichert wird (Schonung des Flash-Speichers: mindestens 10 Sekunden Abstand, höchstens 20 neue Einträge pro Stunde) oder das Speichern fehlschlägt.
+- Die Bezeichnung wird bereinigt (nur druckbare Zeichen und vollständiges UTF-8, Leerzeichen am Rand entfernt, gekürzt auf 32 Bytes); ist sie leer, lautet sie „Unbekanntes Gerät“.
+- Ohne `remember` gilt die flüchtige Sitzung aus 2.2 (12 Stunden, endet mit dem Neustart).
 - Vertraute Geräte eines Benutzers werden entfernt, wenn sein Passwort geändert, seine Rolle geändert oder er gelöscht wird, ebenso alle beim Benutzer-Reset per Taste. Ausnahme: Ändert ein Benutzer sein eigenes Passwort, bleibt genau die Sitzung bzw. das Gerät gültig, von dem die Änderung kam. `POST /api/logout` entfernt das eigene.
 - `GET /api/devices` (Rolle `user`): `{"ok":true,"devices":[{"id":"3f9a1c2e","user":"admin","label":"iPhone","current":true}],"max":8}`. `user` sieht nur die eigenen, `admin` alle. `id` sind die ersten 8 Hex-Zeichen des gespeicherten Hash-Werts.
 - `POST /api/devices/delete?id=…` (Rolle `user`): eigenes Gerät, als `admin` jedes. `404 NOT_FOUND`, `403 FORBIDDEN_ROLE` bei fremdem Gerät.
@@ -55,7 +65,7 @@ Reicht die Rolle nicht: `403` mit `code: "FORBIDDEN_ROLE"`.
 | Methode | Pfad | Rolle | Parameter | Antwort / Fehler |
 |---|---|---|---|---|
 | GET | `/api/session` | – | – | angemeldet: `{"ok":true,"user":"admin","role":"admin","default_password":true}`; sonst `401 UNAUTHORIZED` |
-| POST | `/api/login` | – | Body `user=…&pass=…` (URL-kodiert) | wie `/api/session` plus Cookie; `401 BAD_LOGIN`, `429 LOCKED` |
+| POST | `/api/login` | – | Body `user=…&pass=…` (URL-kodiert) | wie `/api/session` plus Cookie; `401 BAD_LOGIN`, `429 LOCKED` (mit `Retry-After`), `503 AUTH_UNAVAILABLE` |
 | POST | `/api/logout` | user | – | `{"ok":true}`, Cookie wird gelöscht |
 | GET | `/api/users` | admin | – | `{"ok":true,"users":[{"name":"admin","role":"admin"}],"max":8}` |
 | POST | `/api/users/add` | admin | Body `user`, `pass`, `role` | `409 EXISTS`, `409 USER_LIMIT`, `400 BAD_USER`, `400 BAD_PASSWORD` |
@@ -135,7 +145,8 @@ Rückkehr zur alten Version: Die neue Firmware gilt erst als gut, wenn sie 15 Se
 | 409 | `LAST_ADMIN` | letzter Administrator |
 | 409 | `USER_LIMIT` | 8 Benutzer vorhanden |
 | 409 | `WIFI_LIMIT` | 5 WLANs gespeichert |
-| 429 | `LOCKED` | zu viele Fehlversuche, 30 Sekunden gesperrt |
+| 429 | `LOCKED` | zu viele Fehlversuche; gesperrt, Dauer im Header `Retry-After` (30 Sekunden, bei jeder weiteren Sperre doppelt, höchstens 15 Minuten), siehe 2.2 |
+| 503 | `AUTH_UNAVAILABLE` | Benutzerdatenbank nicht lesbar, Anmeldung gesperrt bis zum Reset per Taste |
 
 ## 8. Sprache
 
@@ -149,3 +160,7 @@ Die Weboberfläche ist zweisprachig (Deutsch und Englisch): Sie wählt beim erst
 | Doppelklick | Betriebsart wechseln; nutzt das USB-Gerät das Laufwerk noch, verlangt das Display einen zweiten Doppelklick innerhalb von 4 Sekunden; schreibt das Gerät gerade, wird nicht gewechselt |
 | 5 bis 10 Sekunden halten, dann loslassen | Wartungsmodus |
 | 10 Sekunden halten | Benutzer auf `admin` / `admin` zurücksetzen |
+
+## 10. Ergänzungen
+
+Version 4 (WiFi-Suche, Laufwerksverschlüsselung) steht in [12_api_v4.md](12_api_v4.md) und baut auf diesem Vertrag auf.

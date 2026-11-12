@@ -1,5 +1,6 @@
 #include "pd_wifi.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include "esp_check.h"
 #include "esp_event.h"
@@ -62,6 +63,8 @@ static int64_t s_last_ip_change_ms;   // time of last connect or disconnect
 static int64_t s_next_retry_ms;
 static int s_retry_delay_ms = RETRY_MIN_MS;
 static volatile bool s_reconfigure;
+static SemaphoreHandle_t s_scan_lock;   // one scan at a time (round scan and web scan)
+static bool s_web_scan;                 // web scan running; guarded by s_lock, blocks new connect attempts
 
 static int64_t now_ms(void)
 {
@@ -195,14 +198,15 @@ static bool build_round(void)
     }
     unlock();
 
-    if (count > 1) {
+    if (count > 1 && xSemaphoreTake(s_scan_lock, pdMS_TO_TICKS(10000)) == pdTRUE) {
         // Short active scan: little time away from the channel of the setup access point.
         wifi_scan_config_t sc = {0};
         sc.show_hidden = false;
         sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
         sc.scan_time.active.min = 60;
         sc.scan_time.active.max = 110;
-        if (esp_wifi_scan_start(&sc, true) == ESP_OK) {
+        const esp_err_t se = esp_wifi_scan_start(&sc, true);
+        if (se == ESP_OK) {
             uint16_t n = SCAN_MAX_RECORDS;
             if (esp_wifi_scan_get_ap_records(&n, s_scan_recs) == ESP_OK) {
                 for (int k = 0; k < n; k++) {
@@ -217,6 +221,7 @@ static bool build_round(void)
         } else {
             ESP_LOGW(TAG, "scan failed - trying stored networks in order");
         }
+        xSemaphoreGive(s_scan_lock);
     }
 
     // Seen networks by descending RSSI, then the unseen ones in stored order (hidden SSID / out of range).
@@ -400,9 +405,16 @@ static void wifi_task(void *arg)
                 esp_wifi_disconnect();
             } else if (configured && !connecting && retry_due) {
                 lock();
-                s_connecting = true;
-                s_next_retry_ms = t + 20000;   // safety net if no event arrives
+                const bool web_scan = s_web_scan;
+                if (!web_scan) {
+                    s_connecting = true;
+                    s_next_retry_ms = t + 20000;   // safety net if no event arrives
+                }
                 unlock();
+                if (web_scan) {
+                    vTaskDelay(pdMS_TO_TICKS(1000));   // a web scan is running: try again after it
+                    continue;
+                }
                 char ssid[33], pass[64];
                 const int slot = next_candidate(ssid, pass);
                 if (slot < 0) {
@@ -459,6 +471,8 @@ esp_err_t pd_wifi_start(void)
     ESP_RETURN_ON_FALSE(s_lock, ESP_ERR_NO_MEM, TAG, "mutex");
     s_cfg_lock = xSemaphoreCreateMutex();
     ESP_RETURN_ON_FALSE(s_cfg_lock, ESP_ERR_NO_MEM, TAG, "mutex");
+    s_scan_lock = xSemaphoreCreateMutex();
+    ESP_RETURN_ON_FALSE(s_scan_lock, ESP_ERR_NO_MEM, TAG, "mutex");
     load_config();
 
     ESP_RETURN_ON_ERROR(esp_netif_init(), TAG, "netif");
@@ -509,6 +523,106 @@ size_t pd_wifi_list(pd_wifi_net_t *out, size_t max)
     }
     unlock();
     return n;
+}
+
+#define WEB_SCAN_RECORDS 40
+
+int pd_wifi_scan(pd_wifi_scan_entry_t *out, size_t max)
+{
+    if (!out || max == 0) {
+        return PD_WIFI_SCAN_FAIL;
+    }
+    // Not while a connection attempt is running (a scan would abort it), nor during another scan.
+    lock();
+    if (s_connecting || s_web_scan || s_reconfigure) {
+        unlock();
+        return PD_WIFI_SCAN_BUSY;
+    }
+    if (xSemaphoreTake(s_scan_lock, 0) != pdTRUE) {
+        unlock();
+        return PD_WIFI_SCAN_BUSY;
+    }
+    s_web_scan = true;   // the wifi task starts no connect attempt until we are done
+    unlock();
+
+    int result = PD_WIFI_SCAN_FAIL;
+    wifi_ap_record_t *recs = calloc(WEB_SCAN_RECORDS, sizeof(*recs));
+    pd_wifi_scan_entry_t *ent = calloc(WEB_SCAN_RECORDS, sizeof(*ent));
+    if (recs && ent) {
+        wifi_scan_config_t sc = {0};
+        sc.show_hidden = false;
+        sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+        sc.scan_time.active.min = 80;
+        sc.scan_time.active.max = 150;
+        esp_err_t err = esp_wifi_scan_start(&sc, true);
+        if (err == ESP_OK) {
+            uint16_t n = WEB_SCAN_RECORDS;
+            err = esp_wifi_scan_get_ap_records(&n, recs);   // also frees the internal list
+            if (err == ESP_OK) {
+                int cnt = 0;
+                lock();
+                for (int k = 0; k < n; k++) {
+                    const char *ssid = (const char *)recs[k].ssid;
+                    if (!ssid[0]) {
+                        continue;   // hidden
+                    }
+                    int j = 0;
+                    while (j < cnt && strcmp(ent[j].ssid, ssid) != 0) {
+                        j++;
+                    }
+                    if (j < cnt) {
+                        if (recs[k].rssi > ent[j].rssi) {
+                            ent[j].rssi = recs[k].rssi;
+                            ent[j].secure = recs[k].authmode != WIFI_AUTH_OPEN;
+                        }
+                        continue;
+                    }
+                    strlcpy(ent[cnt].ssid, ssid, sizeof(ent[cnt].ssid));
+                    ent[cnt].rssi = recs[k].rssi;
+                    ent[cnt].secure = recs[k].authmode != WIFI_AUTH_OPEN;
+                    ent[cnt].saved = false;
+                    for (int i = 0; i < PD_WIFI_MAX_NETWORKS; i++) {
+                        if (s_nets[i].used && strcmp(s_nets[i].ssid, ssid) == 0) {
+                            ent[cnt].saved = true;
+                        }
+                    }
+                    cnt++;
+                }
+                unlock();
+                // insertion sort, strongest first
+                for (int a = 1; a < cnt; a++) {
+                    pd_wifi_scan_entry_t tmp = ent[a];
+                    int b = a;
+                    while (b > 0 && ent[b - 1].rssi < tmp.rssi) {
+                        ent[b] = ent[b - 1];
+                        b--;
+                    }
+                    ent[b] = tmp;
+                }
+                size_t m = (size_t)cnt;
+                if (m > max) {
+                    m = max;
+                }
+                if (m > PD_WIFI_SCAN_MAX) {
+                    m = PD_WIFI_SCAN_MAX;
+                }
+                memcpy(out, ent, m * sizeof(*out));
+                result = (int)m;
+            }
+        } else if (err == ESP_ERR_WIFI_STATE) {
+            result = PD_WIFI_SCAN_BUSY;   // station is connecting right now
+        }
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "web scan failed: %s", esp_err_to_name(err));
+        }
+    }
+    free(recs);
+    free(ent);
+    lock();
+    s_web_scan = false;
+    unlock();
+    xSemaphoreGive(s_scan_lock);
+    return result;
 }
 
 esp_err_t pd_wifi_add(const char *ssid, const char *pass)

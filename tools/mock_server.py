@@ -3,7 +3,7 @@
 
 Serves the single-file web UI and implements the HTTP API version 3 of docs/09_api_v3.md
 (login with roles, folders, Wi-Fi list, update; everything it does not mention follows
-docs/07_api.md) with an in-memory file tree, so every state of the UI can be exercised on
+docs/07_api.md) plus the additions of version 4 (docs/12_api_v4.md: Wi-Fi scan, drive encryption) with an in-memory file tree, so every state of the UI can be exercised on
 the PC without the dongle. Python 3.10+, standard library only.
 
 Usage
@@ -60,13 +60,18 @@ Behaviour mirrored from the firmware
   /icon-192.png /icon-512.png /api/session and POST /api/login (otherwise 401 UNAUTHORIZED).
   Session cookie `dd_session` (64 hex characters, HttpOnly, SameSite=Strict) or HTTP Basic
   on any request. Max 8 sessions (the oldest is displaced), 12 h idle expiry, all gone
-  after a restart (format/reboot/update). 5 wrong passwords in a row lock every login for
-  30 s (429 LOCKED, also for Basic and for a wrong `old` password). Roles: `user` and
+  after a restart (format/reboot/update). Lock-out per peer address like auth.c: 5 wrong passwords
+  in a row lock that peer for 30 s, every further lock-out doubles it (60, 120 ... max 900 s), a
+  verified password resets it; more than 30 failures in 60 s restrict password checks of peers
+  without a verified password in the last 12 h for 30 s (429 LOCKED with a Retry-After header,
+  also for Basic and for a wrong `old` password; the mock sees one peer: 127.0.0.1). Roles: `user` and
   `admin` (403 FORBIDDEN_ROLE) exactly as in the table of section 2.3; max 8 users,
   LAST_ADMIN, USER_LIMIT, BAD_USER, BAD_PASSWORD, EXISTS; changing a password ends the
   user's other sessions. /mock/* is never authenticated.
 * Trusted devices (2.2a): POST /api/login with remember=1 and device=<label> sets a cookie
-  with Max-Age=31536000 and stores the device (max 8, the oldest is replaced). Unlike normal
+  with Max-Age=31536000 and stores the device (max 8 in total, max 4 per user; the same user and
+  label replaces the old entry, else the user's oldest goes; when the total is full and the user
+  has none to replace the login gets a volatile session without Max-Age). Unlike normal
   sessions, devices survive a simulated restart and never expire. GET /api/devices (user: own,
   admin: all), POST /api/devices/delete?id=. They end on password/role change, user deletion
   and logout (a device that changes its own password stays). The forced password change
@@ -93,6 +98,22 @@ Behaviour mirrored from the firmware
   nobody ends up on a real dongle by following a link shown in the UI. Passwords are
   kept in plain text in memory (no PBKDF2).
 
+* API v4 (docs/12_api_v4.md): GET /api/wifi/scan (2.5 s, 409 BUSY while `other_upload`), drive
+  encryption GET /api/crypt, POST /api/crypt/setup|unlock|lock|password|disable|recovery|erase, `crypt` object in
+  /api/status. Drive password of the scenarios: Geheimes-Passwort-12, recovery key
+  7K3M-Q9XD-4WTB-HN2C-5RYE-8FGA-ZP6V-JC3S (setup issues a new random one). While locked, every
+  file/folder/upload/download/push/mode/format request answers 423 DRIVE_LOCKED and the status
+  shows owner "none" without sizes. A restart (reboot/update) locks an encrypted drive again. State
+  "damaged" (key area unreadable, scenario crypt_damaged): locked, and every such request, unlock,
+  password and recovery answer 423 CRYPT_DAMAGED; only crypt/erase (confirm=ERASE) helps. Wrong drive
+  passwords: ONE global counter, 2 free tries, then 5 s doubling up to 300 s (429 LOCKED + Retry-After);
+  RAM only (restart resets). POST /api/format on an unlocked encrypted drive: no restart, stays unlocked.
+  503 AUTH_UNAVAILABLE via /mock/set?auth_unavailable=1.
+  Optional HTTPS (experimental): `https`, `https_active`, `https_restart`, `cert_sha256`, `ca_sha256`,
+  `cert_expires` in /api/status, POST /api/settings/https?value=0|1[&renew=1][&regenerate=1] (admin),
+  GET /api/https/ca.cer (user; 404 NOT_FOUND until the first enable). The mock keeps serving plain HTTP:
+  the setting only becomes `https_active` after a restart (reboot/update) or /mock/set?https=0|1.
+
 Scenarios (`--scenario NAME` or `GET /mock/scenario?name=NAME`)
 ---------------------------------------------------------------
     usb_active    default: drive provided to a connected USB host, a few files, 2 folders
@@ -108,6 +129,9 @@ Scenarios (`--scenario NAME` or `GET /mock/scenario?name=NAME`)
     flash_medium  internal flash (10.8 MB) instead of the microSD card
     many          owner app, 300 files + folders (also an empty one), list not truncated
     truncated     owner app, 1200 files, list truncated (32 KiB list buffer like the firmware)
+    crypt_enabled owner app, files + folders, encrypted drive, unlocked (also gast/gast123)
+    crypt_locked  same, but locked (423 DRIVE_LOCKED, no medium for USB)
+    crypt_damaged encrypted, key area unreadable: locked + damaged (423 CRYPT_DAMAGED; only crypt/erase)
 A scenario switch resets all mock settings below (uptime keeps running), including users
 (back to admin/admin123), sessions (everybody is logged out) and the stored Wi-Fi networks.
 
@@ -147,7 +171,16 @@ Control endpoints (GET, no CSRF header, no login, exist only in the mock)
                             0: admin123 (sessions stay valid)
     devices=<0..8>          replaces all remembered devices by n new ones for admin
                             (labels iPhone, Windows-PC, iPad, ...); their cookies are unknown
-    login_locked=1|0       1: every login is refused with LOCKED for 30 s; 0 clears the lock
+    login_locked=1|0       1: every login is refused with LOCKED for 30 s; 0 clears every lock-out
+    auth_unavailable=1|0   1: session, login and protected requests answer 503 AUTH_UNAVAILABLE
+    crypt=off|locked|unlocked|damaged   drive encryption state (files stay); crypt_password=<pw>
+    crypt_kdf_ms=<n>        duration of unlock/password/recovery (default 800)
+    crypt_setup_ms=<n>      extra duration of setup / erase (the whole-medium erase; default 300)
+    https=0|1               HTTPS setting AND active, as if the device had restarted (fingerprints are made
+                            on the first enable); the API route only sets the setting (https_restart:true)
+    crypt_setup_io=1        the next setup fails with 500 IO after the key area was written: drive is
+                            encrypted + unlocked and the answer still carries recovery_key
+    scan_ms=<n>             duration of GET /api/wifi/scan (default 2500)
     session_expire=1        all sessions end, the next request answers 401 UNAUTHORIZED
     fail_next=<CODE>        the next POST fails with that error code (proper HTTP status
                             and German text; works for every POST of API v3). `CODE@/api/path`
@@ -216,8 +249,26 @@ PATH_BYTES_MAX = 240                # total length of a path in bytes
 USERS_MAX = 8
 SESSIONS_MAX = 8
 SESSION_IDLE_S = 12 * 3600          # a session expires after 12 h without a request
-LOCK_FAILS = 5                      # wrong passwords in a row ...
-LOCK_S = 30                         # ... lock every login for this long
+LOCK_FAILS = 5                      # wrong passwords in a row (per peer address) ...
+LOCK_S = 30                         # ... lock that peer for this long (PEER_LOCK_BASE_US), doubled each time
+LOCK_MAX_S = 15 * 60                # ... up to this (PEER_LOCK_MAX_US)
+LOCK_PEERS_MAX = 16                 # PEERS_MAX: tracked peer addresses (least recently used is replaced)
+LOCK_RECENT_S = 12 * 3600           # a peer with a verified password this recently is exempt from the global cap
+GLOBAL_FAILS = 30                   # more than this many failures within ...
+GLOBAL_WINDOW_S = 60                # ... this window restrict password checks of all other peers for ...
+GLOBAL_LOCK_S = 30                  # ... this long
+DEVICES_PER_USER = 4                # trusted devices per user (DEVICES_PER_USER)
+CRYPT_PASS_MIN = 12                 # drive password: characters
+CRYPT_PASS_MAX = 64                 # drive password: bytes
+CRYPT_KDF_MS = 800                  # simulated PBKDF2 time of unlock / password change / setup
+CRYPT_SETUP_MS = 300                # simulated erase of the whole medium in setup / erase (firmware: 10 s .. 2 min)
+CRYPT_FREE_FAILS = 2                # wrong drive passwords without any wait
+CRYPT_WAIT_S = 5                    # then this wait, doubling ...
+CRYPT_WAIT_MAX_S = 300              # ... up to this
+SCAN_MS = 2500                      # simulated duration of GET /api/wifi/scan
+SCAN_MAX = 20                       # networks in the answer
+CRYPT_DEFAULT_PASSWORD = "Geheimes-Passwort-12"
+CRYPT_DEFAULT_RECOVERY = "7K3M-Q9XD-4WTB-HN2C-5RYE-8FGA-ZP6V-JC3S"
 WIFI_MAX = 5
 OTA_MAX = 0x280000                  # size of one firmware partition
 OTA_VERIFY_S = 15                   # a new firmware counts as good after this uptime
@@ -258,8 +309,19 @@ ERRORS = {
     "BAD_TYPE": (415, "Dieser Dateityp ist nicht erlaubt."),
     "INVALID_FILE": (422, "Die Datei ist unvollständig oder beschädigt (keine gültige 3MF-Datei)."),
     "IO": (500, "Lese- oder Schreibfehler auf dem Speicher."),
-    "LOCKED": (429, "Zu viele Fehlversuche. Bitte in 30 Sekunden erneut versuchen."),
+    "LOCKED": (429, "Zu viele Fehlversuche. Bitte etwas warten und dann erneut versuchen."),
     "NO_SPACE": (507, "Nicht genug freier Speicher."),
+    # API v3 addition (auth_result_str of auth.c)
+    "AUTH_UNAVAILABLE": (503, "Die Benutzerverwaltung ist nicht lesbar. Bitte die Taste am Gerät 10 Sekunden halten, "
+                              "um die Anmeldung zurückzusetzen."),
+    # API v4 (docs/12_api_v4.md)
+    "CRYPT_WEAK_PASSWORD": (400, "Das Laufwerks-Passwort muss mindestens 12 Zeichen lang sein."),
+    "CRYPT_WRONG_PASSWORD": (403, "Das Laufwerks-Passwort oder der Wiederherstellungsschlüssel ist falsch."),
+    "CRYPT_NOT_ENABLED": (409, "Die Verschlüsselung ist nicht eingeschaltet."),
+    "CRYPT_ALREADY_ENABLED": (409, "Die Verschlüsselung ist bereits eingeschaltet."),
+    "DRIVE_LOCKED": (423, "Das Laufwerk ist gesperrt. Bitte zuerst entsperren."),
+    "CRYPT_DAMAGED": (423, "Der Schlüsselbereich des Laufwerks ist beschädigt. Nur Löschen und neu einrichten hilft."),
+    "CRYPT_UNAVAILABLE": (503, "Die Verschlüsselung ist auf diesem Speicher nicht möglich."),
 }
 TEXT_DEFAULT_PASSWORD = "Bitte ein anderes Passwort als das Auslieferungspasswort wählen."
 TEXT_NO_USER = "Diesen Benutzer gibt es nicht."
@@ -270,6 +332,11 @@ TEXT_BAD_FIRMWARE = "Das ist keine gültige Firmware-Datei für diesen Chip."
 # failed final check on the device), all others right away.
 LATE_UPLOAD_ERRORS = {"INVALID_FILE", "INCOMPLETE", "IO"}
 UPLOAD_PATHS = ("/api/upload", "/api/push", "/api/ota")
+# Everything that touches the content or the owner of the drive: 423 DRIVE_LOCKED while the drive is locked (API v4).
+LOCKED_ROUTES = {("GET", "/api/files"), ("GET", "/api/download"), ("POST", "/api/mode"), ("POST", "/api/mkdir"),
+                 ("POST", "/api/delete"), ("POST", "/api/move"), ("POST", "/api/copy"),
+                 ("POST", "/api/upload/check"), ("POST", "/api/upload"), ("POST", "/api/push"),
+                 ("POST", "/api/format")}
 
 SCENARIO_HELP = {
     "usb_active": "default: drive provided to a connected USB host, a few files and folders",
@@ -284,7 +351,19 @@ SCENARIO_HELP = {
     "flash_medium": "internal flash (10.8 MB) instead of microSD",
     "many": "owner app, 300 files + a few folders, not truncated",
     "truncated": "owner app, 1200 files, list truncated",
+    "crypt_enabled": "encrypted drive, unlocked, owner app, files + folders; drive password Geheimes-Passwort-12",
+    "crypt_damaged": "encrypted drive, key area unreadable: locked + damaged (423 CRYPT_DAMAGED; only crypt/erase helps)",
+    "crypt_locked": "encrypted drive, locked (423 DRIVE_LOCKED, USB shows no medium); password Geheimes-Passwort-12, "
+                    "recovery key 7K3M-Q9XD-4WTB-HN2C-5RYE-8FGA-ZP6V-JC3S; accounts admin/admin123 and gast/gast123",
 }
+
+# Fake Wi-Fi networks in range for GET /api/wifi/scan: (ssid, rssi, secure)
+SCAN_POOL = [
+    ("MeinWLAN", -52, True), ("FRITZ!Box 7590 KL", -61, True), ("Büro Gast", -66, True),
+    ("Café \"Zur Linde\"", -69, False), ("Werkstatt", -72, True), ("Müller's Größe-WLAN", -75, True),
+    ("Handy-Hotspot", -78, True), ("Keller 2.4G", -81, True), ("Telekom_FON", -84, False),
+    ("Gäste-Netz \"Zimmer 4\"", -86, True), ("DIRECT-roku-3F9A", -88, True), ("UPC8472913", -89, True),
+] + [(f"Nachbar-WLAN-{i:02d}", -86 - i, True) for i in range(1, 13)]      # more than SCAN_MAX in range
 
 SET_HELP = {
     "owner": "app|usb|none",
@@ -311,7 +390,15 @@ SET_HELP = {
     "default_password": "1|0 (1: admin password is admin, every request except the password change gets MUST_CHANGE_PASSWORD; 0: admin123)",
     "devices": "0..8 (creates that many remembered devices for admin: iPhone, Windows-PC, ...)",
     "auth": "0|1 (0: no authentication at all, everybody is admin; reset by a scenario switch)",
-    "login_locked": "0|1 (1: logins are refused with LOCKED for 30 s)",
+    "login_locked": "0|1 (1: logins are refused with LOCKED for 30 s, Retry-After header; 0 clears every lock-out)",
+    "auth_unavailable": "0|1 (1: user database unreadable: session, login and every protected request answer 503 AUTH_UNAVAILABLE)",
+    "crypt": "off|locked|unlocked|damaged (drive encryption state; the files stay)",
+    "crypt_password": "drive password the mock expects (default Geheimes-Passwort-12)",
+    "crypt_kdf_ms": "ms the crypt endpoints take (simulated PBKDF2), default 800",
+    "crypt_setup_ms": "extra ms of crypt/setup and crypt/erase (erasing the whole medium), default 300",
+    "https": "0|1 (HTTPS setting and https_active at once, like after a restart; the mock itself stays plain HTTP)",
+    "crypt_setup_io": "0|1 (1: the next crypt/setup fails with 500 IO after the key area was written; recovery_key is still in the answer)",
+    "scan_ms": "ms GET /api/wifi/scan takes, default 2500",
     "session_expire": "1 (all sessions end, the next request gets 401)",
     "wifi_count": "0..5 (number of stored networks)",
     "copy_kbps": "KiB/s for /api/copy, 0 = unlimited (makes the blocking visible)",
@@ -566,6 +653,105 @@ def is_hidden(name: str) -> bool:
     return name.startswith(".") or name.lower() == "system volume information"
 
 
+class Lockout:
+    """Failure bookkeeping per peer address like auth.c: 5 failures in a row lock that peer for 30 s, every
+    further lock-out doubles the time (up to 15 min), a verified password resets the peer. Optional global cap
+    (more than 30 failures in 60 s: peers without a verified password in the last 12 h wait 30 s). `forced_until`
+    is the mock's own switch (/mock/set?login_locked=1), valid for every peer."""
+
+    def __init__(self, global_cap: bool = True):
+        self.global_cap = global_cap
+        self.clear()
+
+    def clear(self):
+        self.peers = collections.OrderedDict()    # addr -> dict(fails, lockouts, until, success)
+        self.glob = collections.deque(maxlen=GLOBAL_FAILS)
+        self.glob_until = 0.0
+        self.forced_until = 0.0
+
+    def _peer(self, addr: str) -> dict:
+        p = self.peers.get(addr)
+        if p is None:
+            while len(self.peers) >= LOCK_PEERS_MAX:
+                self.peers.popitem(last=False)
+            p = self.peers[addr] = {"fails": 0, "lockouts": 0, "until": 0.0, "success": None}
+        self.peers.move_to_end(addr)
+        return p
+
+    @staticmethod
+    def _recent(p: dict, now: float) -> bool:
+        return p["success"] is not None and now - p["success"] < LOCK_RECENT_S
+
+    def blocked_s(self, addr: str) -> int:
+        """0, or the seconds (>= 1) until a password may be checked for this peer."""
+        now = time.monotonic()
+        p = self._peer(addr)
+        until = max(p["until"], self.forced_until)
+        if self.global_cap and now < self.glob_until and not self._recent(p, now):
+            until = max(until, self.glob_until)
+        return math.ceil(until - now) if until > now else 0
+
+    def success(self, addr: str):
+        p = self._peer(addr)
+        p.update(fails=0, lockouts=0, until=0.0, success=time.monotonic())
+
+    def failure(self, addr: str) -> int:
+        """Counts a wrong password. Returns the new lock-out time in seconds, else 0."""
+        now = time.monotonic()
+        p = self._peer(addr)
+        p["fails"] += 1
+        dur = 0
+        if p["fails"] >= LOCK_FAILS:
+            dur = min(LOCK_S * 2 ** p["lockouts"], LOCK_MAX_S)
+            p["fails"] = 0
+            p["lockouts"] += 1
+            p["until"] = now + dur
+        if self.global_cap:
+            full = len(self.glob) == GLOBAL_FAILS
+            oldest = self.glob[0] if full else None
+            self.glob.append(now)
+            if full and now - oldest < GLOBAL_WINDOW_S:
+                self.glob_until = now + GLOBAL_LOCK_S
+        return dur
+
+    def fails_total(self) -> int:
+        return sum(p["fails"] for p in self.peers.values())
+
+    def remaining(self) -> float:
+        now = time.monotonic()
+        return max([self.forced_until - now] + [p["until"] - now for p in self.peers.values()] + [0.0])
+
+
+class CryptThrottle:
+    """Wrong drive passwords: ONE global counter (not per address). The first CRYPT_FREE_FAILS are free, then a wait
+    of CRYPT_WAIT_S doubling up to CRYPT_WAIT_MAX_S. RAM only. A right password resets it."""
+
+    def __init__(self):
+        self.clear()
+
+    def clear(self):
+        self.fails = 0
+        self.until = 0.0
+
+    def blocked_s(self, addr=None) -> int:
+        now = time.monotonic()
+        return math.ceil(self.until - now) if self.until > now else 0
+
+    def success(self, addr=None):
+        self.clear()
+
+    def failure(self, addr=None) -> int:
+        self.fails += 1
+        dur = 0
+        if self.fails > CRYPT_FREE_FAILS:
+            dur = min(CRYPT_WAIT_S * 2 ** (self.fails - CRYPT_FREE_FAILS - 1), CRYPT_WAIT_MAX_S)
+            self.until = time.monotonic() + dur
+        return dur
+
+    def fails_total(self) -> int:
+        return self.fails
+
+
 class Device:
     def __init__(self, upload_kbps: int, scenario: str = "usb_active", next_version: str = NEXT_VERSION,
                  default_auth: bool = True):
@@ -616,8 +802,24 @@ class Device:
         self.users = [{"name": "admin", "role": "admin", "pw": "admin123"}]
         self.sessions = collections.OrderedDict()    # token -> {"user": name, "last": monotonic}
         self.devices = collections.OrderedDict()     # sha256(token) hex -> {"user", "label"}; survive restarts
-        self.fails = 0
-        self.lock_until = 0.0
+        self.lockout = Lockout(True)
+        self.cur_peer = "127.0.0.1"                  # address of the request being handled (set by the handler)
+        self.auth_unavailable = False
+        # drive encryption (API v4): enabled + unlocked; the files stay in self.root while locked
+        self.crypt_enabled = False
+        self.crypt_unlocked = True
+        self.crypt_password = CRYPT_DEFAULT_PASSWORD
+        self.crypt_recovery = CRYPT_DEFAULT_RECOVERY
+        self.crypt_lockout = CryptThrottle()
+        self.crypt_damaged = False
+        self.https_on = False             # stored setting
+        self.https_active = False         # in this boot
+        self.https_dirty = False          # setting/certificate changed since boot
+        self.cert_sha256 = self.ca_sha256 = self.cert_expires = ""
+        self.crypt_setup_ms = CRYPT_SETUP_MS
+        self.crypt_setup_io = False
+        self.crypt_kdf_ms = CRYPT_KDF_MS
+        self.scan_ms = SCAN_MS
         # mock controls
         self.online = True
         self.pending_boot = False
@@ -778,6 +980,78 @@ class Device:
         self._numbered_files(1200, "Serie_A_Bauteil_")
         self.set_hidden_dirs(3)
 
+    def _sc_crypt_enabled(self):
+        self._as_app()
+        self._few_files()
+        self._few_folders()
+        self.users.append({"name": "gast", "role": "user", "pw": "gast123"})
+        self.crypt_enabled, self.crypt_unlocked = True, True
+
+    def _sc_crypt_locked(self):
+        self._sc_crypt_enabled()
+        self._crypt_lock()
+
+    def _sc_crypt_damaged(self):
+        self._sc_crypt_locked()
+        self.crypt_damaged = True
+
+    # ---------------------------------------------------------- drive encryption
+
+    def locked_code(self) -> str:
+        return "CRYPT_DAMAGED" if self.crypt_damaged else "DRIVE_LOCKED"
+
+    def drive_locked(self) -> bool:
+        return self.crypt_enabled and not self.crypt_unlocked
+
+    def _crypt_lock(self):
+        self.crypt_unlocked = False
+        self.owner = "none"
+        self.host_ejected = False
+        self.last_read = self.last_write = None
+        self.write_hold = False
+        self.log("I", "crypt", "drive locked")
+
+    def _crypt_unlock(self):
+        """After unlocking the drive reports itself like after a change of mode."""
+        self.crypt_unlocked = True
+        self.log("I", "crypt", "drive unlocked")
+        if self.fs_ok and self.usb_connected:
+            self._provide()
+        else:
+            self._mount_app()
+
+    @staticmethod
+    def _norm_recovery(s: str) -> str:
+        return re.sub(r"[\s-]", "", s or "").upper().replace("O", "0").replace("I", "1").replace("L", "1")
+
+    def crypt_check(self, password, recovery) -> bool:
+        if password is not None:
+            return hmac.compare_digest(password.encode("utf-8", "surrogatepass"),
+                                       self.crypt_password.encode("utf-8", "surrogatepass"))
+        return hmac.compare_digest(self._norm_recovery(recovery).encode(), self._norm_recovery(self.crypt_recovery).encode())
+
+    @staticmethod
+    def _fp() -> str:
+        return ":".join(f"{b:02X}" for b in secrets.token_bytes(32))
+
+    def https_make(self, ca: bool, cert: bool):
+        if ca or not self.ca_sha256:
+            self.ca_sha256 = self._fp()
+        if cert or ca or not self.cert_sha256:
+            self.cert_sha256 = self._fp()
+            self.cert_expires = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 820 * 86400))
+
+    def crypt_check_any(self, secret) -> bool:
+        """Drive password or (current) recovery key."""
+        return self.crypt_check(secret, None) or self.crypt_check(None, secret)
+
+    def scan(self) -> list:
+        """Networks in range: strongest first, at most SCAN_MAX, with small random signal jitter."""
+        found = [{"ssid": s, "rssi": max(-95, min(-30, r + random.randint(-3, 3))), "secure": sec,
+                  "saved": s in self.networks} for s, r, sec in SCAN_POOL]
+        found.sort(key=lambda n: -n["rssi"])
+        return found[:SCAN_MAX]
+
     def apply_scenario(self, name: str):
         fn = getattr(self, "_sc_" + name, None)
         if name not in SCENARIO_HELP or fn is None:
@@ -873,11 +1147,19 @@ class Device:
         self.host_ejected = False
         self.last_read = self.last_write = None
         self.sessions.clear()                   # sessions live in RAM only
-        self.fails, self.lock_until = 0, 0.0
+        self.lockout.clear()
+        self.crypt_lockout.clear()
+        self.https_active, self.https_dirty = self.https_on, False
+        if self.https_on:
+            self.https_make(False, False)       # missing/expiring certificates are made at boot
+        if self.crypt_enabled:                  # the key lives in RAM only: locked after every restart
+            self.crypt_unlocked = False
         if self.pending_version:
             self.version, self.pending_version = self.pending_version, None
             self.ota_verify_until = at + OTA_VERIFY_S
-        if self.needs_format:
+        if self.crypt_enabled:
+            self.owner = "none"                 # locked: no medium for the USB host, nothing for the app
+        elif self.needs_format:
             self.owner, self.fs_ok = "app", False
         elif self.fs_ok and self.usb_connected:
             self._provide()                     # boot policy: host present -> provide the drive
@@ -1178,15 +1460,17 @@ class Device:
     def is_default_password(self, u) -> bool:
         return u["name"].lower() == "admin" and u["pw"] == "admin"
 
+    def blocked_s(self) -> int:
+        """Seconds (Retry-After) until the current peer may try a password again, 0 if it may now."""
+        return self.lockout.blocked_s(self.cur_peer)
+
     def locked(self) -> bool:
-        return time.monotonic() < self.lock_until
+        return self.blocked_s() > 0
 
     def note_failure(self):
-        self.fails += 1
-        if self.fails >= LOCK_FAILS:
-            self.fails = 0
-            self.lock_until = time.monotonic() + LOCK_S
-            self.log("W", "auth", f"too many failed logins - locked for {LOCK_S} s")
+        dur = self.lockout.failure(self.cur_peer)
+        if dur:
+            self.log("W", "auth", f"{LOCK_FAILS} failed password checks from {self.cur_peer} - locked for {dur} s")
 
     def check_credentials(self, name, pw):
         """Returns the user, or None (and counts the failure)."""
@@ -1194,7 +1478,7 @@ class Device:
         ok = u is not None and hmac.compare_digest(u["pw"].encode("utf-8", "surrogatepass"),
                                                    (pw or "").encode("utf-8", "surrogatepass"))
         if ok:
-            self.fails = 0
+            self.lockout.success(self.cur_peer)
             return u
         self.note_failure()
         return None
@@ -1210,9 +1494,23 @@ class Device:
     def token_hash(token) -> str:
         return hashlib.sha256((token or "").encode("utf-8", "surrogatepass")).hexdigest()
 
-    def new_device(self, u, label: str, token=None) -> str:
-        while len(self.devices) >= DEVICES_MAX:
-            self.devices.popitem(last=False)          # the oldest one is displaced
+    def new_device(self, u, label: str, token=None, per_user_limit: bool = True):
+        """Stores a trusted device and returns its token, or None if there is no slot (then the login only
+        gets a volatile session). Like auth.c: the same user with the same label replaces the old entry; at
+        DEVICES_PER_USER the user's oldest is replaced; other users' devices are never displaced."""
+        label = label or "Unbekanntes Gerät"
+        if per_user_limit:
+            own = [h for h, d in self.devices.items() if d["user"].lower() == u["name"].lower()]
+            same = [h for h in own if self.devices[h]["label"] == label]
+            if same:
+                del self.devices[same[0]]
+            elif len(own) >= DEVICES_PER_USER:
+                del self.devices[own[0]]              # insertion order: the first one is the oldest
+            if len(self.devices) >= DEVICES_MAX:
+                return None
+        else:                                         # /mock/set?devices=n: test helper, no per-user limit
+            while len(self.devices) >= DEVICES_MAX:
+                self.devices.popitem(last=False)
         token = token or secrets.token_hex(32)
         self.devices[self.token_hash(token)] = {"user": u["name"], "label": label}
         return token
@@ -1248,7 +1546,9 @@ class Device:
     def status(self) -> dict:
         read_idle, write_idle = self.read_idle_ms(), self.write_idle_ms()
         idles = [x for x in (read_idle, write_idle) if x >= 0]
-        known = not self.needs_format            # without a file system the device never learnt the sizes
+        locked = self.drive_locked()
+        # without a file system (or while the drive is locked) the device does not know the sizes
+        known = not self.needs_format and not locked
         upload = {"active": False, "name": "", "received": 0, "total": 0}
         if self.other_upload is not None:
             total = 24 * 1024 * 1024
@@ -1263,7 +1563,8 @@ class Device:
             "heap": 140000 + random.randrange(-6, 7) * 512,
             "types": self.types,
             "drive": {
-                "owner": self.owner, "fs_ok": self.fs_ok, "needs_format": self.needs_format,
+                "owner": "none" if locked else self.owner, "fs_ok": self.fs_ok and not locked,
+                "needs_format": self.needs_format and not locked,
                 "usb_connected": self.usb_connected, "usb_suspended": self.usb_suspended,
                 "host_ejected": self.host_ejected, "host_writable": self.host_writable,
                 "host_idle_ms": min(idles) if idles else -1, "host_write_idle_ms": write_idle,
@@ -1271,6 +1572,10 @@ class Device:
                 "total": self.total if known else 0, "free": self.free() if known else 0,
                 "files": self.visible_file_count() if known else 0, "sector": self.sector,
             },
+            "crypt": {"enabled": self.crypt_enabled, "unlocked": self.crypt_unlocked or not self.crypt_enabled,
+                      "damaged": self.crypt_damaged},
+            "https": self.https_on, "https_active": self.https_active, "https_restart": self.https_dirty,
+            "cert_sha256": self.cert_sha256, "ca_sha256": self.ca_sha256, "cert_expires": self.cert_expires,
             "medium": {"sd": self.sd, "name": self.medium_name},
             "upload": upload,
             "wifi": {
@@ -1329,8 +1634,13 @@ class Device:
                       for u in self.users],
             "sessions": len(self.sessions),
             "devices": [{"id": h[:8], "user": d["user"], "label": d["label"]} for h, d in self.devices.items()],
-            "login_locked": round(self.lock_until - time.monotonic(), 1) if self.locked() else False,
-            "failed_logins": self.fails,
+            "login_locked": round(self.lockout.remaining(), 1) if self.lockout.remaining() > 0 else False,
+            "failed_logins": self.lockout.fails_total(),
+            "auth_unavailable": self.auth_unavailable,
+            "crypt": {"enabled": self.crypt_enabled, "unlocked": self.crypt_unlocked or not self.crypt_enabled,
+                      "damaged": self.crypt_damaged, "retry_after": self.crypt_lockout.blocked_s(),
+                      "kdf_ms": self.crypt_kdf_ms, "failed_unlocks": self.crypt_lockout.fails_total()},
+            "scan_ms": self.scan_ms,
             "wifi_networks": [{"ssid": n, "active": self.wifi_mode == "sta" and n == self.ssid}
                               for n in self.networks],
             "copy_kbps": self.copy_kbps, "ota_fail": self.ota_fail,
@@ -1352,9 +1662,21 @@ class Device:
             raise ValueError("a value could not be URL-decoded")
         v = {}
         for key in ("usb_connected", "usb_suspended", "host_ejected", "host_writable", "fs_ok", "needs_format",
-                    "online", "other_upload", "reset", "host_reading", "auth", "default_password", "login_locked", "session_expire"):
+                    "online", "other_upload", "reset", "host_reading", "auth", "default_password", "login_locked", "session_expire",
+                    "auth_unavailable", "crypt_setup_io", "https"):
             if key in q:
                 v[key] = parse_bool(q[key])
+        if "crypt" in q:
+            if q["crypt"].strip().lower() not in ("off", "locked", "unlocked", "damaged"):
+                raise ValueError("crypt must be off, locked, unlocked or damaged")
+            v["crypt"] = q["crypt"].strip().lower()
+        if "crypt_password" in q:
+            if not q["crypt_password"]:
+                raise ValueError("crypt_password must not be empty")
+            v["crypt_password"] = q["crypt_password"]
+        for key in ("crypt_kdf_ms", "crypt_setup_ms", "scan_ms"):
+            if key in q:
+                v[key] = int(parse_nonneg(q[key]))
         if "sd" in q:
             medium = q["sd"].strip().lower()
             v["sd"] = True if medium == "sd" else False if medium == "flash" else parse_bool(medium)
@@ -1440,6 +1762,42 @@ class Device:
             self.fs_ok = not v["needs_format"]
         if "fs_ok" in v:
             self.fs_ok = v["fs_ok"]
+        if "crypt_password" in v:
+            self.crypt_password = v["crypt_password"]
+        if "crypt_kdf_ms" in v:
+            self.crypt_kdf_ms = v["crypt_kdf_ms"]
+        if "crypt_setup_ms" in v:
+            self.crypt_setup_ms = v["crypt_setup_ms"]
+        if "https" in v:
+            self.https_on = self.https_active = v["https"]
+            self.https_dirty = False
+            if self.https_on:
+                self.https_make(False, False)
+            notes.append(f"https: {int(self.https_on)}")
+        if "crypt_setup_io" in v:
+            self.crypt_setup_io = v["crypt_setup_io"]
+        if "scan_ms" in v:
+            self.scan_ms = v["scan_ms"]
+        if "auth_unavailable" in v:
+            self.auth_unavailable = v["auth_unavailable"]
+        if "crypt" in v:
+            mode = v["crypt"]
+            self.crypt_lockout.clear()
+            self.crypt_damaged = False
+            if mode == "off":
+                self.crypt_enabled, self.crypt_unlocked = False, True
+                if self.owner == "none":
+                    self.owner = "app"
+            elif mode in ("locked", "damaged"):
+                self.crypt_enabled = True
+                self._crypt_lock()
+                self.crypt_damaged = mode == "damaged"
+            else:
+                self.crypt_enabled = True
+                if not self.crypt_unlocked or self.owner == "none":
+                    self.crypt_unlocked = True
+                    self.owner = "app"
+            notes.append(f"crypt: {mode}")
         auto = "owner" not in v                  # device-like automatic owner changes
         if "usb_connected" in v and v["usb_connected"] != self.usb_connected:
             self.usb_connected = v["usb_connected"]
@@ -1508,7 +1866,7 @@ class Device:
             self.devices.clear()
             admin = next((u for u in self.users if u["role"] == "admin"), self.users[0])
             for i in range(v["devices"]):
-                self.new_device(admin, DEVICE_POOL[i % len(DEVICE_POOL)])
+                self.new_device(admin, DEVICE_POOL[i % len(DEVICE_POOL)], per_user_limit=False)
         if "copy_kbps" in v:
             self.copy_kbps = v["copy_kbps"]
         if "ota_fail" in v:
@@ -1522,8 +1880,8 @@ class Device:
             self.users[0]["name"] = "admin"
             notes.append("admin password is now " + ("admin (change forced)" if v["default_password"] else "admin123"))
         if "login_locked" in v:
-            self.fails = 0
-            self.lock_until = time.monotonic() + LOCK_S if v["login_locked"] else 0.0
+            self.lockout.clear()
+            self.lockout.forced_until = time.monotonic() + LOCK_S if v["login_locked"] else 0.0
             if v["login_locked"]:
                 notes.append(f"logins are refused with LOCKED for {LOCK_S} s")
         if v.get("session_expire"):
@@ -1595,6 +1953,7 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_query(query)
         dev = self.dev
         dev.tick()
+        dev.cur_peer = self.client_address[0]
         try:
             self._dispatch(method, path, q)
         except ClientGone:
@@ -1659,6 +2018,15 @@ class Handler(BaseHTTPRequestHandler):
             ("GET", "/api/download"): (self._api_download, "user"),
             ("GET", "/api/log"): (self._api_log, "admin"),
             ("GET", "/api/wifi/list"): (self._api_wifi_list, "admin"),
+            ("GET", "/api/wifi/scan"): (self._api_wifi_scan, "admin"),
+            ("GET", "/api/crypt"): (self._api_crypt, "user"),
+            ("POST", "/api/crypt/setup"): (self._api_crypt_setup, "admin"),
+            ("POST", "/api/crypt/unlock"): (self._api_crypt_unlock, "user"),
+            ("POST", "/api/crypt/lock"): (self._api_crypt_lock, "user"),
+            ("POST", "/api/crypt/password"): (self._api_crypt_password, "admin"),
+            ("POST", "/api/crypt/disable"): (self._api_crypt_disable, "admin"),
+            ("POST", "/api/crypt/recovery"): (self._api_crypt_recovery, "admin"),
+            ("POST", "/api/crypt/erase"): (self._api_crypt_erase, "admin"),
             ("POST", "/api/mode"): (self._api_mode, "user"),
             ("POST", "/api/mkdir"): (self._api_mkdir, "user"),
             ("POST", "/api/delete"): (self._api_delete, "user"),
@@ -1668,6 +2036,8 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/upload"): (self._api_upload, "user"),
             ("POST", "/api/push"): (self._api_push, "user"),
             ("POST", "/api/settings/host_writable"): (self._api_host_writable, "admin"),
+            ("POST", "/api/settings/https"): (self._api_settings_https, "admin"),
+            ("GET", "/api/https/ca.cer"): (self._api_https_ca, "user"),
             ("POST", "/api/wifi"): (self._api_wifi_add, "admin"),
             ("POST", "/api/wifi/add"): (self._api_wifi_add, "admin"),
             ("POST", "/api/wifi/delete"): (self._api_wifi_delete, "admin"),
@@ -1684,6 +2054,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(404, b"Nothing matches the given URI", "text/plain")
             return
         handler, role = entry
+        if dev.auth_unavailable and (role is not None or path in ("/api/session", "/api/login")):
+            self._drain(clen)                          # auth.c: stored user database unreadable
+            self._error("AUTH_UNAVAILABLE")
+            return
         if role is not None or path == "/api/session":
             self._authenticate()
         if role is not None:
@@ -1706,8 +2080,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._drain(clen)
                 self._error("FORBIDDEN")
                 return
+            if dev.drive_locked() and (method, path) in LOCKED_ROUTES:
+                self._drain(clen)
+                self._error(dev.locked_code())
+                return
             code = dev.take_fail_next(path)
         else:
+            if dev.drive_locked() and (method, path) in LOCKED_ROUTES:
+                self._error(dev.locked_code())
+                return
             code = dev.take_fail_next(path, is_post=False) if path.startswith("/api/") else None
         if code:
             late = path in UPLOAD_PATHS and code in LATE_UPLOAD_ERRORS
@@ -1780,11 +2161,13 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
                    "application/json", headers=headers)
 
-    def _error(self, code: str, text: str = "", info: str = "", extra=None):
+    def _error(self, code: str, text: str = "", info: str = "", extra=None, headers=None):
         status, default_text = ERRORS[code]
         body = {"ok": False, "code": code, "error": text or default_text}
         body.update(extra or {})
-        self._json(status, body, (code + " " + info).strip())
+        if code == "LOCKED" and headers is None:        # lock-out of the login: seconds until the next try
+            headers = [("Retry-After", str(max(1, self.dev.blocked_s())))]
+        self._json(status, body, (code + " " + info).strip(), headers=headers or ())
 
     def _result(self, code, info: str = "", extra=None):
         """send_result(): None = success."""
@@ -1921,6 +2304,191 @@ class Handler(BaseHTTPRequestHandler):
                          "networks": [{"ssid": n, "active": dev.wifi_mode == "sta" and n == dev.ssid}
                                       for n in dev.networks]})
 
+    def _api_wifi_scan(self, q):
+        dev = self.dev
+        if dev.other_upload is not None:
+            self._error("BUSY")
+            return
+        time.sleep(dev.scan_ms / 1000)               # the device is busy (and answers nothing else) meanwhile
+        found = dev.scan()
+        dev.log("I", "wifi", f"scan: {len(found)} networks")
+        self._json(200, {"ok": True, "networks": found}, f"{len(found)} networks")
+
+    # ---------------------------------------------------------- drive encryption (API v4)
+
+    def _api_crypt(self, q):
+        dev = self.dev
+        self._json(200, {"ok": True, "enabled": dev.crypt_enabled,
+                         "unlocked": dev.crypt_unlocked or not dev.crypt_enabled,
+                         "damaged": dev.crypt_damaged, "retry_after": dev.crypt_lockout.blocked_s()})
+
+    def _crypt_gate(self, code=None) -> bool:
+        """Sends the error and returns False if the drive is busy: BUSY, HOST_WRITING (a running format or
+        take-away must not hit a host that is writing)."""
+        dev = self.dev
+        err = code or ("BUSY" if dev.other_upload is not None else "HOST_WRITING" if dev.host_wrote_recently() else None)
+        if err:
+            self._error(err)
+        return err is None
+
+    def _crypt_try(self, secret, recovery=None, either=False) -> bool:
+        """Checks the drive password / recovery key with the global throttle. Sends the error and returns False if wrong.
+        either: `secret` may be the drive password or the recovery key."""
+        dev = self.dev
+        wait = dev.crypt_lockout.blocked_s()
+        if wait:
+            self._error("LOCKED", headers=[("Retry-After", str(wait))])
+            return False
+        time.sleep(dev.crypt_kdf_ms / 1000)
+        ok = dev.crypt_check_any(secret) if either else dev.crypt_check(secret, recovery)
+        if ok:
+            dev.crypt_lockout.success()
+            return True
+        dur = dev.crypt_lockout.failure()
+        if dur:
+            dev.log("W", "crypt", f"wrong drive password #{dev.crypt_lockout.fails} - next try in {dur} s")
+        self._error("CRYPT_WRONG_PASSWORD")
+        return False
+
+    @staticmethod
+    def _new_recovery() -> str:
+        return "-".join("".join(secrets.choice("0123456789ABCDEFGHJKMNPQRSTVWXYZ") for _ in range(4)) for _ in range(8))
+
+    def _api_crypt_setup(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None or not self._need(form, "password"):
+            return
+        pw = form["password"]
+        if len(pw.encode("utf-8", "surrogatepass")) > CRYPT_PASS_MAX:
+            self._error("BAD_REQUEST", "Das Laufwerks-Passwort darf höchstens 64 Bytes lang sein.")
+        elif len(pw) < CRYPT_PASS_MIN:
+            self._error("CRYPT_WEAK_PASSWORD")
+        elif dev.crypt_enabled:
+            self._error("CRYPT_ALREADY_ENABLED")
+        elif self._crypt_gate() and self._crypt_gate("WRONG_OWNER" if dev.owner != "app" else None):
+            # the whole medium is erased first; the device answers nothing else meanwhile (this thread blocks)
+            time.sleep((dev.crypt_kdf_ms + dev.crypt_setup_ms) / 1000)
+            dev.format()                              # formats the drive (no restart: the key is in RAM already)
+            dev.crypt_enabled = dev.crypt_unlocked = True
+            dev.crypt_damaged = False
+            dev.crypt_password = pw
+            dev.crypt_recovery = self._new_recovery()
+            dev.crypt_lockout.clear()
+            dev.log("W", "crypt", "encryption set up, drive formatted")
+            if dev.crypt_setup_io:                    # key area written, then the file system failed
+                dev.crypt_setup_io = False
+                self._error("IO", extra={"recovery_key": dev.crypt_recovery}, info="after the key area was written")
+                return
+            self._json(200, {"ok": True, "code": "OK", "error": "", "recovery_key": dev.crypt_recovery}, "recovery key issued")
+
+    def _api_crypt_unlock(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None:
+            return
+        password, recovery = form.get("password"), form.get("recovery_key")
+        if password is None and recovery is None:
+            self._error("BAD_REQUEST", "password oder recovery_key fehlt")
+        elif not dev.crypt_enabled:
+            self._error("CRYPT_NOT_ENABLED")
+        elif dev.crypt_damaged:
+            self._error("CRYPT_DAMAGED")
+        elif dev.crypt_unlocked:
+            self._result(None, "already unlocked")
+        elif dev.other_upload is not None:
+            self._error("BUSY")
+        elif self._crypt_try(password, recovery if password is None else None):
+            dev._crypt_unlock()
+            self._result(None, "owner=" + dev.owner)
+
+    def _api_crypt_lock(self, q, clen):
+        self._drain(clen)
+        dev = self.dev
+        if not dev.crypt_enabled:
+            self._error("CRYPT_NOT_ENABLED")
+        elif not dev.crypt_unlocked:
+            self._result(None, "already locked")
+        elif self._crypt_gate():
+            dev._crypt_lock()
+            self._result(None, "locked")
+
+    def _api_crypt_password(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None or not self._need(form, "old", "new"):
+            return
+        new = form["new"]
+        if len(new.encode("utf-8", "surrogatepass")) > CRYPT_PASS_MAX:
+            self._error("BAD_REQUEST", "Das Laufwerks-Passwort darf höchstens 64 Bytes lang sein.")
+        elif len(new) < CRYPT_PASS_MIN:
+            self._error("CRYPT_WEAK_PASSWORD")
+        elif not dev.crypt_enabled:
+            self._error("CRYPT_NOT_ENABLED")
+        elif dev.drive_locked():
+            self._error(dev.locked_code())            # only with an unlocked drive; forgotten: unlock with the key first
+        elif self._crypt_try(form["old"], either=True):   # old = drive password or recovery key
+            dev.crypt_password = new                  # only the master key is wrapped anew; recovery key stays valid
+            dev.log("I", "crypt", "drive password changed")
+            self._result(None, "password changed")
+
+    def _api_crypt_recovery(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None or not self._need(form, "password"):
+            return
+        if not dev.crypt_enabled:
+            self._error("CRYPT_NOT_ENABLED")
+        elif dev.drive_locked():
+            self._error(dev.locked_code())
+        elif self._crypt_try(form["password"], either=True):
+            dev.crypt_recovery = self._new_recovery()  # the old key stops working
+            dev.log("W", "crypt", "new recovery key issued")
+            self._json(200, {"ok": True, "recovery_key": dev.crypt_recovery}, "recovery key issued")
+
+    def _api_crypt_erase(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None:
+            return
+        if form.get("confirm") != "ERASE":
+            self._error("BAD_REQUEST", "Bestätigung fehlt")
+        elif not dev.crypt_enabled:
+            self._error("CRYPT_NOT_ENABLED")
+        elif dev.crypt_unlocked:
+            self._error("CRYPT_ALREADY_ENABLED")      # only allowed locked or damaged
+        elif dev.other_upload is not None:
+            self._error("BUSY")
+        else:
+            time.sleep(dev.crypt_setup_ms / 1000)     # erases the key area and the medium
+            dev.format()
+            dev.crypt_enabled, dev.crypt_unlocked, dev.crypt_damaged = False, True, False
+            dev.owner = "app"
+            dev.crypt_lockout.clear()
+            dev.log("W", "crypt", "key area erased, drive formatted plain")
+            self._result(None, "erased, formatted plain")
+
+    def _api_crypt_disable(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None or not self._need(form, "password"):
+            return
+        if not dev.crypt_enabled:
+            self._error("CRYPT_NOT_ENABLED")
+        elif dev.crypt_damaged:
+            self._error("CRYPT_DAMAGED")
+        elif not self._crypt_gate():
+            return
+        elif dev.crypt_unlocked and dev.owner != "app":
+            self._error("WRONG_OWNER")
+        elif self._crypt_try(form["password"], None):
+            dev.format()                              # formats the drive without encryption
+            dev.crypt_enabled, dev.crypt_unlocked = False, True
+            dev.owner = "app"
+            dev.crypt_lockout.clear()
+            dev.log("W", "crypt", "encryption removed, drive formatted")
+            self._result(None, "formatted plain")
+
     # ---------------------------------------------------------- POST: authentication
 
     def _api_login(self, q, clen):
@@ -1935,16 +2503,18 @@ class Handler(BaseHTTPRequestHandler):
             return
         u = dev.check_credentials(form["user"], form["pass"])
         if u is None:
-            self._error("BAD_LOGIN", info=f"({dev.fails} failed)" if dev.fails else "(now locked)")
+            self._error("BAD_LOGIN", info=f"({dev.lockout.fails_total()} failed)" if dev.locked() is False else "(now locked)")
             return
         self._user = u
         cookie = "Path=/; HttpOnly; SameSite=Strict"
+        token = None
         if flag(form, "remember"):
             label = (form.get("device") or "").strip().encode("utf-8", "ignore")[:DEVICE_LABEL_MAX].decode("utf-8", "ignore")
-            token = dev.new_device(u, label or "Gerät")
-            cookie += f"; Max-Age={DEVICE_MAX_AGE}"
-            info = f"trusted device '{label}' ({len(dev.devices)} of {DEVICES_MAX})"
-        else:
+            token = dev.new_device(u, label)
+            if token is not None:
+                cookie += f"; Max-Age={DEVICE_MAX_AGE}"
+                info = f"trusted device '{label}' ({len(dev.devices)} of {DEVICES_MAX})"
+        if token is None:            # no remember, or no free device slot: volatile session
             token = dev.new_session(u)
             info = f"session {token[:6]}... ({len(dev.sessions)} of {SESSIONS_MAX})"
         self._json(200, self._session_json(u), info,
@@ -2207,6 +2777,44 @@ class Handler(BaseHTTPRequestHandler):
             info += f" took_over={took}"
         self._result(err, info, extra=extra() if push else None)
 
+    def _https_state(self):
+        dev = self.dev
+        self._json(200, {"ok": True, "https": dev.https_on, "https_active": dev.https_active,
+                         "https_restart": dev.https_dirty, "cert_sha256": dev.cert_sha256,
+                         "ca_sha256": dev.ca_sha256, "cert_expires": dev.cert_expires})
+
+    def _api_settings_https(self, q, clen):
+        self._drain(clen)
+        dev = self.dev
+        value = q.get("value")
+        regen, renew = flag(q, "regenerate"), flag(q, "renew")
+        if value is None and not regen and not renew:
+            self._error("BAD_REQUEST", "value, renew oder regenerate fehlt")
+            return
+        if regen:
+            dev.https_make(True, True)
+            dev.https_dirty = True
+        elif renew:
+            dev.https_make(False, True)
+            dev.https_dirty = True
+        if value is not None:
+            on = value in ("1", "true")
+            if on != dev.https_on:
+                dev.https_dirty = True
+            dev.https_on = on
+            if on:
+                dev.https_make(False, False)      # enabling creates the key material now
+        dev.log("W", "https", f"setting={int(dev.https_on)} (restart needed)")
+        self._https_state()
+
+    def _api_https_ca(self, q):
+        if not self.dev.ca_sha256:
+            self._error("NOT_FOUND", "Noch kein Zertifikat vorhanden")
+            return
+        der = b"\x30\x82\x01\x00" + hashlib.sha256(self.dev.ca_sha256.encode()).digest() * 8   # not a real certificate
+        self._send(200, der, "application/x-x509-ca-cert",
+                   headers=[("Content-Disposition", 'attachment; filename="DataDrive-CA.cer"')])
+
     def _api_host_writable(self, q, clen):
         self._drain(clen)
         value = q.get("value")
@@ -2271,6 +2879,10 @@ class Handler(BaseHTTPRequestHandler):
         elif dev.other_upload is not None:
             self._error("BUSY")
         else:
+            if dev.crypt_enabled:                 # encrypted + unlocked: new file system, no restart, stays unlocked
+                dev.format()
+                self._json(200, {"ok": True, "restart": False}, "formatted, stays encrypted and unlocked")
+                return
             self._json(200, {"ok": True, "restart": True}, f"formatted, restarting ({RESTART_S:.0f} s offline)")
             dev.format()
             dev.restart()

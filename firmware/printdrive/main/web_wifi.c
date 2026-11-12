@@ -1,5 +1,6 @@
 #include "web_wifi.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include "pd_wifi.h"
 #include "web_common.h"
@@ -16,6 +17,73 @@ static esp_err_t h_list(httpd_req_t *req)
     }
     web_appendf(json, sizeof(json), "],\"max\":%d}", PD_WIFI_MAX_NETWORKS);
     return web_send_json(req, "200 OK", json);
+}
+
+/** True if s is well-formed UTF-8 (SSIDs are raw bytes; others cannot be sent as JSON text). */
+static bool utf8_ok(const char *s)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        int extra;
+        if (*p < 0x80) {
+            extra = 0;
+        } else if (*p >= 0xC2 && *p <= 0xDF) {
+            extra = 1;
+        } else if (*p >= 0xE0 && *p <= 0xEF) {
+            extra = 2;
+        } else if (*p >= 0xF0 && *p <= 0xF4) {
+            extra = 3;
+        } else {
+            return false;
+        }
+        p++;
+        while (extra--) {
+            if ((*p & 0xC0) != 0x80) {
+                return false;
+            }
+            p++;
+        }
+    }
+    return true;
+}
+
+#define SCAN_JSON_SIZE (PD_WIFI_SCAN_MAX * 280 + 64)   // worst case: 32 control bytes -> 192 chars per SSID
+
+static esp_err_t h_scan(httpd_req_t *req)
+{
+    pd_wifi_scan_entry_t *nets = malloc(PD_WIFI_SCAN_MAX * sizeof(*nets));
+    char *json = malloc(SCAN_JSON_SIZE);
+    if (!nets || !json) {
+        free(nets);
+        free(json);
+        return web_send_error(req, "500 Internal Server Error", "IO", "Zu wenig Speicher für die WLAN-Suche.");
+    }
+    const int n = pd_wifi_scan(nets, PD_WIFI_SCAN_MAX);
+    esp_err_t r;
+    if (n == PD_WIFI_SCAN_BUSY) {
+        r = web_send_error(req, "409 Conflict", "BUSY",
+                           "Das WLAN ist gerade beschäftigt. Bitte in ein paar Sekunden erneut suchen.");
+    } else if (n < 0) {
+        r = web_send_error(req, "500 Internal Server Error", "IO", "Die WLAN-Suche ist fehlgeschlagen.");
+    } else {
+        strcpy(json, "{\"ok\":true,\"networks\":[");
+        bool first = true;
+        for (int i = 0; i < n; i++) {
+            if (!utf8_ok(nets[i].ssid)) {
+                continue;
+            }
+            web_appendf(json, SCAN_JSON_SIZE, "%s{\"ssid\":", first ? "" : ",");
+            first = false;
+            web_json_str(json, SCAN_JSON_SIZE, nets[i].ssid);
+            web_appendf(json, SCAN_JSON_SIZE, ",\"rssi\":%d,\"secure\":%s,\"saved\":%s}", nets[i].rssi,
+                        nets[i].secure ? "true" : "false", nets[i].saved ? "true" : "false");
+        }
+        web_appendf(json, SCAN_JSON_SIZE, "]}");
+        r = web_send_json(req, "200 OK", json);
+    }
+    free(nets);
+    free(json);
+    return r;
 }
 
 static esp_err_t h_add(httpd_req_t *req)
@@ -66,6 +134,7 @@ static esp_err_t h_delete(httpd_req_t *req)
 
 static const web_route_t s_routes[] = {
     {"/api/wifi/list", HTTP_GET, h_list, WEB_ROLE_ADMIN},
+    {"/api/wifi/scan", HTTP_GET, h_scan, WEB_ROLE_ADMIN},
     {"/api/wifi/add", HTTP_POST, h_add, WEB_ROLE_ADMIN},
     {"/api/wifi/delete", HTTP_POST, h_delete, WEB_ROLE_ADMIN},
     {"/api/wifi", HTTP_POST, h_add, WEB_ROLE_ADMIN},   // alias of version 2

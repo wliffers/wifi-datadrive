@@ -1,14 +1,18 @@
-"""End-to-end test of the WiFi DataDrive web API (version 3, docs/09_api_v3.md).
+"""End-to-end test of the WiFi DataDrive web API (version 3, docs/09_api_v3.md, plus version 4,
+docs/12_api_v4.md: Wi-Fi scan and drive encryption incl. recovery key renewal, erase, damaged state).
 
 Works against the mock (tools/mock_server.py) and a real dongle.
 
 Usage (the ESP-IDF Python env and the system Python provide 'requests'):
     python tools/api_test.py HOST[:PORT] --user admin --password PW
                              [--drive E:] [--size-kb 512] [--skip-destructive]
-                             [--wifi-test] [--ota-probe]
+                             [--wifi-test] [--ota-probe] [--drive-password PW]
+                             [--crypt-test --i-know-this-erases-the-drive [--keep-encrypted]]
 
 Sections: 1 authentication, 2 users and roles, 3 trusted devices, 4 mode and files,
-5 Wi-Fi, 6 status (+ optional OTA probe), 7 Windows drive letter (--drive).
+5 Wi-Fi, 6 status (+ optional OTA probe), 7 Windows drive letter (--drive),
+8 Wi-Fi scan (v4), 9 drive encryption, non-destructive (v4), 9c optional HTTPS (read-only checks),
+10 drive encryption, destructive (v4, opt-in).
 
 The target is left as found: owner mode restored, everything created (test folder
 _apitest_<random>, temporary user apitest_<random>, trusted devices, Wi-Fi entry) removed,
@@ -24,7 +28,25 @@ Options
   --drive E:          after providing the drive to USB, compare the pushed file on the
                       Windows drive letter.
 
-Wrong passwords: at most 2 (one wrong login, one wrong `old` password), so the lockout
+  --drive-password PW the drive password. Needed if the drive is found encrypted and locked
+                      (the test then stops with a message without it; with it the test unlocks
+                      the drive first and locks it again at the end). Never printed.
+  --crypt-test        DESTRUCTIVE, needs --i-know-this-erases-the-drive and --drive-password:
+                      formats the drive (ALL FILES LOST), sets up encryption with PW, runs
+                      round trip / lock / wrong passwords + throttle (waits the Retry-After) /
+                      unlock with password and recovery key / password change (unlocked only;
+                      forgotten password: recovery key as `old`) / new recovery key / format on
+                      the encrypted drive (no restart) / disable, then a second setup + lock +
+                      POST /api/crypt/erase. The drive ends plain and working. Setup erases the
+                      whole medium (up to 2 minutes each). Only for a drive that is not encrypted yet.
+                      A drive found in state "damaged" cannot be produced on a real device: if the
+                      target reports damaged:true (mock scenario crypt_damaged) only the damaged-state
+                      section runs; with --crypt-test the erase is performed and the destructive
+                      section follows on the now plain drive.
+  --keep-encrypted    with --crypt-test: stop before disable; drive stays encrypted and unlocked
+                      (the recovery key is printed once, record it).
+
+Wrong passwords (login): at most 2 (one wrong login, one wrong `old` password), so the lockout
 (5 in a row) of a real device is never reached. If the account still has the delivery
 password (`default_password: true`) the test stops and asks to change it first.
 
@@ -80,6 +102,13 @@ class S:                # run state (also used by the cleanup)
     guard = 3.0
     skip_destructive = False
     ota_part = None
+    role_tok = None     # None: not tried, False: not possible, str: token of a temporary user
+    relock = False      # drive was locked at the start: lock it again at the end
+    crypt_pw = None     # current drive password (for the cleanup)
+    crypt_by_test = False
+    keep_encrypted = False
+    recovery = None
+    damaged = False     # the target reports crypt.damaged (only the mock can)
 
 
 def check(name, cond, info=""):
@@ -266,6 +295,85 @@ def wait_online(limit=45):
     return False
 
 
+def cpost(path, form=None, tok=DEF, tries=4, **kw):
+    """POST to a crypt endpoint (long timeout: key derivation, formatting); HOST_WRITING is retried."""
+    kw.setdefault("timeout", 330)      # setup/erase wipe the whole medium (up to ~2 min)
+    r = None
+    for i in range(tries):
+        r = call("POST", path, form=form, tok=tok, **kw)
+        if jcode(r) == "HOST_WRITING" and i < tries - 1:
+            time.sleep(S.guard + 1)
+            continue
+        break
+    return r
+
+
+def locked_reqs_f(T2, P):
+    """Requests that must be refused while the drive is locked (or damaged)."""
+    return [
+        ("GET files", "GET", "/api/files", {"dir": ""}, None),
+        ("GET download", "GET", "/api/download", {"path": P}, None),
+        ("POST mode", "POST", "/api/mode", {"target": "app"}, None),
+        ("POST mkdir", "POST", "/api/mkdir", {"path": f"{T2}/x"}, None),
+        ("POST delete", "POST", "/api/delete", {"path": P, "recursive": "0"}, None),
+        ("POST move", "POST", "/api/move", {"from": P, "to": f"{T2}/y.3mf"}, None),
+        ("POST copy", "POST", "/api/copy", {"from": P, "to": f"{T2}/y.3mf"}, None),
+        ("POST upload/check", "POST", "/api/upload/check", {"path": f"{T2}/z.3mf", "size": "10"}, None),
+        ("POST upload", "POST", "/api/upload", {"path": f"{T2}/z.3mf"}, make_3mf(1)),
+        ("POST push", "POST", "/api/push", {"path": f"{T2}/z.3mf"}, make_3mf(1)),
+        ("POST format", "POST", "/api/format", None, None),
+    ]
+
+
+def crypt_state():
+    r = call("GET", "/api/crypt")
+    j = jr(r)
+    if r.status_code != 200:
+        return None, None
+    return j.get("enabled"), j.get("unlocked")
+
+
+def role_token():
+    """Token of a temporary user with role 'user' (created once, removed by the cleanup) or None."""
+    if S.role_tok is not None:
+        return S.role_tok or None
+    S.role_tok = False
+    users, mx = get_users()
+    if len(users) >= mx:
+        return None
+    name = f"apitest_v4_{os.urandom(3).hex()}"
+    pw = "Pw-" + os.urandom(5).hex()
+    S.extra_users.append(name)
+    if not okr(call("POST", "/api/users/add", form={"user": name, "pass": pw, "role": "user"})):
+        return None
+    r, tok = login(name, pw)
+    if tok and okr(r):
+        S.role_tok = tok
+    return tok if S.role_tok else None
+
+
+def crypt_preflight(a):
+    """Right after the login: an encrypted and locked drive stops the test unless --drive-password."""
+    r = call("GET", "/api/crypt")
+    j = jr(r)
+    if r.status_code != 200 or not (j.get("enabled") and j.get("unlocked") is False):
+        return
+    if j.get("damaged") is True:
+        S.damaged = True
+        print("note: the drive reports crypt.damaged (key area unreadable): only the damaged-state checks run", flush=True)
+        return
+    if not a.drive_password:
+        raise Abort("The drive is encrypted and locked. Nothing was changed. Run the test again with "
+                    "--drive-password PW (it unlocks the drive first and locks it again at the end).")
+    r = cpost("/api/crypt/unlock", {"password": a.drive_password})
+    if not okr(r):
+        raise Abort(f"Unlocking the drive with --drive-password failed ({r.status_code} {jcode(r)}). "
+                    "Nothing else was changed.")
+    S.relock = True
+    S.crypt_pw = a.drive_password
+    check("drive was locked: unlocked with --drive-password (locked again at the end)", crypt_state() == (True, True))
+
+
 # ------------------------------------------------------------------ sections
 
 def sec_auth(a):
@@ -305,6 +413,7 @@ def sec_auth(a):
     if j.get("role") != "admin":
         raise Abort(f"User '{a.user}' is not an administrator; the test needs admin rights.")
     check("login ok (admin session)", j.get("ok") and j.get("user", "").lower() == a.user.lower(), j)
+    crypt_preflight(a)
     sc = r.headers.get("Set-Cookie", "")
     check("cookie dd_session = 64 hex characters, HttpOnly", "HttpOnly" in sc, sc[:40] + "...")
     check("cookie SameSite=Strict", "samesite=strict" in sc.lower())
@@ -804,7 +913,510 @@ def sec_drive(a):
     check("pushed file visible and identical on the Windows drive", good, path)
 
 
+RECOVERY_RE = re.compile(r"[0-9ABCDEFGHJKMNPQRSTVWXYZ]{4}(-[0-9ABCDEFGHJKMNPQRSTVWXYZ]{4}){7}")
+
+
+def sec_scan(a):
+    head("8. Wi-Fi scan (API v4)")
+    expect("401 without login: GET /api/wifi/scan", call("GET", "/api/wifi/scan", tok=None), 401, "UNAUTHORIZED")
+    tok = role_token()
+    if tok:
+        expect("FORBIDDEN_ROLE for user: GET wifi/scan", call("GET", "/api/wifi/scan", tok=tok), 403, "FORBIDDEN_ROLE")
+    else:
+        skip("role check for wifi/scan", "no temporary user possible")
+    saved_before = [n["ssid"] for n in jr(call("GET", "/api/wifi/list")).get("networks", [])]
+    def wifi_now():       # without rssi (varies from call to call)
+        return {k: v for k, v in (status().get("wifi") or {}).items() if k != "rssi"}
+    wifi_before = wifi_now()
+    r, dt = None, 0.0
+    for _ in range(4):
+        t = time.time()
+        r = call("GET", "/api/wifi/scan", timeout=40)
+        dt = time.time() - t
+        if r.status_code == 409 and jcode(r) == "BUSY":
+            note("scan answered BUSY, retrying in 3 s")
+            time.sleep(3)
+            continue
+        break
+    if r.status_code == 409 and jcode(r) == "BUSY":
+        skip("scan result checks", "still BUSY after 4 attempts")
+        return
+    j = jr(r)
+    nets = j.get("networks")
+    check("scan answers 200 with ok and a list", r.status_code == 200 and j.get("ok") is True and isinstance(nets, list),
+          f"{len(nets) if isinstance(nets, list) else '?'} networks in {dt:.1f} s")
+    if not isinstance(nets, list):
+        return
+    check("at most 20 networks", len(nets) <= 20, len(nets))
+    check("every entry: ssid (non-empty string), rssi (negative int), secure, saved (bool)",
+          all(isinstance(n.get("ssid"), str) and n["ssid"] != "" and isinstance(n.get("rssi"), int)
+              and not isinstance(n.get("rssi"), bool) and n["rssi"] < 0 and isinstance(n.get("secure"), bool)
+              and isinstance(n.get("saved"), bool) for n in nets), nets[:2])
+    check("no unknown fields in entries", all(set(n) <= {"ssid", "rssi", "secure", "saved"} for n in nets))
+    rs = [n.get("rssi", 0) for n in nets]
+    check("sorted by rssi, strongest first", rs == sorted(rs, reverse=True), rs)
+    names = [n.get("ssid") for n in nets]
+    check("every SSID appears once", len(names) == len(set(names)))
+    check("saved flag matches /api/wifi/list", all(n.get("saved") is (n.get("ssid") in saved_before) for n in nets))
+    check("scan changed nothing: saved networks unchanged",
+          [n["ssid"] for n in jr(call("GET", "/api/wifi/list")).get("networks", [])] == saved_before)
+    check("scan changed nothing: connection unchanged", wifi_now() == wifi_before)
+
+
+def sec_crypt(a):
+    head("9. Drive encryption, non-destructive (API v4)")
+    r = call("GET", "/api/crypt")
+    j = jr(r)
+    enabled, unlocked = j.get("enabled"), j.get("unlocked")
+    check("GET /api/crypt: ok, enabled, unlocked and damaged are booleans, retry_after an integer >= 0",
+          r.status_code == 200 and j.get("ok") is True and isinstance(enabled, bool) and isinstance(unlocked, bool)
+          and isinstance(j.get("damaged"), bool) and isinstance(j.get("retry_after"), int)
+          and not isinstance(j.get("retry_after"), bool) and j.get("retry_after") >= 0, j)
+    if not isinstance(enabled, bool):
+        return
+    check("no wait pending and not damaged (retry_after 0, damaged false)", j.get("retry_after") == 0 and j.get("damaged") is False, j)
+    check("state is plain or unlocked (locked was handled at the start)", unlocked is True, j)
+    cs = status().get("crypt")
+    check("status.crypt = {enabled, unlocked, damaged} and equals /api/crypt",
+          isinstance(cs, dict) and cs.get("enabled") is enabled and cs.get("unlocked") is unlocked
+          and cs.get("damaged") is False, cs)
+    print(f"       drive encryption: {'enabled, unlocked' if enabled else 'not enabled'}")
+    expect("401 without login: GET /api/crypt", call("GET", "/api/crypt", tok=None), 401, "UNAUTHORIZED")
+
+    harmless = [("setup", {"password": "short"}), ("unlock", {"password": "x" * 12}), ("lock", None),
+                ("password", {"old": "x"}), ("disable", {}), ("recovery", {"password": "x"}),
+                ("erase", {"confirm": "ERASE"})]
+    for name, form in harmless:
+        expect(f"401 without login: POST crypt/{name}",
+               call("POST", f"/api/crypt/{name}", form=form, tok=None), 401, "UNAUTHORIZED")
+    for name, form in harmless:
+        expect(f"403 FORBIDDEN without X-PrintDrive header: POST crypt/{name}",
+               call("POST", f"/api/crypt/{name}", form=form, csrf=False), 403, "FORBIDDEN")
+    check("... and the state did not change", crypt_state() == (enabled, unlocked))
+    if enabled and crypt_state()[1] is False and a.drive_password:
+        cpost("/api/crypt/unlock", {"password": a.drive_password})       # a refused lock must not have locked it
+
+    tok = role_token()
+    if tok:
+        check("user may read GET /api/crypt", call("GET", "/api/crypt", tok=tok).status_code == 200)
+        for name, form in (("setup", {"password": "short"}), ("password", {"old": "x"}), ("disable", {}),
+                           ("recovery", {"password": "x"}), ("erase", {"confirm": "ERASE"})):
+            expect(f"FORBIDDEN_ROLE for user: POST crypt/{name}",
+                   call("POST", f"/api/crypt/{name}", form=form, tok=tok), 403, "FORBIDDEN_ROLE")
+        if enabled:
+            r = call("POST", "/api/crypt/unlock", form={"password": "x" * 12}, tok=tok)
+            check("user may call crypt/unlock (already unlocked: 200 without check)", okr(r), r.text[:100])
+        else:
+            expect("user may call crypt/unlock (CRYPT_NOT_ENABLED, not a role error)",
+                   call("POST", "/api/crypt/unlock", form={"password": "x" * 12}, tok=tok), 409, "CRYPT_NOT_ENABLED")
+            expect("user may call crypt/lock (CRYPT_NOT_ENABLED, not a role error)",
+                   call("POST", "/api/crypt/lock", tok=tok), 409, "CRYPT_NOT_ENABLED")
+    else:
+        skip("role checks for the crypt endpoints", "no temporary user possible")
+
+    weak = [("11 characters", "elf-zeichen"), ("11 Unicode characters (22 bytes)", "\u00e4" * 11), ("1 character", "x")]
+    for label, pw in weak:
+        r = call("POST", "/api/crypt/setup", form={"password": pw})
+        if enabled:       # order of the checks is not specified: weak password or already enabled, never success
+            check(f"setup with weak password refused ({label})",
+                  (r.status_code, jcode(r)) in ((400, "CRYPT_WEAK_PASSWORD"), (409, "CRYPT_ALREADY_ENABLED")),
+                  f"{r.status_code} {jcode(r)}")
+        else:
+            expect(f"setup with weak password -> CRYPT_WEAK_PASSWORD ({label})", r, 400, "CRYPT_WEAK_PASSWORD")
+    expect("setup without password -> BAD_REQUEST", call("POST", "/api/crypt/setup", form={}), 400, "BAD_REQUEST")
+    check("... nothing was set up or changed", crypt_state() == (enabled, unlocked))
+
+    # erase: the confirmation is checked first; unlocked drives and plain drives are refused (nothing is erased)
+    expect("erase without confirm -> BAD_REQUEST", call("POST", "/api/crypt/erase", form={}), 400, "BAD_REQUEST")
+    expect("erase with confirm=erase (wrong case) -> BAD_REQUEST",
+           call("POST", "/api/crypt/erase", form={"confirm": "erase"}), 400, "BAD_REQUEST")
+    expect("recovery without password -> BAD_REQUEST", call("POST", "/api/crypt/recovery", form={}), 400, "BAD_REQUEST")
+    if enabled:
+        expect("erase while unlocked -> CRYPT_ALREADY_ENABLED (only locked or damaged)",
+               call("POST", "/api/crypt/erase", form={"confirm": "ERASE"}), 409, "CRYPT_ALREADY_ENABLED")
+    else:
+        expect("erase while not encrypted -> CRYPT_NOT_ENABLED",
+               call("POST", "/api/crypt/erase", form={"confirm": "ERASE"}), 409, "CRYPT_NOT_ENABLED")
+        expect("recovery while not encrypted -> CRYPT_NOT_ENABLED",
+               call("POST", "/api/crypt/recovery", form={"password": "x" * 12}), 409, "CRYPT_NOT_ENABLED")
+    check("... nothing was erased or changed", crypt_state() == (enabled, unlocked))
+
+    if enabled:
+        skip("CRYPT_NOT_ENABLED checks (unlock / lock / password / disable)", "encryption is enabled on this drive")
+        return
+    pw12 = "Pruefen-" + os.urandom(3).hex()          # valid length, never set anywhere
+    expect("unlock while not enabled -> CRYPT_NOT_ENABLED",
+           call("POST", "/api/crypt/unlock", form={"password": pw12}), 409, "CRYPT_NOT_ENABLED")
+    expect("unlock with recovery key while not enabled -> CRYPT_NOT_ENABLED",
+           call("POST", "/api/crypt/unlock", form={"recovery_key": "7K3M-Q9XD-4WTB-HN2C-5RYE-8FGA-ZP6V-JC3S"}),
+           409, "CRYPT_NOT_ENABLED")
+    expect("lock while not enabled -> CRYPT_NOT_ENABLED", call("POST", "/api/crypt/lock"), 409, "CRYPT_NOT_ENABLED")
+    expect("password change while not enabled -> CRYPT_NOT_ENABLED",
+           call("POST", "/api/crypt/password", form={"old": pw12, "new": pw12 + "-neu"}), 409, "CRYPT_NOT_ENABLED")
+    expect("disable while not enabled -> CRYPT_NOT_ENABLED",
+           call("POST", "/api/crypt/disable", form={"password": pw12}), 409, "CRYPT_NOT_ENABLED")
+    check("... the drive is still plain and unlocked", crypt_state() == (False, True))
+
+
+def sec_crypt_destructive(a):
+    head("10. Drive encryption, destructive (--crypt-test)")
+    pw = a.drive_password
+    enabled, unlocked = crypt_state()
+    if enabled is not False:
+        skip("destructive encryption test", "the drive is already encrypted (or /api/crypt missing): needs a plain drive")
+        return
+    if not ensure_app():
+        check("destructive test: file manager owns the drive", False, "cannot take the drive over")
+        return
+    rid = os.urandom(3).hex()
+    T2 = f"_apitest_crypt_{rid}"
+    S.extra_paths.append(T2)
+    new_pw = "Neu-" + os.urandom(8).hex()
+    u = role_token()
+
+    # setup
+    expect("setup with 65-byte password -> BAD_REQUEST", cpost("/api/crypt/setup", {"password": "p" * 65}), 400, "BAD_REQUEST")
+    check("... still plain", crypt_state() == (False, True))
+    r = cpost("/api/crypt/setup", {"password": pw})
+    j = jr(r)
+    key = j.get("recovery_key", "")
+    ok = check("setup: 200 with recovery_key", okr(r) and j.get("code") == "OK" and isinstance(key, str), f"{r.status_code} {jcode(r)}")
+    if not ok:
+        return
+    S.crypt_by_test, S.crypt_pw, S.recovery = True, pw, key
+    check("recovery key has 8 groups of 4 (0-9 A-Z without I L O U)", RECOVERY_RE.fullmatch(key) is not None,
+          "(format wrong)" if not RECOVERY_RE.fullmatch(key) else "")
+    check("state: enabled and unlocked; status.crypt the same", crypt_state() == (True, True)
+          and status().get("crypt") == {"enabled": True, "unlocked": True, "damaged": False})
+    d = status().get("drive", {})
+    check("drive owner app, fs_ok after setup", d.get("owner") == "app" and d.get("fs_ok") is True, d)
+    expect("setup again -> CRYPT_ALREADY_ENABLED", cpost("/api/crypt/setup", {"password": pw}), 409, "CRYPT_ALREADY_ENABLED")
+    if a.keep_encrypted:
+        note(f"recovery key (record it, shown only here): {key}")
+
+    # round trip
+    data = make_3mf(min(a.size_kb, 256))
+    P = f"{T2}/Würfel äöü.3mf"
+    expect("encrypted: mkdir", call("POST", "/api/mkdir", params={"path": T2}), 200)
+    check("encrypted: upload", okr(upload(P, data)))
+    r, ents = ls(T2)
+    check("encrypted: listing shows the file", ents.get("Würfel äöü.3mf", {}).get("size") == len(data), list(ents))
+    check("encrypted: download identical (SHA-256)", sha(download(P).content) == sha(data))
+
+    # lock
+    expect("lock (as role user)" if u else "lock", cpost("/api/crypt/lock", tok=u or DEF), 200)
+    check("locked: /api/crypt and status.crypt say enabled / not unlocked", crypt_state() == (True, False)
+          and status().get("crypt") == {"enabled": True, "unlocked": False, "damaged": False})
+    d = status().get("drive", {})
+    check("locked: drive owner none, fs_ok false, needs_format false, total/free/files 0",
+          d.get("owner") == "none" and d.get("fs_ok") is False and d.get("needs_format") is False
+          and d.get("total") == 0 and d.get("free") == 0 and d.get("files") == 0, d)
+    expect("lock again (already locked) -> 200", cpost("/api/crypt/lock"), 200)
+    locked_reqs = locked_reqs_f(T2, P)
+    for label, m, path, params, body in locked_reqs:
+        expect(f"423 DRIVE_LOCKED: {label}", call(m, path, params=params, body=body), 423, "DRIVE_LOCKED")
+    expect("401 before DRIVE_LOCKED without login: GET files", call("GET", "/api/files", params={"dir": ""}, tok=None),
+           401, "UNAUTHORIZED")
+    if u:
+        expect("403 FORBIDDEN_ROLE before DRIVE_LOCKED: format as user", call("POST", "/api/format", tok=u),
+               403, "FORBIDDEN_ROLE")
+    reach = [call("GET", p).status_code for p in ("/api/status", "/api/session", "/api/users", "/api/devices",
+                                                  "/api/wifi/list", "/api/log", "/api/crypt")]
+    check("locked: status, session, users, devices, wifi, log, crypt still reachable", reach == [200] * 7, reach)
+
+    # wrong passwords: one global counter, the first two are free, then a wait (5 s, doubling)
+    wrong = "falsch-" + os.urandom(4).hex() + "-xx"
+    codes, retry = [], None
+    for i in range(5):
+        r = cpost("/api/crypt/unlock", {"password": wrong + str(i)})
+        codes.append((r.status_code, jcode(r)))
+        if r.status_code == 429:
+            retry = r.headers.get("Retry-After")
+            break
+    check("first two wrong passwords -> 403 CRYPT_WRONG_PASSWORD (free)",
+          codes[:2] == [(403, "CRYPT_WRONG_PASSWORD")] * 2, codes)
+    check("then 429 LOCKED at the third attempt (or the fourth, if the third is still checked)",
+          codes[-1] == (429, "LOCKED") and 3 <= len(codes) <= 4, codes)
+    wait = int(retry) if retry and retry.isdigit() else 0
+    check("429 carries Retry-After (seconds, 1..300)", 0 < wait <= 300, retry)
+    j = jr(call("GET", "/api/crypt"))
+    check("GET /api/crypt during the wait: retry_after > 0 and <= Retry-After", 0 < j.get("retry_after", 0) <= max(wait, 1), j)
+    r = cpost("/api/crypt/unlock", {"password": pw})
+    expect("correct password during the wait is not checked -> 429", r, 429, "LOCKED")
+    check("... still locked", crypt_state() == (True, False))
+    wait = max(wait, int(r.headers.get("Retry-After", "0") or 0))
+    note(f"waiting {wait + 1} s (Retry-After)")
+    time.sleep(wait + 1)
+    check("after the wait retry_after is 0 again", jr(call("GET", "/api/crypt")).get("retry_after") == 0)
+
+    # unlock with password; data survived
+    r = cpost("/api/crypt/unlock", {"password": pw})
+    check("unlock with the password after the wait", okr(r), f"{r.status_code} {jcode(r)}")
+    check("unlocked again; owner usb or app", crypt_state() == (True, True)
+          and status().get("drive", {}).get("owner") in ("usb", "app"))
+    check("unlock when already unlocked -> 200 without check",
+          okr(cpost("/api/crypt/unlock", {"password": "egal-" + os.urandom(4).hex() + "-xx"})))
+    if not ensure_app():
+        check("file manager owns the drive again", False)
+        return
+    check("after unlock: file intact (SHA-256)", sha(download(P).content) == sha(data))
+
+    # unlock with the recovery key (lower case, no dashes)
+    expect("lock before recovery unlock", cpost("/api/crypt/lock"), 200)
+    r = cpost("/api/crypt/unlock", {"recovery_key": key.replace("-", "").lower()}, tok=u or DEF)
+    check("unlock with the recovery key (lower case, no dashes)" + (" as user" if u else ""), okr(r),
+          f"{r.status_code} {jcode(r)}")
+    check("... unlocked, file intact", crypt_state() == (True, True) and ensure_app() and sha(download(P).content) == sha(data))
+
+    # password change (only with an unlocked drive); forgotten password: recovery key as `old`
+    expect("change password: weak new -> CRYPT_WEAK_PASSWORD",
+           cpost("/api/crypt/password", {"old": pw, "new": "kurz"}), 400, "CRYPT_WEAK_PASSWORD")
+    r = cpost("/api/crypt/password", {"old": pw, "new": new_pw})
+    check("change password (unlocked)", okr(r), f"{r.status_code} {jcode(r)}")
+    if okr(r):
+        S.crypt_pw = new_pw
+    check("... state unchanged (unlocked), no recovery key in the answer",
+          crypt_state() == (True, True) and "recovery_key" not in jr(r))
+    expect("lock", cpost("/api/crypt/lock"), 200)
+    r = cpost("/api/crypt/unlock", {"password": pw})
+    expect("old password no longer works -> CRYPT_WRONG_PASSWORD", r, 403, "CRYPT_WRONG_PASSWORD")
+    expect("change password while locked -> 423 DRIVE_LOCKED",
+           cpost("/api/crypt/password", {"old": new_pw, "new": pw}), 423, "DRIVE_LOCKED")
+    expect("new recovery key while locked -> 423 DRIVE_LOCKED",
+           cpost("/api/crypt/recovery", {"password": new_pw}), 423, "DRIVE_LOCKED")
+    check("... state unchanged (locked)", crypt_state() == (True, False))
+    r = cpost("/api/crypt/unlock", {"recovery_key": key})
+    check("forgotten password: unlock with the recovery key (still valid after the password change)", okr(r),
+          f"{r.status_code} {jcode(r)}")
+    r = cpost("/api/crypt/password", {"old": key, "new": pw})
+    check("change password with old = recovery key (back to the original)", okr(r), f"{r.status_code} {jcode(r)}")
+    if okr(r):
+        S.crypt_pw = pw
+    r = cpost("/api/crypt/lock")
+    r = cpost("/api/crypt/unlock", {"password": pw})
+    check("unlock with the password after the change", okr(r) and crypt_state() == (True, True))
+    if not ensure_app():
+        check("file manager owns the drive again", False)
+        return
+    check("... file still intact", sha(download(P).content) == sha(data))
+
+    # new recovery key (drive unlocked): old key stops working, new key unlocks
+    expect("recovery without password -> BAD_REQUEST", cpost("/api/crypt/recovery", {}), 400, "BAD_REQUEST")
+    r = cpost("/api/crypt/recovery", {"password": pw})
+    key2 = jr(r).get("recovery_key", "")
+    check("new recovery key (confirmed with the drive password): 200, valid format, different",
+          okr(r) and RECOVERY_RE.fullmatch(key2) is not None and key2 != key, f"{r.status_code} {jcode(r)}")
+    if not RECOVERY_RE.fullmatch(key2 or ""):
+        return
+    S.recovery = key2
+    check("... state unchanged (unlocked)", crypt_state() == (True, True))
+    r = cpost("/api/crypt/recovery", {"password": key2.lower()})
+    key3 = jr(r).get("recovery_key", "")
+    check("another new key confirmed with the current recovery key (lower case)",
+          okr(r) and RECOVERY_RE.fullmatch(key3) is not None and key3 not in (key, key2), f"{r.status_code} {jcode(r)}")
+    if not RECOVERY_RE.fullmatch(key3 or ""):
+        return
+    S.recovery = key3
+    expect("lock", cpost("/api/crypt/lock"), 200)
+    r = cpost("/api/crypt/unlock", {"recovery_key": key2})
+    expect("the previous recovery key no longer works -> CRYPT_WRONG_PASSWORD", r, 403, "CRYPT_WRONG_PASSWORD")
+    r = cpost("/api/crypt/unlock", {"recovery_key": key3})
+    check("the newest recovery key unlocks", okr(r) and crypt_state() == (True, True), f"{r.status_code} {jcode(r)}")
+    key = key3
+    if not ensure_app():
+        check("file manager owns the drive again", False)
+        return
+
+    # format on the encrypted, unlocked drive: no restart, stays encrypted and unlocked
+    r = call("POST", "/api/format", params={"confirm": "FORMAT"}, timeout=120)
+    check("format on the encrypted drive: 200 {ok, restart:false}", okr(r) and jr(r).get("restart") is False,
+          f"{r.status_code} {r.text[:80]}")
+    check("... still encrypted and unlocked, no restart", crypt_state() == (True, True))
+    check("... file system new: test folder gone, owner app, fs_ok",
+          T2 not in ls("")[1] and status().get("drive", {}).get("fs_ok") is True)
+
+    if a.keep_encrypted:
+        note("--keep-encrypted: stopping before disable; the drive stays encrypted and unlocked")
+        note(f"recovery key (record it, shown only here): {key}")
+        return
+
+    # disable
+    r = cpost("/api/crypt/disable", {"password": pw})
+    check("disable with the password", okr(r), f"{r.status_code} {jcode(r)}")
+    if not okr(r):
+        return
+    S.crypt_by_test = False
+    wait_online()
+    check("state plain: /api/crypt and status.crypt", crypt_state() == (False, True)
+          and status().get("crypt") == {"enabled": False, "unlocked": True, "damaged": False})
+    d = status().get("drive", {})
+    check("drive owner app and fs_ok after disable", d.get("owner") == "app" and d.get("fs_ok") is True, d)
+    check("disable formatted: test folder is gone", T2 not in ls("")[1])
+    expect("unlock after disable -> CRYPT_NOT_ENABLED", cpost("/api/crypt/unlock", {"password": pw}), 409,
+           "CRYPT_NOT_ENABLED")
+    d2 = make_3mf(16)
+    expect("plain again: mkdir", call("POST", "/api/mkdir", params={"path": T2}), 200)
+    check("plain again: upload + download identical",
+          okr(upload(f"{T2}/plain.3mf", d2)) and sha(download(f"{T2}/plain.3mf").content) == sha(d2))
+    expect("plain again: delete folder", call("POST", "/api/delete", params={"path": T2, "recursive": "1"}), 200)
+    S.extra_paths.remove(T2)
+
+    # erase (lost password and key): set up again, lock, then erase the key area and format plain
+    r = cpost("/api/crypt/setup", {"password": pw})
+    key = jr(r).get("recovery_key", "")
+    if not check("second setup (for the erase test): 200 with recovery_key", okr(r) and bool(key), f"{r.status_code} {jcode(r)}"):
+        return
+    S.crypt_by_test, S.crypt_pw, S.recovery = True, pw, key
+    expect("lock", cpost("/api/crypt/lock"), 200)
+    expect("erase without confirm -> BAD_REQUEST", cpost("/api/crypt/erase", {}), 400, "BAD_REQUEST")
+    expect("erase with a wrong confirm -> BAD_REQUEST", cpost("/api/crypt/erase", {"confirm": "yes"}), 400, "BAD_REQUEST")
+    if u:
+        expect("erase as role user -> FORBIDDEN_ROLE", cpost("/api/crypt/erase", {"confirm": "ERASE"}, tok=u),
+               403, "FORBIDDEN_ROLE")
+    check("... still encrypted and locked", crypt_state() == (True, False))
+    r = cpost("/api/crypt/erase", {"confirm": "ERASE"})
+    check("erase while locked (no password needed): 200", okr(r), f"{r.status_code} {jcode(r)}")
+    if not okr(r):
+        return
+    S.crypt_by_test = False
+    wait_online()
+    check("state plain: /api/crypt and status.crypt", crypt_state() == (False, True)
+          and status().get("crypt") == {"enabled": False, "unlocked": True, "damaged": False})
+    d = status().get("drive", {})
+    check("drive owner app and fs_ok after erase", d.get("owner") == "app" and d.get("fs_ok") is True, d)
+    expect("erase on a plain drive -> CRYPT_NOT_ENABLED", cpost("/api/crypt/erase", {"confirm": "ERASE"}), 409,
+           "CRYPT_NOT_ENABLED")
+    expect("unlock after erase -> CRYPT_NOT_ENABLED", cpost("/api/crypt/unlock", {"password": pw}), 409, "CRYPT_NOT_ENABLED")
+
+
+def sec_crypt_damaged(a):
+    head("9b. Drive encryption, state damaged (only when the target reports damaged:true)")
+    r = call("GET", "/api/crypt")
+    j = jr(r)
+    check("GET /api/crypt: enabled true, unlocked false, damaged true",
+          r.status_code == 200 and j.get("enabled") is True and j.get("unlocked") is False and j.get("damaged") is True, j)
+    check("status.crypt = {enabled:true, unlocked:false, damaged:true}",
+          status().get("crypt") == {"enabled": True, "unlocked": False, "damaged": True}, status().get("crypt"))
+    d = status().get("drive", {})
+    check("damaged: drive owner none, fs_ok false, needs_format false, total/free/files 0",
+          d.get("owner") == "none" and d.get("fs_ok") is False and d.get("needs_format") is False
+          and d.get("total") == 0 and d.get("free") == 0 and d.get("files") == 0, d)
+    T2, P = "_apitest_damaged", "_apitest_damaged/x.3mf"
+    for label, m, path, params, body in locked_reqs_f(T2, P):
+        expect(f"423 CRYPT_DAMAGED: {label}", call(m, path, params=params, body=body), 423, "CRYPT_DAMAGED")
+    expect("401 before CRYPT_DAMAGED without login: GET files", call("GET", "/api/files", params={"dir": ""}, tok=None),
+           401, "UNAUTHORIZED")
+    expect("unlock (password) -> 423 CRYPT_DAMAGED", call("POST", "/api/crypt/unlock", form={"password": "x" * 12}),
+           423, "CRYPT_DAMAGED")
+    expect("unlock (recovery key) -> 423 CRYPT_DAMAGED",
+           call("POST", "/api/crypt/unlock", form={"recovery_key": "7K3M-Q9XD-4WTB-HN2C-5RYE-8FGA-ZP6V-JC3S"}),
+           423, "CRYPT_DAMAGED")
+    expect("password change -> 423 CRYPT_DAMAGED",
+           call("POST", "/api/crypt/password", form={"old": "x" * 12, "new": "y" * 12}), 423, "CRYPT_DAMAGED")
+    expect("new recovery key -> 423 CRYPT_DAMAGED", call("POST", "/api/crypt/recovery", form={"password": "x" * 12}),
+           423, "CRYPT_DAMAGED")
+    reach = [call("GET", p).status_code for p in ("/api/status", "/api/session", "/api/users", "/api/devices",
+                                                  "/api/wifi/list", "/api/log", "/api/crypt")]
+    check("damaged: status, session, users, devices, wifi, log, crypt still reachable", reach == [200] * 7, reach)
+    expect("erase without confirm -> BAD_REQUEST", call("POST", "/api/crypt/erase", form={}), 400, "BAD_REQUEST")
+    expect("erase with a wrong confirm -> BAD_REQUEST", call("POST", "/api/crypt/erase", form={"confirm": "erase"}),
+           400, "BAD_REQUEST")
+    expect("401 without login: erase", call("POST", "/api/crypt/erase", form={"confirm": "ERASE"}, tok=None), 401,
+           "UNAUTHORIZED")
+    u = role_token()
+    if u:
+        expect("erase as role user -> FORBIDDEN_ROLE", call("POST", "/api/crypt/erase", form={"confirm": "ERASE"}, tok=u),
+               403, "FORBIDDEN_ROLE")
+    check("... still damaged", jr(call("GET", "/api/crypt")).get("damaged") is True)
+    if not a.crypt_test:
+        skip("erase of the damaged drive", "needs --crypt-test (--i-know-this-erases-the-drive)")
+        return
+    r = cpost("/api/crypt/erase", {"confirm": "ERASE"})
+    check("erase of the damaged drive: 200", okr(r), f"{r.status_code} {jcode(r)}")
+    if not okr(r):
+        return
+    S.damaged = False
+    wait_online()
+    j = jr(call("GET", "/api/crypt"))
+    check("after erase: plain, unlocked, not damaged",
+          j.get("enabled") is False and j.get("unlocked") is True and j.get("damaged") is False, j)
+    d = status().get("drive", {})
+    check("drive owner app and fs_ok after erase", d.get("owner") == "app" and d.get("fs_ok") is True, d)
+    expect("erase again -> CRYPT_NOT_ENABLED", cpost("/api/crypt/erase", {"confirm": "ERASE"}), 409, "CRYPT_NOT_ENABLED")
+
+
+FP_RE = re.compile(r"[0-9A-F]{2}(:[0-9A-F]{2}){31}")
+
+
+def sec_https(a):
+    head("9c. Optional HTTPS, non-destructive (status fields, roles, CA download; the setting is never changed)")
+    st = status()
+    keys = ("https", "https_active", "https_restart", "cert_sha256", "ca_sha256", "cert_expires")
+    check("status has https, https_active, https_restart, cert_sha256, ca_sha256, cert_expires",
+          all(k in st for k in keys), [k for k in keys if k not in st])
+    if not all(k in st for k in keys):
+        return
+    check("https / https_active / https_restart are booleans",
+          all(isinstance(st[k], bool) for k in ("https", "https_active", "https_restart")), st)
+    fp_ok = all(x == "" or FP_RE.fullmatch(x) for x in (st["cert_sha256"], st["ca_sha256"]))
+    check("cert_sha256 / ca_sha256: empty or AA:BB:... (32 bytes)", fp_ok, (st["cert_sha256"], st["ca_sha256"]))
+    check("cert_expires: empty or YYYY-MM-DD", re.fullmatch(r"(\d{4}-\d{2}-\d{2})?", st["cert_expires"]) is not None,
+          st["cert_expires"])
+    check("a certificate exists exactly when the CA fingerprint is set", (st["cert_sha256"] == "") == (st["ca_sha256"] == ""), st)
+    print(f"       HTTPS: setting {st['https']}, active {st['https_active']}, restart needed {st['https_restart']}")
+    expect("401 without login: POST settings/https", call("POST", "/api/settings/https", params={"value": st["https"] and "1" or "0"}, tok=None),
+           401, "UNAUTHORIZED")
+    expect("401 without login: GET https/ca.cer", call("GET", "/api/https/ca.cer", tok=None), 401, "UNAUTHORIZED")
+    expect("403 FORBIDDEN without X-PrintDrive header: POST settings/https",
+           call("POST", "/api/settings/https", params={"value": "1" if st["https"] else "0"}, csrf=False), 403, "FORBIDDEN")
+    expect("settings/https without any parameter -> BAD_REQUEST (nothing changes)",
+           call("POST", "/api/settings/https"), 400, "BAD_REQUEST")
+    u = role_token()
+    if u:
+        expect("FORBIDDEN_ROLE for user: POST settings/https",
+               call("POST", "/api/settings/https", params={"value": "1" if st["https"] else "0"}, tok=u), 403, "FORBIDDEN_ROLE")
+    else:
+        skip("role check for settings/https", "no temporary user possible")
+    r = call("GET", "/api/https/ca.cer", tok=u or DEF)
+    if st["ca_sha256"]:
+        check("GET https/ca.cer (role user): 200, application/x-x509-ca-cert, DER (starts with 0x30), not empty",
+              r.status_code == 200 and r.headers.get("Content-Type", "").split(";")[0].strip() == "application/x-x509-ca-cert"
+              and r.content[:1] == b"0" and len(r.content) > 0, f"{r.status_code} {r.headers.get('Content-Type')}")
+    else:
+        expect("no CA yet: GET https/ca.cer -> 404 NOT_FOUND", r, 404, "NOT_FOUND")
+    check("... the setting was not changed", status().get("https") == st["https"])
+
+
 # ------------------------------------------------------------------ cleanup
+
+def crypt_cleanup(a):
+    """After an aborted destructive test: unlock (password, then recovery key) and disable encryption,
+    unless --keep-encrypted."""
+    if not S.crypt_by_test:
+        return
+    enabled, unlocked = crypt_state()
+    if enabled is not True:
+        S.crypt_by_test = False
+        return
+    if S.keep_encrypted:
+        return
+    if unlocked is False:
+        r = cpost("/api/crypt/unlock", {"password": S.crypt_pw})
+        if not okr(r) and S.recovery:
+            r = cpost("/api/crypt/unlock", {"recovery_key": S.recovery})
+        if not okr(r):
+            check("cleanup: unlock the test-encrypted drive", False,
+                  f"{r.status_code} {jcode(r)}; recovery key: {S.recovery}")
+            return
+    ensure_app()
+    r = cpost("/api/crypt/disable", {"password": S.crypt_pw})
+    ok = okr(r)
+    check("cleanup: encryption of the test removed (drive plain again)", ok,
+          "" if ok else f"{r.status_code} {jcode(r)}; recovery key: {S.recovery}")
+    if ok:
+        S.crypt_by_test = False
+        wait_online()
+
 
 def cleanup(a):
     head("Cleanup")
@@ -815,6 +1427,7 @@ def cleanup(a):
         if call("GET", "/api/status", timeout=10).status_code != 200:
             note("main session no longer valid, cannot clean up through the API")
             return
+        crypt_cleanup(a)
         if S.T_made or S.extra_paths:
             if ensure_app():
                 if S.T_made:
@@ -847,6 +1460,10 @@ def cleanup(a):
             check("drive provided to USB again (original state)", okr(r) or status().get("drive", {}).get("owner") == "usb")
         elif S.orig_owner == "app":
             check("drive owner app (original state)", ensure_app())
+        if S.relock:
+            r = cpost("/api/crypt/lock")
+            check("drive locked again (original state)", okr(r) and crypt_state() == (True, False),
+                  f"{r.status_code} {jcode(r)}")
     except requests.RequestException as e:
         check("cleanup reachable", False, repr(e))
     for t in list(S.open_tokens):
@@ -863,7 +1480,7 @@ def cleanup(a):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="End-to-end test of the WiFi DataDrive API v3")
+    ap = argparse.ArgumentParser(description="End-to-end test of the WiFi DataDrive API v3 + v4")
     ap.add_argument("host", help="HOST or HOST:PORT")
     ap.add_argument("--user", default="admin")
     ap.add_argument("--password", required=True)
@@ -873,20 +1490,58 @@ def main():
                     help="do not take the drive from USB / switch the mode")
     ap.add_argument("--wifi-test", action="store_true", help="add and remove a dummy Wi-Fi network")
     ap.add_argument("--ota-probe", action="store_true", help="POST a tiny invalid body to /api/ota")
+    ap.add_argument("--drive-password", help="drive password: unlocks a locked drive first; needed for --crypt-test")
+    ap.add_argument("--crypt-test", action="store_true",
+                    help="DESTRUCTIVE: set up / lock / unlock / change / disable drive encryption (erases the drive)")
+    ap.add_argument("--i-know-this-erases-the-drive", action="store_true", help="confirmation for --crypt-test")
+    ap.add_argument("--keep-encrypted", action="store_true", help="with --crypt-test: stop before disable")
     a = ap.parse_args()
+    if a.crypt_test:
+        if not a.i_know_this_erases_the_drive or not a.drive_password:
+            ap.error("--crypt-test erases the drive: it needs BOTH --i-know-this-erases-the-drive and --drive-password PW")
+        if a.skip_destructive:
+            ap.error("--crypt-test cannot be combined with --skip-destructive")
+        if len(a.drive_password) < 12 or len(a.drive_password.encode("utf-8")) > 64:
+            ap.error("--drive-password for --crypt-test needs 12 characters at least and 64 bytes at most")
+    else:
+        if a.keep_encrypted:
+            ap.error("--keep-encrypted only makes sense with --crypt-test")
+        if a.i_know_this_erases_the_drive:
+            print("note: --i-know-this-erases-the-drive without --crypt-test does nothing", flush=True)
+    S.keep_encrypted = a.keep_encrypted
+    if a.crypt_test:
+        print("!!! --crypt-test: the drive of the target will be FORMATTED twice (setup and disable).\n"
+              "!!! ALL FILES ON THE MICROSD CARD WILL BE LOST (not recoverable). Encryption is switched on,\n"
+              "!!! used, and " + ("LEFT ON (--keep-encrypted)." if a.keep_encrypted else "switched off again.")
+              + "\n!!! Press Ctrl+C within 5 seconds to abort.", flush=True)
+        time.sleep(5)
     S.host, _, p = a.host.partition(":")
     S.port = int(p) if p else 80
     S.base = f"http://{S.host}:{S.port}"
     S.user, S.password, S.skip_destructive = a.user, a.password, a.skip_destructive
     code = 0
     try:
-        for fn in (sec_auth, sec_users, sec_devices, sec_files, sec_wifi, sec_status, sec_drive):
-            try:
-                fn(a)
-            except Abort:
-                raise
-            except Exception as e:      # a broken section must not hide the others or skip the cleanup
-                check(f"{fn.__name__} ran without exception", False, repr(e))
+        fns = [sec_auth]
+        done = []
+        while True:
+            for fn in fns:
+                if fn in done:
+                    continue
+                done.append(fn)
+                try:
+                    fn(a)
+                except Abort:
+                    raise
+                except Exception as e:      # a broken section must not hide the others or skip the cleanup
+                    check(f"{fn.__name__} ran without exception", False, repr(e))
+            if len(fns) > 1:
+                break
+            if S.damaged:       # nothing but the crypt endpoints works on a damaged drive
+                fns = [sec_auth, sec_crypt_damaged] + ([sec_crypt_destructive] if a.crypt_test else [])
+            else:
+                fns = [sec_auth, sec_users, sec_devices, sec_files, sec_wifi, sec_status, sec_drive, sec_scan, sec_crypt, sec_https]
+                if a.crypt_test:
+                    fns.append(sec_crypt_destructive)
     except Abort as e:
         print(f"\nSTOP: {e}")
         code = 2

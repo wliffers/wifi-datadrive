@@ -13,6 +13,12 @@
 //     cached FAT; optionally the device additionally re-enumerates (soft re-plug).
 //  5. Uploads go to a temp file and are renamed only after size + content checks.
 //
+// Encryption (components/pd_crypt) sits below all of this, directly above the medium: FatFs
+// gets pd_crypt's disk driver and the USB host's sectors go through pd_crypt (hook in usb_dev.c,
+// capacity in __wrap_tud_msc_capacity_cb below). The ownership logic is unchanged; "locked" is
+// an extra state in which the app side has no file system and the host gate stays closed.
+// Lock/unlock/setup/disable run under s_lock like an owner change.
+//
 // Folder operations (list, mkdir, delete, move, copy) call FatFs directly instead of going
 // through the VFS: the VFS silently truncates paths longer than 255 bytes (fixed buffer in
 // vfs_fat.c), and only FatFs can tell whether two paths name the same folder (case folding,
@@ -48,6 +54,7 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
+#include "pd_crypt.h"
 #include "sdkconfig.h"
 #include "tinyusb.h"
 #include "tinyusb_msc.h"
@@ -117,6 +124,7 @@ static tinyusb_msc_storage_handle_t s_storage;
 static drive_status_t s_st;
 static int s_open_downloads;
 static int64_t s_replug_until_ms;           // ignore DETACHED caused by our own re-plug
+static bool s_crypt_failed;                 // pd_crypt could not even be attached: blocked like DAMAGED
 
 // Status snapshot for drive_get_status() while a long folder operation holds s_lock
 // (copy, recursive delete). Ownership cannot change during such an operation.
@@ -155,6 +163,30 @@ static uint32_t idle_ms(bool seen, const volatile uint32_t *last)
     const uint32_t l = *last;
     const int32_t d = (int32_t)(now_ms() - l);
     return d < 0 ? 0 : (uint32_t)d;
+}
+
+/** DRIVE_OK, or why neither side may use the medium (locked / damaged encryption header). */
+static drive_result_t crypt_blocked(void)
+{
+    switch (pd_crypt_state()) {
+    case PD_CRYPT_PLAIN:
+    case PD_CRYPT_UNLOCKED: return s_crypt_failed ? DRIVE_ERR_CRYPT_DAMAGED : DRIVE_OK;
+    case PD_CRYPT_LOCKED:   return DRIVE_ERR_LOCKED;
+    default:                return DRIVE_ERR_CRYPT_DAMAGED;   // DAMAGED, or attach failed (NONE)
+    }
+}
+
+static drive_crypt_state_t crypt_state_public(void)
+{
+    if (s_crypt_failed) {
+        return DRIVE_CRYPT_DAMAGED;
+    }
+    switch (pd_crypt_state()) {
+    case PD_CRYPT_LOCKED:   return DRIVE_CRYPT_LOCKED;
+    case PD_CRYPT_UNLOCKED: return DRIVE_CRYPT_UNLOCKED;
+    case PD_CRYPT_PLAIN:    return DRIVE_CRYPT_OFF;
+    default:                return DRIVE_CRYPT_DAMAGED;
+    }
 }
 
 static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -197,6 +229,14 @@ const char *drive_result_str(drive_result_t r)
     case DRIVE_ERR_IO:           return "Lese- oder Schreibfehler auf dem Speicher.";
     case DRIVE_ERR_DIR_NOT_EMPTY: return "Der Ordner ist nicht leer.";
     case DRIVE_ERR_IS_DIR:       return "Das ist ein Ordner, keine Datei.";
+    case DRIVE_ERR_LOCKED:       return "Das Laufwerk ist verschlüsselt und gesperrt. Bitte zuerst mit dem Laufwerks-Passwort entsperren.";
+    case DRIVE_ERR_AUTH:         return "Falsches Laufwerks-Passwort oder falscher Wiederherstellungsschlüssel.";
+    case DRIVE_ERR_RETRY_LATER:  return "Zu viele Fehlversuche. Bitte etwas warten und es dann erneut versuchen.";
+    case DRIVE_ERR_WEAK_PASSWORD: return "Das Laufwerks-Passwort muss mindestens 12 Zeichen lang sein.";
+    case DRIVE_ERR_NOT_ENCRYPTED: return "Das Laufwerk ist nicht verschlüsselt.";
+    case DRIVE_ERR_ALREADY_ENCRYPTED: return "Das Laufwerk ist bereits verschlüsselt.";
+    case DRIVE_ERR_CRYPT_UNAVAILABLE: return "Verschlüsselung ist mit diesem Speicher nicht möglich (Selbsttest fehlgeschlagen, Speicher zu klein oder nicht löschbar).";
+    case DRIVE_ERR_CRYPT_DAMAGED: return "Der Schlüsselbereich des verschlüsselten Laufwerks ist beschädigt oder nicht lesbar. Die Daten sind nicht zugänglich; das Laufwerk kann nur gelöscht und neu formatiert werden.";
     default:                     return "Unbekannter Fehler.";
     }
 }
@@ -248,6 +288,18 @@ bool __wrap_tud_msc_test_unit_ready_cb(uint8_t lun)
         return false;
     }
     return __real_tud_msc_test_unit_ready_cb(lun);
+}
+
+void __real_tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count, uint16_t *block_size);
+
+// esp_tinyusb reports the size it read once at start-up. An encrypted volume is smaller (header
+// area) and its size changes with setup/disable; while locked 0 means "no medium" to TinyUSB.
+void __wrap_tud_msc_capacity_cb(uint8_t lun, uint32_t *block_count, uint16_t *block_size)
+{
+    __real_tud_msc_capacity_cb(lun, block_count, block_size);
+    if (pd_crypt_is_encrypted()) {
+        *block_count = pd_crypt_volume_sectors();
+    }
 }
 
 // Overrides TinyUSB weak default (not defined by esp_tinyusb).
@@ -358,12 +410,15 @@ static esp_err_t nvs_set_flag(const char *key, uint8_t val)
 /** Switch to APP. Caller holds s_lock and has checked the preconditions. */
 static drive_result_t do_mount_app(void)
 {
+    const bool host_had_it = s_st.owner == DRIVE_OWNER_USB;
     set_host_io(false);                         // refuse all new host I/O
     // Two barrier rounds: the first lets a WRITE(10) callback that already passed the
     // gate finish (and queue its deferred sector write), the second drains that write.
     if (!usb_dev_barrier(2000) || !usb_dev_barrier(2000)) {
         ESP_LOGE(TAG, "USB barrier timeout - host writes may still be pending");
-        set_host_io(true);
+        if (host_had_it) {
+            set_host_io(true);                  // only give back what the host had
+        }
         return DRIVE_ERR_IO;
     }
     tinyusb_msc_set_storage_mount_point(s_storage, TINYUSB_MSC_STORAGE_MOUNT_APP);
@@ -410,6 +465,10 @@ static void do_mount_usb(bool replug)
  */
 static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
 {
+    const pd_crypt_state_t cst = pd_crypt_state();
+    if (s_crypt_failed || (cst != PD_CRYPT_PLAIN && cst != PD_CRYPT_UNLOCKED)) {
+        return ESP_ERR_INVALID_STATE;            // locked / damaged: the volume cannot be used
+    }
     BYTE pdrv = 0xFF;
     ESP_RETURN_ON_ERROR(ff_diskio_get_drive(&pdrv), TAG, "no free FatFs drive");
     if (s_card) {
@@ -417,6 +476,9 @@ static esp_err_t probe_and_format(bool do_format, bool *fs_valid)
         ff_sdmmc_set_disk_status_check(pdrv, false);
     } else {
         ESP_RETURN_ON_ERROR(ff_diskio_register_wl_partition(pdrv, s_wl), TAG, "diskio register");
+    }
+    if (cst == PD_CRYPT_UNLOCKED) {
+        pd_crypt_diskio_register(pdrv);           // the volume behind the encryption header
     }
     char drv[3] = {(char)('0' + pdrv), ':', 0};
     FATFS *fs = calloc(1, sizeof(FATFS));
@@ -470,6 +532,92 @@ out:
     free(work);
     free(fs);
     return ret;
+}
+
+// ============================================================== encryption helpers (s_lock held)
+
+/** Status snapshot for drive_get_status() and BUSY for everybody else while we work. */
+static void long_op_begin(void)
+{
+    taskENTER_CRITICAL(&s_snap_mux);
+    s_snap = s_st;
+    taskEXIT_CRITICAL(&s_snap_mux);
+    s_long_op = true;
+}
+
+static void long_op_end(void)
+{
+    s_long_op = false;
+}
+
+/**
+ * Take the medium away from both sides: host gate closed, host writes already accepted drained
+ * (same double barrier as do_mount_app), FAT unmounted from the app. Afterwards owner APP
+ * without file system. The caller has checked the owner-change rules.
+ */
+static drive_result_t release_medium(void)
+{
+    const bool host_had_it = s_st.owner == DRIVE_OWNER_USB;
+    set_host_io(false);
+    if (!usb_dev_barrier(2000) || !usb_dev_barrier(2000)) {
+        ESP_LOGE(TAG, "USB barrier timeout - host writes may still be pending");
+        if (host_had_it) {
+            set_host_io(true);
+        }
+        return DRIVE_ERR_IO;
+    }
+    tinyusb_msc_set_storage_mount_point(s_storage, TINYUSB_MSC_STORAGE_MOUNT_USB);   // unmount (no-op if not mounted)
+    s_st.owner = DRIVE_OWNER_APP;
+    s_st.fs_ok = false;
+    s_st.total_bytes = s_st.free_bytes = 0;
+    s_st.file_count = 0;
+    return DRIVE_OK;
+}
+
+/** New FAT on the released medium (through pd_crypt if encrypted), then mount it for the app. */
+static drive_result_t format_and_mount(void)
+{
+    bool valid = false;
+    if (probe_and_format(true, &valid) != ESP_OK || !valid) {
+        s_st.needs_format = true;
+        return DRIVE_ERR_IO;
+    }
+    if (!s_card) {
+        nvs_set_flag("fmt_done", 1);
+    }
+    return do_mount_app();
+}
+
+static drive_result_t crypt_result(pd_crypt_err_t e)
+{
+    switch (e) {
+    case PD_CRYPT_OK:              return DRIVE_OK;
+    case PD_CRYPT_ERR_AUTH:        return DRIVE_ERR_AUTH;
+    case PD_CRYPT_ERR_WAIT:        return DRIVE_ERR_RETRY_LATER;
+    case PD_CRYPT_ERR_WEAK:        return DRIVE_ERR_WEAK_PASSWORD;
+    case PD_CRYPT_ERR_STATE:       return pd_crypt_is_encrypted() ? DRIVE_ERR_ALREADY_ENCRYPTED : DRIVE_ERR_NOT_ENCRYPTED;
+    case PD_CRYPT_ERR_UNSUPPORTED: return DRIVE_ERR_CRYPT_UNAVAILABLE;
+    case PD_CRYPT_ERR_DAMAGED:     return DRIVE_ERR_CRYPT_DAMAGED;
+    default:                       return DRIVE_ERR_IO;
+    }
+}
+
+/** true (and *r set) if the USB host holds the drive and may not lose it now (drive_set_owner rules). */
+static bool host_keeps_drive(bool force, drive_result_t *r)
+{
+    if (s_st.owner != DRIVE_OWNER_USB || !usb_dev_connected() || s_host_ejected) {
+        return false;
+    }
+    if (s_host_write_enabled && idle_ms(s_host_write_seen, &s_last_host_write_ms) < CONFIG_PD_HOST_WRITE_GUARD_MS) {
+        *r = DRIVE_ERR_HOST_WRITING;
+        return true;
+    }
+    if (!force) {
+        *r = DRIVE_ERR_HOST_ACTIVE;
+        return true;
+    }
+    ESP_LOGW(TAG, "taking the drive from the host (confirmed by user)");
+    return false;
 }
 
 // ============================================================== tasks / events
@@ -608,25 +756,47 @@ esp_err_t drive_init(void)
                  (unsigned long)s_st.sector_size, (unsigned)wl_size(s_wl));
     }
 
+    // Encryption header: decides whether the medium is plain or encrypted (= locked after boot).
+    pd_crypt_medium_t cm;
+    if (s_card) {
+        pd_crypt_medium_sdmmc(s_card, &cm);
+    } else {
+        pd_crypt_medium_wl(s_wl, &cm);
+    }
+    // Fail closed: if the medium cannot be classified it is blocked, never taken as plain.
+    const esp_err_t attach_err = pd_crypt_attach(&cm);
+    const pd_crypt_state_t cst = pd_crypt_state();
+    s_crypt_failed = cst == PD_CRYPT_NONE;
+    if (attach_err != ESP_OK || cst == PD_CRYPT_DAMAGED || s_crypt_failed) {
+        ESP_LOGE(TAG, "encryption header could not be evaluated (%s) - drive blocked",
+                 esp_err_to_name(attach_err));
+    }
+    const bool locked = crypt_blocked() != DRIVE_OK;    // locked or damaged
+
     // Format only if requested from the web UI for THIS medium, or (internal flash only)
     // on the very first boot. A microSD card is never formatted automatically.
+    // A locked / damaged medium cannot be probed or formatted; a pending request is dropped.
     uint8_t fmt_req = 0, fmt_done = 0;
     nvs_get_flag("fmt_req", &fmt_req);
     nvs_get_flag("fmt_done", &fmt_done);
     const uint8_t this_medium = s_card ? FMT_REQ_SD : FMT_REQ_FLASH;
     bool valid = false;
-    ESP_RETURN_ON_ERROR(probe_and_format(fmt_req == this_medium, &valid), TAG, "probe");
-    if (!valid && !fmt_done && !s_card) {
-        ESP_LOGW(TAG, "first boot: creating file system");
-        ESP_RETURN_ON_ERROR(probe_and_format(true, &valid), TAG, "format");
-    }
-    if (valid && !s_card) {
-        nvs_set_flag("fmt_done", 1);
+    if (locked) {
+        ESP_LOGI(TAG, "drive is %s - not mounted", cst == PD_CRYPT_LOCKED ? "encrypted and locked" : "blocked");
+    } else {
+        ESP_RETURN_ON_ERROR(probe_and_format(fmt_req == this_medium, &valid), TAG, "probe");
+        if (!valid && !fmt_done && !s_card) {
+            ESP_LOGW(TAG, "first boot: creating file system");
+            ESP_RETURN_ON_ERROR(probe_and_format(true, &valid), TAG, "format");
+        }
+        if (valid && !s_card) {
+            nvs_set_flag("fmt_done", 1);
+        }
     }
     if (fmt_req) {
         nvs_set_flag("fmt_req", 0);
     }
-    s_st.needs_format = !valid;
+    s_st.needs_format = !valid && !locked;
 
     // MSC driver with automatic ownership switching OFF - we decide (see header).
     const tinyusb_msc_driver_config_t drv_cfg = {
@@ -662,7 +832,8 @@ esp_err_t drive_init(void)
         cleanup_temp_file();
         refresh_fs_info();
     } else {
-        // No usable FS: keep it away from the host too, until formatted via the web UI.
+        // No usable FS (or locked): keep it away from the host too, until formatted via the
+        // web UI (or unlocked).
         s_st.owner = DRIVE_OWNER_APP;
         s_st.fs_ok = false;
     }
@@ -690,6 +861,7 @@ void drive_get_status(drive_status_t *out)
         *out = s_snap;
         taskEXIT_CRITICAL(&s_snap_mux);
     }
+    out->crypt = crypt_state_public();
     out->usb_connected = usb_dev_connected();
     out->usb_suspended = usb_dev_suspended();
     out->host_ejected = s_host_ejected;
@@ -703,6 +875,9 @@ drive_result_t drive_set_owner(drive_owner_t target, bool force)
     drive_result_t r = DRIVE_OK;
     if (!lock_unless_long_op()) {
         return DRIVE_ERR_BUSY;
+    }
+    if ((r = crypt_blocked()) != DRIVE_OK) {     // locked / damaged: neither side may have it
+        goto out;
     }
     if (target == s_st.owner) {
         goto out;
@@ -798,6 +973,10 @@ static void make_path(char *out, size_t len, const char *name)
 
 static drive_result_t require_app_fs(void)
 {
+    const drive_result_t blocked = crypt_blocked();
+    if (blocked != DRIVE_OK) {
+        return blocked;
+    }
     if (s_st.owner != DRIVE_OWNER_APP) {
         return DRIVE_ERR_WRONG_OWNER;
     }
@@ -1580,6 +1759,11 @@ drive_result_t drive_copy(const char *from, const char *to)
 drive_result_t drive_format(void)
 {
     lock();
+    const drive_result_t blocked = crypt_blocked();
+    if (blocked != DRIVE_OK) {
+        unlock();
+        return blocked;                          // damaged: drive_crypt_force_format()
+    }
     if (s_st.owner != DRIVE_OWNER_APP) {
         unlock();
         return DRIVE_ERR_WRONG_OWNER;
@@ -1587,6 +1771,18 @@ drive_result_t drive_format(void)
     if (s_st.upload_active || s_open_downloads > 0) {
         unlock();
         return DRIVE_ERR_BUSY;
+    }
+    if (pd_crypt_state() == PD_CRYPT_UNLOCKED) {
+        // The boot-time path below cannot work here: after the restart the drive is locked.
+        ESP_LOGW(TAG, "formatting the encrypted volume");
+        long_op_begin();
+        drive_result_t r = release_medium();
+        if (r == DRIVE_OK) {
+            r = format_and_mount();
+        }
+        long_op_end();
+        unlock();
+        return r;
     }
     // Formatting happens on the next boot, before USB/MSC is started (one code path).
     if (nvs_set_flag("fmt_req", s_card ? FMT_REQ_SD : FMT_REQ_FLASH) != ESP_OK) {
@@ -1922,4 +2118,300 @@ void drive_restart_to_download(void)
 {
     drive_prepare_restart(true);
     board_restart_to_download_mode();   // USB shutdown handler detaches first
+}
+
+// ============================================================== encryption
+
+void drive_crypt_get_info(drive_crypt_info_t *out)
+{
+    pd_crypt_info_t ci;
+    pd_crypt_get_info(&ci);                     // lock-free
+    memset(out, 0, sizeof(*out));
+    out->state = crypt_state_public();
+    out->available = ci.available && !s_crypt_failed;
+    out->hw_fast_path = ci.hw_fast_path;
+    out->retry_after_s = ci.retry_after_s;
+    out->failed_attempts = ci.failed_attempts;
+    out->kdf_iterations = ci.kdf_iterations;
+    out->volume_bytes = (uint64_t)ci.volume_sectors * PD_CRYPT_SECTOR_SIZE;
+}
+
+/** Common checks of setup/disable/force: owner APP, nothing open. */
+static drive_result_t crypt_require_idle_app(void)
+{
+    if (s_st.owner != DRIVE_OWNER_APP) {
+        return DRIVE_ERR_WRONG_OWNER;
+    }
+    return (s_st.upload_active || s_open_downloads > 0) ? DRIVE_ERR_BUSY : DRIVE_OK;
+}
+
+/** Header-only changes (password, recovery key): unlocked, no upload, host not writing. */
+static drive_result_t crypt_require_header_change(void)
+{
+    switch (crypt_state_public()) {
+    case DRIVE_CRYPT_UNLOCKED: break;
+    case DRIVE_CRYPT_LOCKED:   return DRIVE_ERR_LOCKED;
+    case DRIVE_CRYPT_DAMAGED:  return DRIVE_ERR_CRYPT_DAMAGED;
+    default:                   return DRIVE_ERR_NOT_ENCRYPTED;
+    }
+    if (s_st.upload_active) {
+        return DRIVE_ERR_BUSY;
+    }
+    if (s_st.owner == DRIVE_OWNER_USB && s_host_write_enabled &&
+        idle_ms(s_host_write_seen, &s_last_host_write_ms) < CONFIG_PD_HOST_WRITE_GUARD_MS) {
+        return DRIVE_ERR_HOST_WRITING;
+    }
+    return DRIVE_OK;
+}
+
+drive_result_t drive_crypt_setup(const char *password, char *recovery_out, size_t recovery_len)
+{
+    if (!recovery_out || recovery_len < DRIVE_CRYPT_RECOVERY_LEN) {
+        return DRIVE_ERR_IO;                     // programming error
+    }
+    recovery_out[0] = '\0';
+    if (pd_crypt_check_password(password) != PD_CRYPT_OK) {
+        return DRIVE_ERR_WEAK_PASSWORD;
+    }
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
+    drive_result_t r;
+    pd_crypt_info_t ci;
+    pd_crypt_get_info(&ci);
+    switch (crypt_state_public()) {
+    case DRIVE_CRYPT_OFF:     r = ci.available ? crypt_require_idle_app() : DRIVE_ERR_CRYPT_UNAVAILABLE; break;
+    case DRIVE_CRYPT_DAMAGED: r = DRIVE_ERR_CRYPT_DAMAGED; break;
+    default:                  r = DRIVE_ERR_ALREADY_ENCRYPTED; break;
+    }
+    if (r != DRIVE_OK) {
+        unlock();
+        return r;
+    }
+    ESP_LOGW(TAG, "setting up drive encryption (erases and formats the drive)");
+    long_op_begin();
+    r = release_medium();
+    if (r == DRIVE_OK) {
+        const pd_crypt_err_t e = pd_crypt_setup(password, recovery_out, recovery_len);
+        if (e == PD_CRYPT_OK) {
+            r = format_and_mount();
+            if (r == DRIVE_ERR_NO_FS) {
+                r = DRIVE_ERR_IO;
+            }
+        } else {
+            r = crypt_result(e);
+            if (pd_crypt_state() == PD_CRYPT_PLAIN) {
+                // Not encrypted, but the medium may already be (partly) erased: mount what is
+                // left, otherwise it needs formatting.
+                if (do_mount_app() != DRIVE_OK) {
+                    s_st.needs_format = true;
+                }
+            } else if (r == DRIVE_OK) {
+                r = DRIVE_ERR_IO;                // header written but locked (no memory for the keys)
+            }
+        }
+    }
+    long_op_end();
+    unlock();
+    return r;
+}
+
+drive_result_t drive_crypt_unlock(const char *secret, uint32_t *retry_after_s)
+{
+    if (retry_after_s) {
+        *retry_after_s = 0;
+    }
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
+    drive_result_t r = DRIVE_OK;
+    switch (crypt_state_public()) {
+    case DRIVE_CRYPT_LOCKED:   break;
+    case DRIVE_CRYPT_UNLOCKED: r = DRIVE_OK; goto out;
+    case DRIVE_CRYPT_DAMAGED:  r = DRIVE_ERR_CRYPT_DAMAGED; goto out;
+    default:                   r = DRIVE_ERR_NOT_ENCRYPTED; goto out;
+    }
+    long_op_begin();
+    const pd_crypt_err_t e = pd_crypt_unlock(secret, retry_after_s);
+    if (e == PD_CRYPT_OK) {
+        // Same path as an owner change: app first, then the host if one is attached.
+        if (do_mount_app() == DRIVE_ERR_NO_FS) {
+            s_st.needs_format = true;            // unlocked, but the volume has no file system
+        }
+        if (PROVIDE_ON_ATTACH && s_st.fs_ok && usb_dev_connected()) {
+            ESP_LOGI(TAG, "unlocked with a host attached -> providing drive");
+            do_mount_usb(REPLUG_ON_PROVIDE || s_host_ejected);
+        }
+    } else {
+        r = crypt_result(e);
+    }
+    long_op_end();
+out:
+    unlock();
+    return r;
+}
+
+drive_result_t drive_crypt_lock(bool force)
+{
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
+    drive_result_t r = DRIVE_OK;
+    switch (crypt_state_public()) {
+    case DRIVE_CRYPT_UNLOCKED: break;
+    case DRIVE_CRYPT_LOCKED:   goto out;
+    case DRIVE_CRYPT_DAMAGED:  r = DRIVE_ERR_CRYPT_DAMAGED; goto out;
+    default:                   r = DRIVE_ERR_NOT_ENCRYPTED; goto out;
+    }
+    if (s_st.upload_active || s_open_downloads > 0) {
+        r = DRIVE_ERR_BUSY;
+        goto out;
+    }
+    if (host_keeps_drive(force, &r)) {
+        goto out;
+    }
+    r = release_medium();
+    if (r == DRIVE_OK) {
+        pd_crypt_lock();
+        s_st.needs_format = false;
+        ESP_LOGI(TAG, "drive locked");
+    }
+out:
+    unlock();
+    return r;
+}
+
+drive_result_t drive_crypt_change_password(const char *old_secret, const char *new_password,
+                                           uint32_t *retry_after_s)
+{
+    if (retry_after_s) {
+        *retry_after_s = 0;
+    }
+    if (pd_crypt_check_password(new_password) != PD_CRYPT_OK) {
+        return DRIVE_ERR_WEAK_PASSWORD;
+    }
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
+    drive_result_t r = crypt_require_header_change();
+    if (r == DRIVE_OK) {
+        // Only the header sectors outside the volume change; host or app I/O may continue
+        // (pd_crypt serialises the medium access).
+        long_op_begin();
+        r = crypt_result(pd_crypt_change_password(old_secret, new_password, retry_after_s));
+        long_op_end();
+    }
+    unlock();
+    return r;
+}
+
+drive_result_t drive_crypt_new_recovery_key(const char *password, char *recovery_out, size_t recovery_len)
+{
+    if (!recovery_out || recovery_len < DRIVE_CRYPT_RECOVERY_LEN) {
+        return DRIVE_ERR_IO;                     // programming error
+    }
+    recovery_out[0] = '\0';
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
+    drive_result_t r = crypt_require_header_change();
+    if (r == DRIVE_OK) {
+        long_op_begin();
+        r = crypt_result(pd_crypt_new_recovery_key(password, recovery_out, recovery_len, NULL));
+        long_op_end();
+    }
+    unlock();
+    return r;
+}
+
+drive_result_t drive_crypt_disable(const char *secret, uint32_t *retry_after_s)
+{
+    if (retry_after_s) {
+        *retry_after_s = 0;
+    }
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
+    drive_result_t r;
+    switch (crypt_state_public()) {
+    case DRIVE_CRYPT_LOCKED:
+    case DRIVE_CRYPT_UNLOCKED: r = crypt_require_idle_app(); break;
+    case DRIVE_CRYPT_DAMAGED:  r = DRIVE_ERR_CRYPT_DAMAGED; break;
+    default:                   r = DRIVE_ERR_NOT_ENCRYPTED; break;
+    }
+    if (r != DRIVE_OK) {
+        unlock();
+        return r;
+    }
+    long_op_begin();
+    // Secret first: nothing is unmounted for a wrong one. Nobody uses the mounted volume
+    // meanwhile (s_lock held; owner APP, so the host gate is closed). After the header is gone
+    // the volume is only unmounted (no writes) and formatted plain.
+    const pd_crypt_err_t e = pd_crypt_disable(secret, retry_after_s);
+    if (e == PD_CRYPT_OK) {
+        ESP_LOGW(TAG, "drive encryption removed - formatting the plain drive");
+        r = release_medium();
+        if (r == DRIVE_OK) {
+            r = format_and_mount();
+            if (r == DRIVE_ERR_NO_FS) {
+                r = DRIVE_ERR_IO;
+            }
+        }
+        if (r != DRIVE_OK) {
+            s_st.needs_format = true;
+        }
+    } else {
+        r = crypt_result(e);
+    }
+    long_op_end();
+    unlock();
+    return r;
+}
+
+drive_result_t drive_crypt_force_format(void)
+{
+    if (!lock_unless_long_op()) {
+        return DRIVE_ERR_BUSY;
+    }
+    drive_result_t r = DRIVE_OK;
+    switch (crypt_state_public()) {
+    case DRIVE_CRYPT_LOCKED:
+    case DRIVE_CRYPT_DAMAGED:  break;
+    case DRIVE_CRYPT_UNLOCKED: r = DRIVE_ERR_ALREADY_ENCRYPTED; break;   // use disable or format
+    default:                   r = DRIVE_ERR_NOT_ENCRYPTED; break;
+    }
+    if (r == DRIVE_OK && s_crypt_failed) {
+        r = DRIVE_ERR_CRYPT_UNAVAILABLE;         // pd_crypt not attached: nothing can be done
+    }
+    if (r == DRIVE_OK) {
+        r = crypt_require_idle_app();
+    }
+    if (r != DRIVE_OK) {
+        unlock();
+        return r;
+    }
+    ESP_LOGW(TAG, "erasing the encryption header without a secret and formatting (all data lost)");
+    long_op_begin();
+    r = release_medium();
+    if (r == DRIVE_OK) {
+        const esp_err_t err = pd_crypt_force_plain();
+        if (pd_crypt_state() == PD_CRYPT_PLAIN) {
+            r = format_and_mount();
+            if (r == DRIVE_ERR_NO_FS) {
+                r = DRIVE_ERR_IO;
+            }
+            if (r == DRIVE_OK && err != ESP_OK) {
+                ESP_LOGW(TAG, "a header sector could not be overwritten (%s), but formatting worked",
+                         esp_err_to_name(err));
+            }
+        } else {
+            r = DRIVE_ERR_IO;
+        }
+        if (r != DRIVE_OK) {
+            s_st.needs_format = pd_crypt_state() == PD_CRYPT_PLAIN;
+        }
+    }
+    long_op_end();
+    unlock();
+    return r;
 }
