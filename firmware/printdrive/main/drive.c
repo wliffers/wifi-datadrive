@@ -662,6 +662,11 @@ static void drive_task(void *arg)
         switch (ev) {
         case EV_USB_ATTACHED:
             ESP_LOGI(TAG, "USB host attached");
+            if ((int64_t)(esp_timer_get_time() / 1000) < s_replug_until_ms) {
+                // Re-enumeration after our own soft re-plug: the owner was decided before it.
+                // Without this, a take-over within the re-plug second was undone here.
+                break;
+            }
             if (PROVIDE_ON_ATTACH && s_st.owner == DRIVE_OWNER_APP && s_st.fs_ok && !busy) {
                 do_mount_usb(false);
             }

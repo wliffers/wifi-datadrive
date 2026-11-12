@@ -83,13 +83,15 @@ static bool drain_body(httpd_req_t *req, size_t remaining)
 
 // ------------------------------------------------------------------ listing, download
 
+static char *s_list_mem;   // listing buffer, see web_files_register()
+
 static esp_err_t h_files(httpd_req_t *req)
 {
     const drive_result_t blk = web_crypt_block();
     if (blk != DRIVE_OK) {
         return web_send_result(req, blk);
     }
-    char *mem = malloc(LIST_BUF_SIZE + PATH_BUF_SIZE + ITEM_BUF_SIZE);
+    char *mem = s_list_mem;   // allocated once at start: a 33 KiB block is not reliably free later (TLS)
     if (!mem) {
         return web_send_error(req, "500 Internal Server Error", "NO_MEM", "Zu wenig Arbeitsspeicher.");
     }
@@ -101,7 +103,6 @@ static esp_err_t h_files(httpd_req_t *req)
     drive_list_info_t info;
     const drive_result_t r = p == PARAM_BAD ? DRIVE_ERR_BAD_NAME : drive_list(dir, list, LIST_BUF_SIZE, &info);
     if (r != DRIVE_OK) {
-        free(mem);
         return web_send_result(req, r);
     }
     httpd_resp_set_type(req, "application/json");
@@ -128,7 +129,6 @@ static esp_err_t h_files(httpd_req_t *req)
     }
     snprintf(item, ITEM_BUF_SIZE, "],\"truncated\":%s}", info.truncated ? "true" : "false");
     httpd_resp_sendstr_chunk(req, item);
-    free(mem);
     return httpd_resp_sendstr_chunk(req, NULL);
 }
 
@@ -467,5 +467,8 @@ static const web_route_t s_routes[] = {
 
 esp_err_t web_files_register(httpd_handle_t server)
 {
+    if (!s_list_mem) {
+        s_list_mem = malloc(LIST_BUF_SIZE + PATH_BUF_SIZE + ITEM_BUF_SIZE);
+    }
     return web_register_routes(server, s_routes, sizeof(s_routes) / sizeof(s_routes[0]));
 }
