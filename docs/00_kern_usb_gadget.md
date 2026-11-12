@@ -1,12 +1,12 @@
 # WiFi DataDrive – der Kern in Kurzform
 
-Stand: 2026-11-11, Firmware 0.2.0. Alles hier Beschriebene ist auf dem echten Gerät getestet, außer wo „offen“ steht.
+Stand: 2026-11-12, Firmware 0.2.0. Alles hier Beschriebene ist auf dem echten Gerät getestet, außer wo „offen“ steht.
 
 Das Projekt hieß bis Version 0.1.0 „WiFi PrintDrive“. Intern bleibt der alte Name stehen: Ordner `firmware/printdrive`, HTTP-Header `X-PrintDrive`, Code-Präfix `pd_`.
 
 ## Was es ist
 
-Ein **LILYGO T-Dongle-S3** (ESP32-S3, USB-A-Stecker, kleines LCD, microSD-Slot) verhält sich am USB-Gerät (PC, Drucker – technisch der USB-Host) wie ein normaler **USB-Stick**. Gleichzeitig hängt er im WLAN und bietet im Browser eine **Dateiverwaltung**: beliebige Dateien hochladen (auch per Drag & Drop), herunterladen, umbenennen, löschen. Ein Ziel bleibt: Druckdateien drahtlos auf den „Stick“ im 3D-Drucker legen (Bambu X2D, Test dort noch offen).
+Ein **LILYGO T-Dongle-S3** (ESP32-S3, USB-A-Stecker, kleines LCD, microSD-Slot) verhält sich am USB-Gerät (PC, Drucker – technisch der USB-Host) wie ein normaler **USB-Stick**. Gleichzeitig hängt er im WLAN und bietet im Browser eine **Dateiverwaltung**: beliebige Dateien hochladen (auch per Drag & Drop), herunterladen, umbenennen, löschen. Ein Ziel bleibt: Druckdateien drahtlos auf den „Stick“ im 3D-Drucker legen (Bambu X2D: Erkennen, Anzeigen und Drucken laut Rückmeldung des Besitzers vom 2026-11-12 erfolgreich, siehe „Offen“).
 
 ```text
 Browser (PC/Handy) --WLAN/HTTP--> [ ESP32-S3: Webserver | FAT | USB-MSC ] --USB--> PC / Drucker
@@ -220,9 +220,9 @@ docs/                  Bestandsaufnahme, Architektur, Plan, Build/Flash, Testpro
 
 ## Offen
 
-- **Bambu X2D:** nicht getestet. Für den Test: microSD nutzen, Nur-Lese-Modus erwägen, bei Problemen ohne Logport bauen (`CONFIG_TINYUSB_CDC_ENABLED=n`), dann ist es ein reines Massenspeichergerät.
+- **Bambu X2D:** Grundkompatibilität am 2026-11-12 vom Besitzer bestätigt (Rückmeldung „alles geklappt inklusive Drucken“, keine Messung des Entwicklers): Standard-Build (MSC + CDC-Logport, USB-Gerät darf schreiben), microSD 64 GB FAT32; Drucker erkennt das Laufwerk, zeigt die per Web hochgeladene `.gcode.3mf` und druckt daraus. Ein Build ohne Logport ist für den X2D nicht nötig. Upload vom Handy bei eingestecktem Dongle mit anschließend sichtbarer neuer Datei: laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt. Nicht geprüft bzw. nicht gemessen: lange Drucke, Nur-Lese-Modus am Drucker, „Dateiverwaltung aktivieren“ während eines Drucks, Stromaufnahme, interner Flash als Medium am Drucker, andere Druckermodelle; keine Logs oder Datenraten vom Drucker.
 - **Nur-Lese-Modus für das USB-Gerät:** eingebaut, am Gerät noch nicht geprüft.
 - **Weboberfläche ohne Anmeldung:** jeder im selben WLAN kann zugreifen. Passwortschutz zurückgestellt (braucht ein Konzept für „Passwort vergessen“).
 - **Ordner:** in der Weboberfläche nicht unterstützt (machbar, zurückgestellt).
 - **Weboberfläche am echten Handy:** Der Browser-Test (`tools/ui_test.py`, 566/566 am Testserver) lief mit Chromium im Handyformat; echtes iOS Safari und echtes Drag & Drop sind ungeprüft.
-- **3MF ist nicht automatisch druckbar:** Der Drucker braucht eine geslicete Datei (`.gcode.3mf`); welche Dateien der X2D über USB annimmt, klärt erst der Test.
+- **3MF ist nicht automatisch druckbar:** Der Drucker braucht eine geslicete Datei (`.gcode.3mf`); eine solche Datei hat der X2D vom Dongle gedruckt (2026-11-12). Andere Dateiarten am Drucker sind ungeprüft.

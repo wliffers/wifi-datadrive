@@ -20,7 +20,9 @@ LED-Farben), Phase 5 microSD (Grundfunktion), Phase 6 (Umbenennung, API v2 mit
 `api_test.py` 28/28, gzip-Auslieferung der neuen Weboberfläche). Am 2026-11-12 hat die neue
 Weboberfläche den Browser-Test am Testserver vollständig bestanden (`tools/ui_test.py`
 566/566, T6.4); die Endfassung ist auf dem Gerät. Nicht geprüft sind die Abläufe der
-Oberfläche am echten Gerät und an einem echten Handy. Offen ist Phase 4 (Bambu Lab X2D).
+Oberfläche am echten Gerät und an einem echten Handy. Phase 4 (Bambu Lab X2D): Die
+Grundkompatibilität hat der Besitzer am 2026-11-12 am Drucker bestätigt (erkannt, Datei
+angezeigt, gedruckt); Einzelpunkte und Messungen dort sind offen.
 Gefundene und behobene Fehler: FAT-Ausrichtung, USB-PHY beim Download-Modus, beide
 Modus-Knöpfe sichtbar, Verbindungsabbruch statt Fehlerantwort (`drain_body`), langsamer
 Web-Upload (2-KiB-Cluster), 32-Bit-Überlauf der Upload-Größe; siehe [06](06_risiken.md).
@@ -87,19 +89,25 @@ Automatisiert geprüft mit `tools/api_test.py` (T2.11).
 ## Phase 4 – Test am Bambu Lab X2D
 
 Ziel: Drucker erkennt das Laufwerk und druckt eine hochgeladene Datei.
-**Kompatibilität ist nicht verifiziert**, siehe [06_risiken.md](06_risiken.md).
+**Grundkompatibilität vom Besitzer verifiziert** (2026-11-12): Firmware 0.2.0 im
+Standard-Build (Verbundgerät MSC + CDC-Logport, USB-Gerät darf schreiben), microSD 64 GB
+FAT32. Grundlage ist die Rückmeldung des Besitzers („es hat am Drucker alles geklappt
+inklusive Drucken“), keine Messung des Entwicklers; am Drucker wurden weder Log noch
+Datenrate noch Stromaufnahme erfasst. Details: [05](05_testprotokoll.md) Phase 4,
+Restrisiken: [06_risiken.md](06_risiken.md).
 
 | Abnahmekriterium | Status |
 |---|---|
-| Drucker erkennt das Laufwerk und listet Dateien | **offen** |
-| Druck einer per Web hochgeladenen, gesliceten `.gcode.3mf` startet | **offen** |
-| Upload während der Drucker angesteckt ist, danach neue Datei am Drucker sichtbar | **offen** |
-| Empfohlene Einstellungen für den Drucker ermittelt (Host nur lesen? CDC aus? Re-Plug?) | **offen** |
-| Stromversorgung am Drucker-USB stabil (kein Reset bei WLAN-Last, mit microSD) | **offen** |
+| Drucker erkennt das Laufwerk und listet Dateien | **verifiziert** (Besitzer, 2026-11-12) |
+| Druck einer per Web hochgeladenen, gesliceten `.gcode.3mf` startet | **verifiziert** (Besitzer, 2026-11-12; Druck erfolgreich) |
+| Upload während der Drucker angesteckt ist, danach neue Datei am Drucker sichtbar | laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt |
+| Empfohlene Einstellungen für den Drucker ermittelt (Host nur lesen? CDC aus? Re-Plug?) | teilweise: Standard-Build funktioniert, Build ohne CDC nicht nötig; Host nur lesen am Drucker **offen** |
+| Stromversorgung am Drucker-USB stabil (kein Reset bei WLAN-Last, mit microSD) | kein Ausfall gemeldet; nicht gemessen, lange Drucke **offen** |
 
-Empfehlung für den ersten Test: microSD-Karte verwenden (FAT32, groß, schnell), Host nur
-lesen erwägen (vorher T1.4 am PC), bei Problemen mit dem Composite-Gerät mit
-`CONFIG_TINYUSB_CDC_ENABLED=n` bauen.
+Empfehlung für den Drucker: microSD-Karte verwenden (FAT32, groß, schnell), Standard-Build.
+Nicht geprüft: lange Drucke, Host nur lesen am Drucker (vorher T1.4 am PC),
+„Dateiverwaltung aktivieren“ während eines Drucks, Stromaufnahme, interner Flash als Medium
+am Drucker, andere Druckermodelle.
 
 ## Phase 5 – microSD
 
@@ -143,7 +151,9 @@ Schreib-Schutzfrist) bleiben unverändert. Ergebnisse: [05](05_testprotokoll.md)
 1. Neue Weboberfläche am echten Gerät und an einem echten Handy durchspielen (T6.4 B14–B16:
    Abläufe am Dongle, iOS Safari, echtes Drag & Drop).
 2. Nur-Lese-Modus des Hosts am PC prüfen (T1.4).
-3. Drucker-Test (Phase 4) mit microSD-Karte.
+3. Restpunkte am Drucker (Phase 4, X5–X10): Upload bei eingestecktem Dongle einzeln
+   bestätigen, langer Druck, Host nur lesen, Verhalten bei Übernahme (kein Druck aktiv),
+   Stromaufnahme.
 4. Restpunkte: `HOST_WRITING`/`BUSY` (T2.2, T2.3), Stromausfall (T2.8), Flash-Modus per Web,
    BOOT-Bestätigung, LED-Farbnuancen.
 

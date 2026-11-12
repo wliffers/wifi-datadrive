@@ -8,24 +8,33 @@ Namen wie `firmware/printdrive`, `X-PrintDrive` und `pd_` bleiben. Mit der Umben
 eine neue Weboberfläche und die API Version 2 ([07_api.md](07_api.md)); die Sicherungen des
 Laufwerks sind unverändert. Neue Risiken daraus stehen in den Abschnitten 2, 4 und 5.
 
-## 1. Drucker-Kompatibilität (Bambu Lab X2D) – nicht verifiziert
+## 1. Drucker-Kompatibilität (Bambu Lab X2D) – Grundkompatibilität verifiziert
+
+Am 2026-11-12 hat der Besitzer den Dongle am X2D betrieben (Firmware 0.2.0, Standard-Build
+MSC + CDC, USB-Gerät darf schreiben, microSD 64 GB FAT32): Laufwerk erkannt, per Web
+hochgeladene `.gcode.3mf` angezeigt und erfolgreich gedruckt ([05](05_testprotokoll.md)
+Phase 4). Grundlage ist seine Rückmeldung, keine Messung des Entwicklers; Logs, Datenraten
+und Stromaufnahme wurden am Drucker nicht erfasst. Das Kompatibilitätsrisiko sinkt damit von
+offen auf **niedrig (Restrisiko)**: lange Drucke, Nur-Lese-Modus, Übernahme während eines
+Drucks, interner Flash und andere Druckermodelle sind ungeprüft.
 
 | Risiko | Bew. | Details | Gegenmaßnahme / Prüfung |
 |---|---|---|---|
-| Dateisystem-Erwartung | mittel | microSD: **FAT32** (verifiziert unter Windows 11, 64-GB-Karte). Interner Flash: MBR + **FAT12** (4-KiB-Cluster; mit `CONFIG_PD_FAT_CLUSTER_KB=2` FAT16, aber langsam). Ob der X2D FAT12/FAT16 akzeptiert, ist unbekannt; FAT32 ist bei ca. 11 MB nicht normgerecht erzeugbar. exFAT wird nicht unterstützt (Abschnitt 4). | Test X2/X10 in [05](05_testprotokoll.md); für den Drucker microSD (FAT32) verwenden |
+| Dateisystem-Erwartung | niedrig (mit microSD) | microSD: **FAT32** – am X2D akzeptiert (64-GB-Karte, 2026-11-12), unter Windows 11 verifiziert. Interner Flash: MBR + **FAT12** (4-KiB-Cluster; mit `CONFIG_PD_FAT_CLUSTER_KB=2` FAT16, aber langsam). Ob der X2D FAT12/FAT16 akzeptiert, ist unbekannt (nicht geprüft); FAT32 ist bei ca. 11 MB nicht normgerecht erzeugbar. exFAT wird nicht unterstützt (Abschnitt 4). | Für den Drucker microSD (FAT32) verwenden; interner Flash am Drucker offen |
 | Kapazität | niedrig (mit microSD) | Interner Flash: nutzbar 11.288.576 Byte – viele `.3mf` (mit Vorschaubildern, Mehrplatten-Projekten) sind größer. Mit microSD entschärft (64-GB-Karte verifiziert); Grenze dann 4 GiB pro Datei (FAT32, 413 `TOO_LARGE`). | microSD verwenden; ohne Karte Dateigrößen beachten |
-| Sektorgröße | mittel | Host sieht 512-B-Sektoren (gängig für USB-Sticks, Windows problemlos). Annahme: auch am Drucker unproblematisch. | Test X2 |
+| Sektorgröße | niedrig (für X2D erledigt) | Host sieht 512-B-Sektoren (gängig für USB-Sticks, Windows problemlos). Am X2D mit microSD unproblematisch (X2, 2026-11-12). | – |
 | Fremddateien vom PC | niedrig | Der Dropbox-Desktop-Client schreibt `.dropbox.device` auf jedes Wechsellaufwerk, auch auf den Dongle (beobachtet 2026-11-11). Harmlos, der Drucker sieht die Datei aber. | Datei löschen oder Dropbox-Option für Wechseldatenträger abschalten |
-| Composite-Gerät mit CDC | mittel | MSC + CDC-Log-Port in einem Gerät könnte einen Drucker-USB-Stack verwirren. | Für den Drucker-Test `CONFIG_TINYUSB_CDC_ENABLED=n` (PID wird 4002, kein 1200-Baud-Touch) |
-| Stromaufnahme | mittel | Deskriptor meldet 500 mA; WLAN-Spitzen beim Senden, dazu die microSD-Karte beim Schreiben (nicht gemessen). Hersteller nennt max. 800 mA. Ob der Drucker-USB-Port genug liefert, ist offen. | Test X1/X10 (Neustart-Zyklen?), ggf. WLAN-Sendeleistung reduzieren |
-| Medienwechsel | mittel | Unklar, ob der Drucker UNIT ATTENTION / Soft-Re-Plug korrekt verarbeitet und neue Dateien sieht. | Test X5; Varianten mit/ohne `CONFIG_PD_REPLUG_ON_PROVIDE` |
-| Druckabbruch durch Übernahme | mittel | „Dateiverwaltung aktivieren“ mit Bestätigung (force) entzieht dem Drucker das Medium – auch ein Upload bei aktivem USB-Laufwerk löst das nach Rückfrage aus. Liest der Drucker während des Drucks vom Stick, bricht der Druck ab. | Weboberfläche warnt im Dialog „Laufwerk vom USB-Gerät trennen?“; am Drucker vor der Übernahme auswerfen. Verhalten beim X2D offen |
+| Composite-Gerät mit CDC | erledigt für X2D | MSC + CDC-Log-Port in einem Gerät könnte einen Drucker-USB-Stack verwirren. Der X2D kommt mit dem Standard-Build (PID 4003) zurecht (2026-11-12); ein Build ohne CDC ist dort nicht nötig. Für andere Drucker unbekannt. | Nur bei Problemen an anderen Druckern: `CONFIG_TINYUSB_CDC_ENABLED=n` (PID wird 4002, kein 1200-Baud-Touch) |
+| Stromaufnahme | mittel | Deskriptor meldet 500 mA; WLAN-Spitzen beim Senden, dazu die microSD-Karte beim Schreiben (nicht gemessen). Hersteller nennt max. 800 mA. Am X2D kein Ausfall gemeldet (Upload und Druck mit microSD, 2026-11-12), aber nicht gemessen und nicht über lange Drucke beobachtet. | Messung bzw. langer Druck (X1/X10), ggf. WLAN-Sendeleistung reduzieren |
+| Medienwechsel | niedrig bis mittel | Ob der Drucker UNIT ATTENTION / Soft-Re-Plug korrekt verarbeitet und nach einem Upload bei eingestecktem Dongle neue Dateien sieht: am X2D laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt (X5, 2026-11-12). | X5 einzeln bestätigen; bei Problemen Varianten mit/ohne `CONFIG_PD_REPLUG_ON_PROVIDE` |
+| Druckabbruch durch Übernahme | mittel | „Dateiverwaltung aktivieren“ mit Bestätigung (force) entzieht dem Drucker das Medium – auch ein Upload bei aktivem USB-Laufwerk löst das nach Rückfrage aus. Liest der Drucker während des Drucks vom Stick, bricht der Druck ab. | Weboberfläche warnt im Dialog „Laufwerk vom USB-Gerät trennen?“; am Drucker vor der Übernahme auswerfen. Verhalten beim X2D weiter offen (X6; während eines Drucks nicht geprüft) |
 | Full Speed | niedrig | USB 1.1 Full Speed (12 Mbit/s brutto). Gemessen: Lesen 753 KB/s am PC (Flash) – Laden einer 5-MB-Datei dauert ca. 7 s; microSD schreiben über USB 832 KB/s. Beim Schreiben ins interne Flash ist nicht USB, sondern das Flash der Engpass (Abschnitt 4). | Messung T2.10 |
 
 ## 2. Dateiformat
 
-- Der X2D druckt (Annahme) nur **gesliceste** Dateien (`.gcode.3mf` aus Bambu Studio).
-  Ein reines Projekt-`.3mf` ohne G-Code ist am Drucker nicht druckbar, wird von der
+- Der X2D druckt eine **gesliceste** `.gcode.3mf` vom Dongle (vom Besitzer bestätigt,
+  2026-11-12). Annahme bleibt: Ein reines Projekt-`.3mf` ohne G-Code ist am Drucker nicht
+  druckbar; es wird von der
   Firmware aber genauso angenommen (Prüfung nur auf ZIP-Struktur, nicht auf Inhalt).
 - Seit 0.2.0 werden **alle Dateitypen** angenommen (`CONFIG_PD_UPLOAD_ALL_TYPES=y`,
   Default). Geprüft wird nur der Name (Zeichen, Länge) und bei `.3mf` die ZIP-Struktur;
@@ -53,7 +62,8 @@ diese Punkte im Quellcode der Komponente prüfen und T1.3, T2.2, T2.4 wiederhole
 Stand der Prüfung: Phase 0, 1, 2 und 5 (Grundfunktion) unter Windows 11 am 2026-11-11
 getestet, ebenso Umbenennung, API v2 (`api_test.py` 28/28) und gzip-Auslieferung (Phase 6).
 Die neue Weboberfläche hat am 2026-11-12 den Browser-Test am Testserver bestanden
-(`tools/ui_test.py` 566/566, T6.4). Noch nicht geprüft: Nur-Lese-Modus des Hosts, die
+(`tools/ui_test.py` 566/566, T6.4). Am Bambu Lab X2D hat der Besitzer am 2026-11-12 die
+Grundfunktion bestätigt (Abschnitt 1). Noch nicht geprüft: Nur-Lese-Modus des Hosts, die
 Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 
 | Risiko | Bew. | Details |
@@ -71,7 +81,7 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 | Download-Modus per Software | niedrig | 1200-Baud-Touch **verifiziert** (2026-11-11). TinyUSB schaltet den USB-PHY per `RTC_CNTL_USB_CONF` auf den OTG-Controller, das übersteht einen Software-Reset; ohne Gegenmaßnahme erschien im Download-Modus **kein** USB-Gerät (verifiziert). Fix: `board_restart_to_download_mode()` gibt den PHY vorher an USB-Serial/JTAG zurück (wie Arduinos `usb_switch_to_cdc_jtag()`). Web „Flash-Modus“ und BOOT 5 s nutzen dieselbe Funktion, einzeln noch nicht getestet. Update-Schleife `tools/flash.ps1 -Project printdrive -Build` mehrfach vollautomatisch verifiziert. Rückfall: aus-/einstecken (normaler Start), BOOT halten + einstecken. |
 | Strapping-Latch nach BOOT + Einstecken | niedrig | Nach manuellem Download-Modus bleibt jeder weitere Reset über USB-Serial/JTAG (esptool `hard_reset`, RTS) im Download-Modus (`boot:0x0 (DOWNLOAD(USB/UART0))`, `GPIO_STRAP_REG` = 0), obwohl die Taste losgelassen ist (`GPIO_IN` Bit 0 = 1) – bis zum echten Aus-/Einstecken. Wirkt wie „Firmware startet nicht“. Beim 1200-Baud-Touch nicht beobachtet. |
 | Windows bei Medienwechsel | niedrig | Verifiziert: „Auswerfen“ im Explorer kommt als Auswurf an (`host ejected the drive`), Soft-Re-Plug nach BOOT kurz → Laufwerk erscheint neu, Daten lesbar; Übernahme mit `force` und Bereitstellen per Web mit neuer Datei aus dem Web-Upload (Datei auf `E:` identisch, T2.11). |
-| Nur-Lese-Modus des Hosts | mittel | Implementiert (Sense `DATA PROTECT`, `tud_msc_is_writable_cb`), auf Hardware **nicht getestet** (T1.4). Für den Drucker empfohlen, daher vorher am PC prüfen. |
+| Nur-Lese-Modus des Hosts | mittel | Implementiert (Sense `DATA PROTECT`, `tud_msc_is_writable_cb`), auf Hardware **nicht getestet** (T1.4). Der X2D arbeitet auch mit schreibendem Host (2026-11-12); ob er ein schreibgeschütztes Medium akzeptiert, ist offen (X8), vorher am PC prüfen. |
 | Neue Weboberfläche nur am Testserver durchgetestet | niedrig | Die Oberfläche wurde für 0.2.0 komplett neu geschrieben. Der Browser-Test aller Zustände ist bestanden (T6.4, `tools/ui_test.py` 566/566, PC und Handy-Emulation, hell/dunkel; 26 Fehler gefunden und behoben). Grenzen: Testserver statt Gerät, synthetische Drag-&-Drop-Ereignisse. Am Gerät geprüft sind nur Auslieferung der Endfassung, API und `datadrive.local` (T6.2, T6.3); die Abläufe der Oberfläche am echten Gerät (Zeitverhalten, Re-Plug, Formatieren, Wartungsmodus) und echtes Drag & Drop stehen aus (B14, B16). Fehler in der Oberfläche können die Sicherungen des Laufwerks nicht aushebeln, die liegen in der Firmware. |
 | Weboberfläche am echten Handy ungeprüft | mittel | Die Handy-Ansicht ist nur emuliert geprüft (Chromium mit iPhone-User-Agent, 390×844 und 320 px Breite). Ein echter Handy-Browser fehlt, vor allem iOS Safari: Bildschirmtastatur (verdeckte Eingabefelder und Dialoge), Safe Areas, Herunterladen über das `download`-Attribut, Bottom Sheet (B15). |
 | BOOT-Bestätigung per zweitem Druck | niedrig | Übernahme per BOOT-Taste bei aktivem USB-Gerät verlangt einen zweiten Druck innerhalb von 4 s; am Gerät noch nicht geprüft (T2.2). |
@@ -105,9 +115,9 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 2. UART0 ist an GPIO43/44 (QWIIC) erreichbar.
 3. ~~Der ROM-Bootloader meldet sich nach Software-Neustart in den Download-Modus als 303A:1001~~ – verifiziert 2026-11-11, aber nur mit PHY-Rückgabe (Abschnitt 4).
 4. ~~Windows sendet beim Auswerfen START STOP UNIT mit LOEJ = 1, START = 0~~ – verifiziert 2026-11-11 (Auswurf wird erkannt).
-5. Der X2D liest FAT32 (microSD) bzw. FAT12/FAT16 (interner Flash) von einem USB-MSC-Gerät mit 512-B-Sektoren.
-6. Der X2D druckt gesliceste `.gcode.3mf` vom USB-Stick.
-7. Der X2D kommt mit dem Composite-Gerät (MSC + CDC) zurecht; sonst Build mit `CONFIG_TINYUSB_CDC_ENABLED=n`.
+5. ~~Der X2D liest FAT32 (microSD) von einem USB-MSC-Gerät mit 512-B-Sektoren~~ – vom Besitzer bestätigt 2026-11-12. Weiter Annahme: FAT12/FAT16 (interner Flash) am X2D.
+6. ~~Der X2D druckt gesliceste `.gcode.3mf` vom USB-Stick~~ – vom Besitzer bestätigt 2026-11-12.
+7. ~~Der X2D kommt mit dem Composite-Gerät (MSC + CDC) zurecht~~ – vom Besitzer bestätigt 2026-11-12, Build ohne CDC nicht nötig.
 8. Die Uhr des hochladenden Browsers stimmt (Quelle aller Zeitstempel, Abschnitt 4).
 9. Der X2D stört sich nicht an fremden Dateitypen auf dem Laufwerk.
 
@@ -115,9 +125,11 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 
 | Risiko | Stand |
 |---|---|
-| Kompatibilität mit dem Bambu Lab X2D | offen (Phase 4) |
+| Kompatibilität mit dem Bambu Lab X2D | niedrig (Restrisiko): Grundfunktion inkl. Druck vom Besitzer bestätigt (2026-11-12, microSD FAT32, Standard-Build mit CDC); ungeprüft: lange Drucke, Nur-Lese-Modus, Übernahme während eines Drucks, interner Flash, andere Drucker |
+| Upload bei eingestecktem Dongle am X2D (Medienwechsel) | laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt (X5) |
+| Composite-Gerät mit CDC am Drucker | für X2D erledigt, Build ohne CDC nicht nötig |
 | Kapazität / Schreibrate des internen Flashs | durch microSD entschärft |
-| Kartenqualität, Stromaufnahme mit Karte | ungetestet |
+| Kartenqualität, Stromaufnahme mit Karte | nicht gemessen (am X2D kein Ausfall gemeldet), nur eine Karte getestet |
 | exFAT | nicht unterstützt, Karte per Web auf FAT32 formatieren |
 | Nur-Lese-Modus des Hosts | ungetestet |
 | Nuancen in LED-Farben | offen |

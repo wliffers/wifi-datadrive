@@ -23,7 +23,9 @@ wie sie am Testtag eingetragen wurden, und nennen deshalb zum Teil die alten Nam
 T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 6
 (Umbenennung, API v2 28/28, gzip-Auslieferung) bestanden, Browser-Test der neuen
 Weboberfläche am Testserver bestanden (T6.4: `tools/ui_test.py` 566/566), offen dort die
-Abläufe am echten Gerät und am echten Handy (B14–B16); Phase 4 offen.
+Abläufe am echten Gerät und am echten Handy (B14–B16); Phase 4 (Bambu Lab X2D):
+Grundkompatibilität laut Rückmeldung des Besitzers bestanden (X2–X4), X5 nicht separat
+bestätigt, X6, X8, X9 offen.
 
 ## Phase 0 – Smoke-Test
 
@@ -170,7 +172,7 @@ funktioniert. Danach Einstellung wieder aktivieren.
 
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
-| **offen** | – | Weboberfläche ist inzwischen verfügbar; vor dem Drucker-Test durchführen (Empfehlung Phase 4) |
+| **offen** | – | Weboberfläche ist inzwischen verfügbar. Der Drucker-Test vom 2026-11-12 lief ohne Nur-Lese-Modus; vor X8 am PC durchführen |
 
 ## Phase 2 – Web und Umschalten
 
@@ -340,25 +342,40 @@ angelegt und wieder gelöscht, die hochgeladene Testdatei bleibt auf dem Laufwer
 | **FEHLER** (behoben) | 2026-11-11 | Bei 409 `EXISTS` (Abweisung vor dem Lesen der Daten) setzte der Server die Verbindung zurück, der Client bekam keine Antwort. Fix: `drain_body()` liest den restlichen Body und verwirft ihn, danach kommt die Fehlerantwort an |
 | **Befund** | 2026-11-11 | Der ESP-IDF-HTTP-Server bearbeitet nur eine Anfrage gleichzeitig: Während eines Uploads wird `/api/status` nicht beantwortet. Die Weboberfläche setzt das Polling während des Uploads aus, das LCD zeigt den Fortschritt |
 
-## Phase 4 – Bambu Lab X2D (nicht verifiziert)
+## Phase 4 – Bambu Lab X2D (Grundkompatibilität vom Besitzer bestätigt)
 
-Vorbereitung: zuerst T1.4 (Host nur lesen) am PC prüfen. Empfohlen für den Drucker:
-microSD-Karte (FAT32, groß, schnell), Host nur lesen erwägen. Bei Problemen nacheinander
+Empfohlen für den Drucker: microSD-Karte (FAT32, groß, schnell), Standard-Build. Für X8
+zuerst T1.4 (Host nur lesen) am PC prüfen. Bei Problemen an anderen Druckern nacheinander
 `CONFIG_TINYUSB_CDC_ENABLED=n` (Composite-Gerät vermeiden), Host nur lesen,
 `CONFIG_PD_REPLUG_ON_PROVIDE` umschalten.
 
+Test am 2026-11-12 durch den Besitzer: Firmware 0.2.0 im Standard-Build (Verbundgerät
+MSC + CDC-Logport, PID 4003, USB-Gerät darf schreiben), microSD 64 GB FAT32, Bambu Lab X2D.
+Ablauf laut Testplan: (1) gesliceste `.gcode.3mf` per Weboberfläche hochladen, Dongle in den
+Drucker stecken, Datei am Drucker auswählen und drucken; (2) Dongle im Drucker lassen, vom
+Handy eine weitere Datei hochladen, prüfen, ob der Drucker sie sieht.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** (Rückmeldung des Besitzers) | 2026-11-12 | Wörtlich: „es hat am Drucker alles geklappt inklusive Drucken“. Der Drucker hat das USB-Laufwerk erkannt, die hochgeladene `.gcode.3mf` angezeigt und daraus erfolgreich gedruckt. Vom Besitzer gemeldet, vom Entwickler nicht gemessen |
+| **Befund** | 2026-11-12 | Schritt (2) laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt. Am Drucker keine Logs, keine Datenraten, keine Strommessung; LCD-Anzeige am Drucker nicht gemeldet |
+
 | Nr. | Prüfpunkt | Ergebnis | Datum |
 |---|---|---|---|
-| X1 | Dongle am Drucker: LCD bleibt stabil (kein Neustart-Zyklus), Kopf `USB` | | |
-| X2 | Drucker erkennt Speichermedium, Dateiliste zeigt vorhandene Datei | | |
-| X3 | Per Web hochgeladene, gesliceste `.gcode.3mf` erscheint am Drucker | | |
-| X4 | Druck startet aus dieser Datei | | |
-| X5 | Upload während Drucker angeschlossen → nach Bereitstellen neue Datei sichtbar | | |
-| X6 | Übernahme ohne Auswurf (force) – Verhalten des Druckers notieren (kein Druck aktiv!) | | |
-| X7 | Variante ohne CDC (PID 4002) – Unterschied? | | |
-| X8 | Variante Host nur lesen – Drucker akzeptiert schreibgeschütztes Medium? | | |
-| X9 | WLAN-Upload-Rate am Drucker-Standort | | |
-| X10 | Mit microSD: stabile Versorgung, Drucker liest FAT32-Karte (Kapazität notieren) | | |
+| X1 | Dongle am Drucker: LCD bleibt stabil (kein Neustart-Zyklus), Kopf `USB` | nicht separat gemeldet; Druck lief durch, kein Ausfall gemeldet | 2026-11-12 |
+| X2 | Drucker erkennt Speichermedium, Dateiliste zeigt vorhandene Datei | **bestanden** (Besitzer) | 2026-11-12 |
+| X3 | Per Web hochgeladene, gesliceste `.gcode.3mf` erscheint am Drucker | **bestanden** (Besitzer) | 2026-11-12 |
+| X4 | Druck startet aus dieser Datei | **bestanden** (Besitzer; Druck erfolgreich) | 2026-11-12 |
+| X5 | Upload während Drucker angeschlossen → nach Bereitstellen neue Datei sichtbar | laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt | 2026-11-12 |
+| X6 | Übernahme ohne Auswurf (force) – Verhalten des Druckers notieren (kein Druck aktiv!) | **offen**; ebenso „Dateiverwaltung aktivieren“ während eines Drucks | – |
+| X7 | Variante ohne CDC (PID 4002) – Unterschied? | **n/a** – Standard-Build mit CDC funktioniert am X2D, Variante nicht nötig | 2026-11-12 |
+| X8 | Variante Host nur lesen – Drucker akzeptiert schreibgeschütztes Medium? | **offen** (vorher T1.4) | – |
+| X9 | WLAN-Upload-Rate am Drucker-Standort | **offen** (nicht gemessen) | – |
+| X10 | Mit microSD: stabile Versorgung, Drucker liest FAT32-Karte (Kapazität notieren) | FAT32-Karte 64 GB gelesen: **bestanden** (Besitzer); Stromaufnahme nicht gemessen, angezeigte Kapazität nicht notiert | 2026-11-12 |
+
+Nicht geprüft: lange Drucke, Nur-Lese-Modus am Drucker, Verhalten bei „Dateiverwaltung
+aktivieren“ während eines Drucks, Stromaufnahme, interner Flash (FAT12) als Medium am
+Drucker, andere Druckermodelle.
 
 ## Phase 5 – microSD
 
@@ -501,6 +518,6 @@ Erwartet: alle Prüfungen bestanden. Laufzeit ca. 19 min für beide Profile.
 | B15 | Echter Handy-Browser (iOS Safari): Bildschirmtastatur, Safe Areas, Herunterladen (`download`-Attribut), Bottom Sheet | **offen** | – |
 | B16 | Echtes Drag & Drop aus dem Explorer/Finder in den Browser | **offen** | – |
 
-Weiter offen (nicht Teil des Browser-Tests): Test am Bambu Lab X2D (Phase 4), Nur-Lese-Modus
+Weiter offen (nicht Teil des Browser-Tests): Restpunkte am Bambu Lab X2D (Phase 4, X5–X10), Nur-Lese-Modus
 des Hosts auf der Hardware (T1.4), BOOT-Bestätigung per zweitem Druck am Gerät (T2.2), Ordner
 in der Weboberfläche und Passwortschutz (beides nicht umgesetzt, siehe [06](06_risiken.md)).

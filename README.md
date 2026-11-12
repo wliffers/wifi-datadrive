@@ -31,7 +31,7 @@ Anzeige „Dateiverwaltung aktiv“). Umgeschaltet wird nur kontrolliert
 | microSD (Phase 5) | **verifiziert** (Grundfunktion, 64-GB-Karte FAT32) |
 | Nur-Lese-Modus des USB-Geräts | implementiert, **nicht getestet** |
 | Ordner in der Weboberfläche, Passwortschutz | **nicht umgesetzt** (zurückgestellt) |
-| Test am Bambu Lab X2D | offen, **Kompatibilität nicht verifiziert** |
+| Test am Bambu Lab X2D | **Grundkompatibilität verifiziert** (2026-11-12, Rückmeldung des Besitzers, keine Messung): Laufwerk erkannt, per Web hochgeladene `.gcode.3mf` angezeigt und gedruckt (Standard-Build MSC + CDC, microSD 64 GB FAT32). Upload bei eingestecktem Dongle laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt. Offen: lange Drucke, Nur-Lese-Modus, Übernahme während eines Drucks, Stromaufnahme, interner Flash, andere Druckermodelle |
 
 Gemessene Schreibraten:
 
