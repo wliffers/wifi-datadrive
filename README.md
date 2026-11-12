@@ -15,7 +15,7 @@ USB-Gerät (Drucker/PC, Anzeige „USB-Laufwerk aktiv“) oder die Firmware (Web
 Anzeige „Dateiverwaltung aktiv“). Umgeschaltet wird nur kontrolliert
 (Details: [docs/02_architektur.md](docs/02_architektur.md)).
 
-## Stand (2026-11-11, Firmware 0.2.0)
+## Stand (2026-11-12, Firmware 0.2.0)
 
 | Bereich | Stand |
 |---|---|
@@ -25,7 +25,8 @@ Anzeige „Dateiverwaltung aktiv“). Umgeschaltet wird nur kontrolliert
 | Flashen per 1200-Baud-Touch, Dateien überleben Updates | **verifiziert**, Update-Schleife vollautomatisch |
 | Web-API v2: Upload aller Dateitypen, Umbenennen, Änderungsdatum, Moduswechsel, Fehlerfälle (`tools/api_test.py`) | **verifiziert** (microSD 28/28; API v1: Flash 18/18, microSD 21/21) |
 | Umbenennung in WiFi DataDrive (USB-Namen, `datadrive.local`, Setup-WLAN, LCD-Texte) | **verifiziert** |
-| Neue Weboberfläche (Dateiverwaltung, Einstellungen, hell/dunkel) | auf dem Gerät ausgeliefert (gzip, Seitenaufruf 241 ms); Browser-Test aller Zustände **in Arbeit** |
+| Neue Weboberfläche (Dateiverwaltung, Einstellungen, hell/dunkel) | Endfassung auf dem Gerät (gzip ca. 20,5 KB, Seitenaufruf 241 ms); Browser-Test am Testserver **bestanden** (`tools/ui_test.py` 566/566, PC und Handy-Emulation, hell/dunkel) |
+| Weboberfläche am echten Handy (iOS Safari), echtes Drag & Drop, Abläufe am echten Gerät | **nicht getestet** |
 | LCD-Statusbild | **verifiziert** (Foto), außer Nuancen der LED-Farben |
 | microSD (Phase 5) | **verifiziert** (Grundfunktion, 64-GB-Karte FAT32) |
 | Nur-Lese-Modus des USB-Geräts | implementiert, **nicht getestet** |
@@ -118,6 +119,13 @@ python tools\mock_server.py --port 8090 --scenario files    # dann http://127.0.
 Der Testserver bildet die Geräte-API nach und liest `index.html` bei jedem Aufruf neu
 (Details: [docs/04_build_und_flash.md](docs/04_build_und_flash.md) Abschnitt 11).
 
+Browser-Test gegen den laufenden Testserver (einmalig `pip install playwright`, nutzt das
+installierte Edge, ca. 19 min für PC- und Handy-Profil):
+
+```powershell
+python tools\ui_test.py --base http://localhost:8090
+```
+
 ## Ordnerstruktur
 
 ```
@@ -142,7 +150,8 @@ tools/
   backup_flash.ps1 / .py     vollständiges Flash-Backup nach backup/ (über USB-Serial/JTAG unzuverlässig)
   api_test.py                End-to-End-Test der Web-API gegen den echten Dongle (28 Prüfungen)
   mock_server.py             Testserver: Geräte-API ohne Hardware, zum Entwickeln/Testen der Weboberfläche
-  ui_test.py                 Browser-Test der Weboberfläche gegen den Testserver (Playwright)
+  ui_test.py                 Browser-Test der Weboberfläche gegen den Testserver (Playwright + Edge,
+                             566 Prüfungen, PC 1280x800 und Handy-Emulation 390x844, hell/dunkel)
 backup/                      LILYGO-Werksabbild, Flash-Abbilder (*.bin git-ignoriert) + SHA256SUMS.txt
 ```
 

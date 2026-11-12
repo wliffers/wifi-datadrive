@@ -18,11 +18,12 @@ Prozeduren und erwarteten Texte unten beschreiben den Stand 0.2.0; Ergebniszeile
 wie sie am Testtag eingetragen wurden, und nennen deshalb zum Teil die alten Namen
 (`PrintDrive-54D5`, `PRINTDRIVE`, „Host …“ auf dem LCD) und die alte Weboberfläche.
 
-Übersicht Stand 2026-11-11: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
+Übersicht Stand 2026-11-12: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
 `tools/api_test.py` weitgehend bestanden (T2.11: Flash 18/18, microSD 21/21), offen T2.2 (3),
 T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 6
 (Umbenennung, API v2 28/28, gzip-Auslieferung) bestanden, Browser-Test der neuen
-Weboberfläche (T6.4) in Arbeit; Phase 4 offen.
+Weboberfläche am Testserver bestanden (T6.4: `tools/ui_test.py` 566/566), offen dort die
+Abläufe am echten Gerät und am echten Handy (B14–B16); Phase 4 offen.
 
 ## Phase 0 – Smoke-Test
 
@@ -462,31 +463,44 @@ Anfragen an fremde Server. Messwerte, keine Sollwerte.
 | Ergebnis | Datum | Bemerkung |
 |---|---|---|
 | **bestanden** | 2026-11-11 | `index.html` 60 KB roh → 19 KB in Flash und Übertragung; Seitenaufruf vom Gerät 241 ms; freier Heap unverändert ca. 142 KB; App-Binary 1,06 MB (60 % der App-Partition frei) |
+| **bestanden** | 2026-11-12 | Endfassung der Weboberfläche nach dem Browser-Test (T6.4) geflasht: `index.html` 66 KB roh → ca. 20,5 KB gzip. Am Gerät: Seite lädt (241 ms), `api_test.py` 28/28, `http://datadrive.local` wird vom Windows-PC aufgelöst |
 
-### T6.4 Browser-Test der Weboberfläche (in Arbeit)
+### T6.4 Browser-Test der Weboberfläche
 
 Vorgehen: Zustände am Testserver durchspielen (`python tools\mock_server.py --port 8090
 --scenario <name>`, Steuerung über `/mock/set`, siehe [04](04_build_und_flash.md)
-Abschnitt 11), automatisiert mit `tools/ui_test.py` (Playwright); danach Stichprobe am
-echten Gerät. Jeweils am PC und in Handy-Breite, hell und dunkel.
+Abschnitt 11), automatisiert mit `tools/ui_test.py` (Playwright mit dem installierten Edge;
+einmalig `pip install playwright`): `python tools\ui_test.py --base http://localhost:8090`.
+Danach Stichprobe am echten Gerät. Jeweils am PC und in Handy-Breite, hell und dunkel.
+
+Erwartet: alle Prüfungen bestanden. Laufzeit ca. 19 min für beide Profile.
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-12 | 566/566 Prüfungen gegen den Testserver: PC 1280×800 und Handy-Emulation 390×844 (zusätzlich 320 px Breite), hell und dunkel. Abgedeckt: alle Szenarien (USB aktiv/kein USB-Gerät, Dateien, leer, voll, kein Dateisystem, Einrichtungs-WLAN, interner Flash, 300 Dateien, gekürzte Liste); Umschalten in beide Richtungen mit Rückfrage und Abweisung „Gerät schreibt“; Uploads; Dateiaktionen; Suche und Sortierung; alle Abschnitte der Einstellungen; Neustart, Formatieren, Wartungsmodus; Verbindungsverlust und langsames Gerät; Grundlagen der Barrierefreiheit (Namen, Fokus, Touch-Ziele, Kontrast) |
+| **FEHLER** (behoben) | 2026-11-12 | Zwei Testrunden, 26 Fehler gefunden und behoben. Die wichtigen: (1) Dialoge überschrieben sich gegenseitig. (2) Datei- und Einstellungsaktionen hingen während eines Uploads ohne Meldung (das Gerät bearbeitet nur eine Anfrage gleichzeitig) – jetzt mit Meldung gesperrt. (3) Abgebrochenes Formatieren ließ das USB-Gerät ohne Laufwerk zurück – jetzt wird wieder bereitgestellt. (4) „Abgebrochen“ bei einer Datei, die tatsächlich gespeichert war – Abbrechen entfällt, sobald die Datei vollständig gesendet ist. (5) Kontrast der roten Knöpfe im dunklen Design. (6) Upload-Leiste und Meldungen verdeckten Inhalt |
+| **Befund** (behoben) | 2026-11-12 | Die Dateiliste wurde bei jeder Statusabfrage (alle 3 s) neu aufgebaut: 147 ms bei 300 Dateien. Jetzt nur noch bei Änderungen: unter 1 ms je Abfrage, vollständiger Neuaufbau 45–70 ms |
+| **Befund** | 2026-11-12 | Grenzen des Tests: Chromium (Edge) mit iPhone-User-Agent statt echtem Handy-Browser, synthetische Drag-&-Drop-Ereignisse statt Ziehen aus dem Betriebssystem, Testserver statt Gerät |
 
 | Nr. | Prüfpunkt | Ergebnis | Datum |
 |---|---|---|---|
-| B1 | Hauptansicht „Meine Dateien“ lädt; Statusleiste zeigt Modus („USB-Laufwerk aktiv“ / „Dateiverwaltung aktiv“) und Speicherbelegung (Szenarien `usb_active`, `usb_no_host`, `files`, `flash_medium`) | | |
-| B2 | Dateiliste: Typ-Symbol, Größe, Änderungsdatum; Suche; Sortierung über Spaltenköpfe (PC) und Auswahlfeld (Handy) | | |
-| B3 | Aktionsmenü je Datei: Herunterladen, Umbenennen (auch ungültiger und schon vorhandener Name), Löschen mit Rückfrage; Kontextmenü am PC, Bottom Sheet am Handy | | |
-| B4 | Hochladen per Knopf und Drag & Drop, mehrere Dateien: Warteschlange mit Fortschritt, Abbrechen; „Gespeichert“ erst nach Antwort des Geräts | | |
-| B5 | Vorhandene Datei: Rückfrage „Vorhandene Datei ersetzen?“ mit Ersetzen/Überspringen | | |
-| B6 | Upload bei „USB-Laufwerk aktiv“: Rückfrage „Laufwerk vom USB-Gerät trennen?“, danach wieder bereitgestellt; mit ausgeschaltetem „Nach dem Hochladen wieder bereitstellen“ bleibt die Dateiverwaltung aktiv; war sie schon vorher aktiv, wird nicht bereitgestellt | | |
-| B7 | USB-Gerät schreibt (`host_writing=hold`): Meldung, kein Erzwingen möglich | | |
-| B8 | Zustände: leer (`empty`), gesperrt (`usb_active`), Speicher nicht lesbar (`no_fs`), fast voll (`full`), keine Antwort vom Laufwerk (`online=0`) | | |
-| B9 | Fehlerfälle: Upload scheitert (`fail_next`, `upload_fail_at`), Upload eines anderen Clients (`other_upload=1`) | | |
-| B10 | Hinweise: ausgeblendete Ordner (`dirs`), gekürzte Liste (`truncated`); 300 Dateien flüssig (`many`) | | |
-| B11 | Einstellungen: Netzwerk (WLAN speichern, Einrichtungs-WLAN im Szenario `ap_setup`), Speicher & USB (beide Schalter), Sicherheit, System (Protokoll, Neu starten) | | |
-| B12 | Gefahrenbereich: Formatieren nur mit getipptem `LÖSCHEN`; Wartungsmodus mit Rückfrage und Hinweis zum Aus-/Einstecken | | |
-| B13 | Darstellung Automatisch/Hell/Dunkel; Auswahl bleibt nach Neuladen im selben Browser erhalten | | |
-| B14 | Echter Dongle: Stichprobe B1–B6 und B12 (Wartungsmodus = T2.9 (2)) | | |
+| B1 | Hauptansicht „Meine Dateien“ lädt; Statusleiste zeigt Modus („USB-Laufwerk aktiv“ / „Dateiverwaltung aktiv“) und Speicherbelegung (Szenarien `usb_active`, `usb_no_host`, `files`, `flash_medium`) | **bestanden** (Testserver) | 2026-11-12 |
+| B2 | Dateiliste: Typ-Symbol, Größe, Änderungsdatum; Suche; Sortierung über Spaltenköpfe (PC) und Auswahlfeld (Handy) | **bestanden** (Testserver) | 2026-11-12 |
+| B3 | Aktionsmenü je Datei: Herunterladen, Umbenennen (auch ungültiger und schon vorhandener Name), Löschen mit Rückfrage; Kontextmenü am PC, Bottom Sheet am Handy | **bestanden** (Testserver, auch per Tastatur) | 2026-11-12 |
+| B4 | Hochladen per Knopf und Drag & Drop, mehrere Dateien: Warteschlange mit Fortschritt, Abbrechen; „Gespeichert“ erst nach Antwort des Geräts | **bestanden** (Testserver; Drag & Drop nur synthetisch, siehe B16) | 2026-11-12 |
+| B5 | Vorhandene Datei: Rückfrage „Vorhandene Datei ersetzen?“ mit Ersetzen/Überspringen | **bestanden** (Testserver) | 2026-11-12 |
+| B6 | Upload bei „USB-Laufwerk aktiv“: Rückfrage „Laufwerk vom USB-Gerät trennen?“, danach wieder bereitgestellt; mit ausgeschaltetem „Nach dem Hochladen wieder bereitstellen“ bleibt die Dateiverwaltung aktiv; war sie schon vorher aktiv, wird nicht bereitgestellt | **bestanden** (Testserver) | 2026-11-12 |
+| B7 | USB-Gerät schreibt (`host_writing=hold`): Meldung, kein Erzwingen möglich | **bestanden** (Testserver) | 2026-11-12 |
+| B8 | Zustände: leer (`empty`), gesperrt (`usb_active`), Speicher nicht lesbar (`no_fs`), fast voll (`full`), keine Antwort vom Laufwerk (`online=0`) | **bestanden** (Testserver, auch langsames Gerät) | 2026-11-12 |
+| B9 | Fehlerfälle: Upload scheitert (`fail_next`, `upload_fail_at`), Upload eines anderen Clients (`other_upload=1`) | **bestanden** (Testserver: ungültige 3MF, kein Platz, Verbindungsabbruch) | 2026-11-12 |
+| B10 | Hinweise: ausgeblendete Ordner (`dirs`), gekürzte Liste (`truncated`); 300 Dateien flüssig (`many`) | **bestanden** (Testserver; Messwerte siehe Befund oben) | 2026-11-12 |
+| B11 | Einstellungen: Netzwerk (WLAN speichern, Einrichtungs-WLAN im Szenario `ap_setup`), Speicher & USB (beide Schalter), Sicherheit, System (Protokoll, Neu starten) | **bestanden** (Testserver) | 2026-11-12 |
+| B12 | Gefahrenbereich: Formatieren nur mit getipptem `LÖSCHEN`; Wartungsmodus mit Rückfrage und Hinweis zum Aus-/Einstecken | **bestanden** (Testserver) | 2026-11-12 |
+| B13 | Darstellung Automatisch/Hell/Dunkel; Auswahl bleibt nach Neuladen im selben Browser erhalten | **bestanden** (Testserver) | 2026-11-12 |
+| B14 | Echter Dongle: Stichprobe B1–B6 und B12 (Wartungsmodus = T2.9 (2)) | **offen**; bisher nur: Endfassung geflasht, Seite lädt, `api_test.py` 28/28, `datadrive.local` (T6.3) | – |
+| B15 | Echter Handy-Browser (iOS Safari): Bildschirmtastatur, Safe Areas, Herunterladen (`download`-Attribut), Bottom Sheet | **offen** | – |
+| B16 | Echtes Drag & Drop aus dem Explorer/Finder in den Browser | **offen** | – |
 
 Weiter offen (nicht Teil des Browser-Tests): Test am Bambu Lab X2D (Phase 4), Nur-Lese-Modus
-des Hosts auf der Hardware (T1.4), Ordner in der Weboberfläche und Passwortschutz (beides
-nicht umgesetzt, siehe [06](06_risiken.md)).
+des Hosts auf der Hardware (T1.4), BOOT-Bestätigung per zweitem Druck am Gerät (T2.2), Ordner
+in der Weboberfläche und Passwortschutz (beides nicht umgesetzt, siehe [06](06_risiken.md)).

@@ -224,5 +224,5 @@ docs/                  Bestandsaufnahme, Architektur, Plan, Build/Flash, Testpro
 - **Nur-Lese-Modus für das USB-Gerät:** eingebaut, am Gerät noch nicht geprüft.
 - **Weboberfläche ohne Anmeldung:** jeder im selben WLAN kann zugreifen. Passwortschutz zurückgestellt (braucht ein Konzept für „Passwort vergessen“).
 - **Ordner:** in der Weboberfläche nicht unterstützt (machbar, zurückgestellt).
-- **Browser-Test der neuen Weboberfläche:** alle Zustände, in Arbeit (`tools/ui_test.py`).
+- **Weboberfläche am echten Handy:** Der Browser-Test (`tools/ui_test.py`, 566/566 am Testserver) lief mit Chromium im Handyformat; echtes iOS Safari und echtes Drag & Drop sind ungeprüft.
 - **3MF ist nicht automatisch druckbar:** Der Drucker braucht eine geslicete Datei (`.gcode.3mf`); welche Dateien der X2D über USB annimmt, klärt erst der Test.

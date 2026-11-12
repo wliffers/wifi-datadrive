@@ -1,6 +1,6 @@
 # 06 – Risiken und Annahmen
 
-Stand: 2026-11-11, Firmware 0.2.0. Bewertung: **hoch** = kann das Projektziel verhindern,
+Stand: 2026-11-12, Firmware 0.2.0. Bewertung: **hoch** = kann das Projektziel verhindern,
 **mittel** = erfordert Nacharbeit, **niedrig** = Komfort/Randfall.
 
 Das Projekt heißt seit Version 0.2.0 „WiFi DataDrive“ (vorher „WiFi PrintDrive“); interne
@@ -51,8 +51,10 @@ diese Punkte im Quellcode der Komponente prüfen und T1.3, T2.2, T2.4 wiederhole
 ## 4. Firmware-Verhalten und Hardware-Befunde
 
 Stand der Prüfung: Phase 0, 1, 2 und 5 (Grundfunktion) unter Windows 11 am 2026-11-11
-getestet, ebenso Umbenennung, API v2 (`api_test.py` 28/28) und gzip-Auslieferung (Phase 6);
-Nur-Lese-Modus des Hosts und Browser-Test der neuen Weboberfläche noch nicht.
+getestet, ebenso Umbenennung, API v2 (`api_test.py` 28/28) und gzip-Auslieferung (Phase 6).
+Die neue Weboberfläche hat am 2026-11-12 den Browser-Test am Testserver bestanden
+(`tools/ui_test.py` 566/566, T6.4). Noch nicht geprüft: Nur-Lese-Modus des Hosts, die
+Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 
 | Risiko | Bew. | Details |
 |---|---|---|
@@ -64,16 +66,18 @@ Nur-Lese-Modus des Hosts und Browser-Test der neuen Weboberfläche noch nicht.
 | microSD: Fremddateien | niedrig | Vorhandene Dateien der Karte bleiben erhalten und sind am Drucker sichtbar (Testkarte: `autorun.inf`/`autorun.ico`). |
 | Formatieren des falschen Mediums | niedrig (abgesichert) | Die Format-Anforderung (`fmt_req`) speichert das Medium (Flash/SD); beim Neustart wird nur formatiert, wenn dasselbe Medium gefunden wird. Eine Karte wird nie automatisch formatiert. |
 | Upload-Größe über 4 GiB | niedrig (behoben) | Die Größe wurde 32-bittig gelesen: 62 GB + 1 MB liefen über und wurden angenommen. Fix: 64-Bit-Auswertung, ≥ 4 GiB → 413 `TOO_LARGE` (T5.4). |
-| Ein Request gleichzeitig | niedrig | Der ESP-IDF-HTTP-Server beantwortet während eines Uploads keine anderen Anfragen (auch nicht `/api/status`). Die Weboberfläche pausiert das Polling, das LCD zeigt den Fortschritt; ein zweiter Client wartet. |
+| Ein Request gleichzeitig | niedrig | Der ESP-IDF-HTTP-Server beantwortet während eines Uploads keine anderen Anfragen (auch nicht `/api/status`). Die Weboberfläche pausiert das Polling, das LCD zeigt den Fortschritt; ein zweiter Client wartet. Datei- und Einstellungsaktionen im selben Browser hingen dabei ohne Meldung; seit dem Browser-Test (T6.4) sind sie während eines Uploads mit Meldung gesperrt. |
 | FAT-Ausrichtung | niedrig (behoben) | FatFs legt die MBR-Partition bei Sektor 63 an (nicht auf 4 KiB ausgerichtet). Ohne `MKFS_PARM.align` lag der Datenbereich schief, jeder Schreibzugriff lief über den langsamen Lesen-Löschen-Schreiben-Pfad des Wear Levelling: **12 KB/s**. Fix in `probe_and_format()`: `align = 8` Sektoren → Datenbereich auf 4-KiB-Grenzen, **47 KB/s**. Windows meldet weiterhin Partitions-Offset 32256 (= Sektor 63); ausgerichtet ist nur der Datenbereich innerhalb. Ältere Dateisysteme bleiben langsam bis zum Neuformatieren; am PC formatierte Datenträger: Ausrichtung nicht geprüft. |
 | Download-Modus per Software | niedrig | 1200-Baud-Touch **verifiziert** (2026-11-11). TinyUSB schaltet den USB-PHY per `RTC_CNTL_USB_CONF` auf den OTG-Controller, das übersteht einen Software-Reset; ohne Gegenmaßnahme erschien im Download-Modus **kein** USB-Gerät (verifiziert). Fix: `board_restart_to_download_mode()` gibt den PHY vorher an USB-Serial/JTAG zurück (wie Arduinos `usb_switch_to_cdc_jtag()`). Web „Flash-Modus“ und BOOT 5 s nutzen dieselbe Funktion, einzeln noch nicht getestet. Update-Schleife `tools/flash.ps1 -Project printdrive -Build` mehrfach vollautomatisch verifiziert. Rückfall: aus-/einstecken (normaler Start), BOOT halten + einstecken. |
 | Strapping-Latch nach BOOT + Einstecken | niedrig | Nach manuellem Download-Modus bleibt jeder weitere Reset über USB-Serial/JTAG (esptool `hard_reset`, RTS) im Download-Modus (`boot:0x0 (DOWNLOAD(USB/UART0))`, `GPIO_STRAP_REG` = 0), obwohl die Taste losgelassen ist (`GPIO_IN` Bit 0 = 1) – bis zum echten Aus-/Einstecken. Wirkt wie „Firmware startet nicht“. Beim 1200-Baud-Touch nicht beobachtet. |
 | Windows bei Medienwechsel | niedrig | Verifiziert: „Auswerfen“ im Explorer kommt als Auswurf an (`host ejected the drive`), Soft-Re-Plug nach BOOT kurz → Laufwerk erscheint neu, Daten lesbar; Übernahme mit `force` und Bereitstellen per Web mit neuer Datei aus dem Web-Upload (Datei auf `E:` identisch, T2.11). |
 | Nur-Lese-Modus des Hosts | mittel | Implementiert (Sense `DATA PROTECT`, `tud_msc_is_writable_cb`), auf Hardware **nicht getestet** (T1.4). Für den Drucker empfohlen, daher vorher am PC prüfen. |
-| Neue Weboberfläche nicht durchgetestet | mittel | Die Oberfläche wurde für 0.2.0 komplett neu geschrieben. Auf dem Gerät geprüft sind Auslieferung und API (T6.2, T6.3); der Browser-Test aller Zustände (leer, gesperrt, Fehler, Upload-Warteschlange, Einstellungen, Handy-Breite, hell/dunkel) läuft noch (T6.4, `tools/ui_test.py`). Fehler in der Oberfläche können die Sicherungen des Laufwerks nicht aushebeln, die liegen in der Firmware. |
+| Neue Weboberfläche nur am Testserver durchgetestet | niedrig | Die Oberfläche wurde für 0.2.0 komplett neu geschrieben. Der Browser-Test aller Zustände ist bestanden (T6.4, `tools/ui_test.py` 566/566, PC und Handy-Emulation, hell/dunkel; 26 Fehler gefunden und behoben). Grenzen: Testserver statt Gerät, synthetische Drag-&-Drop-Ereignisse. Am Gerät geprüft sind nur Auslieferung der Endfassung, API und `datadrive.local` (T6.2, T6.3); die Abläufe der Oberfläche am echten Gerät (Zeitverhalten, Re-Plug, Formatieren, Wartungsmodus) und echtes Drag & Drop stehen aus (B14, B16). Fehler in der Oberfläche können die Sicherungen des Laufwerks nicht aushebeln, die liegen in der Firmware. |
+| Weboberfläche am echten Handy ungeprüft | mittel | Die Handy-Ansicht ist nur emuliert geprüft (Chromium mit iPhone-User-Agent, 390×844 und 320 px Breite). Ein echter Handy-Browser fehlt, vor allem iOS Safari: Bildschirmtastatur (verdeckte Eingabefelder und Dialoge), Safe Areas, Herunterladen über das `download`-Attribut, Bottom Sheet (B15). |
+| BOOT-Bestätigung per zweitem Druck | niedrig | Übernahme per BOOT-Taste bei aktivem USB-Gerät verlangt einen zweiten Druck innerhalb von 4 s; am Gerät noch nicht geprüft (T2.2). |
 | Ordner in der Weboberfläche ausgeblendet | niedrig | Die Weboberfläche zeigt nur Dateien im Hauptverzeichnis. Ordner, die ein PC angelegt hat, werden gezählt (`dirs`, Hinweis unter der Liste), ihr Inhalt ist im Web aber weder sichtbar noch herunterladbar oder löschbar. Der belegte Speicher enthält sie trotzdem, und Formatieren löscht sie mit. Ordner-Unterstützung ist machbar, aber zurückgestellt. |
 | Änderungsdatum hängt an der Browser-Uhr | niedrig | Das Gerät hat keine Uhr. Beim Upload liefert der Browser das Änderungsdatum der Datei (`mtime`) und seine aktuelle Zeit (`now`); gespeichert wird Ortszeit ohne Zeitzone. Eine falsch gestellte Uhr oder Zeitzone im Browser ergibt falsche Zeitstempel, ein Host in einer anderen Zeitzone zeigt sie verschoben. `now` stellt die Geräteuhr nur einmal je Start; Uploads ohne diese Parameter (eigene API-Clients) bekommen kein verlässliches Datum (Anzeige „–“). Ohne Anmeldung kann jeder Client beliebige Zeitstempel setzen. Sortierung „Neueste zuerst“ ist deshalb nur so gut wie die Uhren der Schreiber. |
-| Sehr viele Dateien | niedrig | Die Dateiliste entsteht aus einem 32-KiB-Puffer (ca. 1000 übliche Namen, bei langen Namen weniger). Darüber wird gekürzt (`truncated`, Hinweis in der Oberfläche); die übrigen Dateien sind im Web nicht erreichbar, am USB-Gerät schon. Kürzung und Ladezeit bei sehr vielen Dateien sind am Gerät nicht geprüft (nur im Testserver, Szenario `truncated`). |
+| Sehr viele Dateien | niedrig | Die Dateiliste entsteht aus einem 32-KiB-Puffer (ca. 1000 übliche Namen, bei langen Namen weniger). Darüber wird gekürzt (`truncated`, Hinweis in der Oberfläche); die übrigen Dateien sind im Web nicht erreichbar, am USB-Gerät schon. Kürzung und Ladezeit bei sehr vielen Dateien sind am Gerät nicht geprüft (nur im Testserver, Szenarien `truncated` und `many`: 300 Dateien, Neuaufbau der Liste 45–70 ms, seit T6.4 nur noch bei Änderungen). |
 | Weboberfläche nur gzip | niedrig | `index.html` liegt nur komprimiert im Flash und wird immer mit `Content-Encoding: gzip` gesendet, unabhängig vom `Accept-Encoding` des Clients. Alle üblichen Browser können das; einfache Werkzeuge (z. B. `curl` ohne `--compressed`) erhalten komprimierte Daten. |
 | Einstellungen je Browser | niedrig | „Nach dem Hochladen wieder bereitstellen“ und die Darstellung liegen im Browser (`localStorage`), nicht auf dem Gerät. Ein anderes Gerät oder ein Browser mit gelöschten Daten verhält sich wieder nach dem Standard (bereitstellen: an). |
 | Weboberfläche: `hidden` überschrieben | niedrig (behoben) | CSS-`display` überschrieb das `hidden`-Attribut, beide Modus-Knöpfe waren sichtbar. Fix: `[hidden]{display:none!important}`. Weitere Nuancen in UI und LED-Farben möglich. |
@@ -117,7 +121,9 @@ Nur-Lese-Modus des Hosts und Browser-Test der neuen Weboberfläche noch nicht.
 | exFAT | nicht unterstützt, Karte per Web auf FAT32 formatieren |
 | Nur-Lese-Modus des Hosts | ungetestet |
 | Nuancen in LED-Farben | offen |
-| Browser-Test der neuen Weboberfläche | in Arbeit (T6.4) |
+| Neue Weboberfläche | Browser-Test am Testserver bestanden (T6.4, 566/566); Abläufe am echten Gerät und echtes Drag & Drop ungetestet |
+| Weboberfläche am echten Handy (iOS Safari) | ungetestet (T6.4 B15) |
+| BOOT-Bestätigung per zweitem Druck | ungetestet (T2.2) |
 | Keine Authentifizierung der Weboberfläche | bewusst offen, zurückgestellt (Abschnitt 5) |
 | Beliebige Dateitypen ohne Inhaltsprüfung | bewusst so, abschaltbar (Abschnitt 2) |
 | Ordner im Web ausgeblendet | zurückgestellt (Abschnitt 4) |

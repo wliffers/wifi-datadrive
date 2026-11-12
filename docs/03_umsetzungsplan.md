@@ -1,6 +1,6 @@
 # 03 – Umsetzungsplan und Status
 
-Stand: 2026-11-11, Firmware 0.2.0 (WiFi DataDrive). Das Projekt hieß bis Version 0.1.0
+Stand: 2026-11-12, Firmware 0.2.0 (WiFi DataDrive). Das Projekt hieß bis Version 0.1.0
 „WiFi PrintDrive“; ältere Einträge nennen deshalb noch `PrintDrive-54D5`, `PRINTDRIVE` oder
 `printdrive.local`. Der Ordner `firmware/printdrive` behält seinen Namen.
 
@@ -17,8 +17,10 @@ Gesamtbild: Phasen 0–3 und 5 sind implementiert und gebaut. Am 2026-11-11 auf 
 Hardware unter Windows 11 verifiziert: Phase 0, 1 (außer Schreibschutz-Modus) und 2
 (`tools/api_test.py`: Flash 18/18, microSD 21/21), Phase 3 (LCD per Foto, außer Nuancen der
 LED-Farben), Phase 5 microSD (Grundfunktion), Phase 6 (Umbenennung, API v2 mit
-`api_test.py` 28/28, gzip-Auslieferung der neuen Weboberfläche). In Arbeit ist der
-Browser-Test aller Zustände der neuen Weboberfläche. Offen ist Phase 4 (Bambu Lab X2D).
+`api_test.py` 28/28, gzip-Auslieferung der neuen Weboberfläche). Am 2026-11-12 hat die neue
+Weboberfläche den Browser-Test am Testserver vollständig bestanden (`tools/ui_test.py`
+566/566, T6.4); die Endfassung ist auf dem Gerät. Nicht geprüft sind die Abläufe der
+Oberfläche am echten Gerät und an einem echten Handy. Offen ist Phase 4 (Bambu Lab X2D).
 Gefundene und behobene Fehler: FAT-Ausrichtung, USB-PHY beim Download-Modus, beide
 Modus-Knöpfe sichtbar, Verbindungsabbruch statt Fehlerantwort (`drain_body`), langsamer
 Web-Upload (2-KiB-Cluster), 32-Bit-Überlauf der Upload-Größe; siehe [06](06_risiken.md).
@@ -124,20 +126,22 @@ Schreib-Schutzfrist) bleiben unverändert. Ergebnisse: [05](05_testprotokoll.md)
 | LCD-Texte „Gerät“ statt „Host“ (`Gerät: verbunden`, `Kein USB-Gerät`) | **verifiziert** (T6.1) |
 | API v2: alle Dateitypen (`CONFIG_PD_UPLOAD_ALL_TYPES=y`, ZIP-Prüfung weiter für `.3mf`), `POST /api/rename`, Upload-Parameter `mtime`/`now`, `/api/files` mit `mtime`/`dirs`/`truncated`, Status mit `types`, Fehlertexte in einfacher Sprache | **verifiziert** (`api_test.py` 28/28, microSD, T6.2) |
 | Dateiliste aus gepacktem 32-KiB-Puffer (ca. 1000 übliche Namen) statt 64 Einträgen | implementiert, Felder **verifiziert** (T6.2); Kürzung bei sehr vielen Dateien am Gerät **offen** |
-| Weboberfläche als eine HTML-Datei, gzip-komprimiert eingebettet und ausgeliefert | **verifiziert**: 60 KB → 19 KB, Seitenaufruf 241 ms, Heap unverändert ca. 142 KB, App-Binary 1,06 MB (60 % der Partition frei, T6.3) |
-| Hauptansicht „Meine Dateien“: Statusleiste, Dateiliste (Typ-Symbol, Größe, Änderungsdatum), Suche, Sortierung, Aktionsmenü (Herunterladen, Umbenennen, Löschen), Upload-Warteschlange mit Fortschritt/Abbrechen, Drag & Drop, Zustände leer/gesperrt/Fehler | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
-| Einstellungen: Netzwerk, Speicher & USB, Sicherheit, System, „Gefahrenbereich“ (Formatieren mit getipptem `LÖSCHEN`, Wartungsmodus) | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
-| Hell-/Dunkel-Darstellung (automatisch oder fest, je Browser), neues Symbol | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
-| „Nach dem Hochladen wieder bereitstellen“ gibt das Laufwerk nur zurück, wenn der Upload es selbst genommen hat | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
-| Erfolgsmeldungen erst nach Bestätigung durch das Gerät | implementiert und gebaut; Browser-Test **in Arbeit** (T6.4) |
+| Weboberfläche als eine HTML-Datei, gzip-komprimiert eingebettet und ausgeliefert | **verifiziert**: 60 KB → 19 KB, Seitenaufruf 241 ms, Heap unverändert ca. 142 KB, App-Binary 1,06 MB (60 % der Partition frei, T6.3); Endfassung 66 KB → ca. 20,5 KB, auf dem Gerät |
+| Hauptansicht „Meine Dateien“: Statusleiste, Dateiliste (Typ-Symbol, Größe, Änderungsdatum), Suche, Sortierung, Aktionsmenü (Herunterladen, Umbenennen, Löschen), Upload-Warteschlange mit Fortschritt/Abbrechen, Drag & Drop, Zustände leer/gesperrt/Fehler | implementiert, Browser-Test am Testserver **bestanden** (T6.4); echtes Drag & Drop und Abläufe am echten Gerät **offen** |
+| Einstellungen: Netzwerk, Speicher & USB, Sicherheit, System, „Gefahrenbereich“ (Formatieren mit getipptem `LÖSCHEN`, Wartungsmodus) | implementiert, Browser-Test am Testserver **bestanden** (T6.4); am echten Gerät **offen** |
+| Hell-/Dunkel-Darstellung (automatisch oder fest, je Browser), neues Symbol | implementiert, Browser-Test am Testserver **bestanden** (T6.4, inkl. Kontrast) |
+| „Nach dem Hochladen wieder bereitstellen“ gibt das Laufwerk nur zurück, wenn der Upload es selbst genommen hat | implementiert, Browser-Test am Testserver **bestanden** (T6.4); am echten Gerät **offen** |
+| Erfolgsmeldungen erst nach Bestätigung durch das Gerät | implementiert, Browser-Test am Testserver **bestanden** (T6.4) |
+| Bedienung am Handy (Menü als Bottom Sheet, 320–390 px Breite, Touch-Ziele) | Emulation **bestanden** (T6.4); echter Handy-Browser (iOS Safari: Bildschirmtastatur, Safe Areas, `download`-Attribut) **offen** |
 | Testserver `tools/mock_server.py` (API-Nachbildung mit Szenarien und `/mock/set`) | vorhanden |
-| Browser-Test `tools/ui_test.py` (Playwright, gegen den Testserver) | **in Arbeit** |
+| Browser-Test `tools/ui_test.py` (Playwright mit installiertem Edge, gegen den Testserver) | vorhanden, **566/566 bestanden** (2026-11-12; PC 1280×800, Handy-Emulation 390×844, hell/dunkel; 26 Fehler in zwei Runden gefunden und behoben) |
 | Ordner in der Weboberfläche | nicht umgesetzt (machbar, zurückgestellt) |
 | Passwortschutz der Weboberfläche | nicht umgesetzt (zurückgestellt, braucht ein Konzept für „Passwort vergessen“) |
 
 ## Nächste Schritte
 
-1. Browser-Test aller Zustände der neuen Weboberfläche abschließen (T6.4, Testserver und Gerät).
+1. Neue Weboberfläche am echten Gerät und an einem echten Handy durchspielen (T6.4 B14–B16:
+   Abläufe am Dongle, iOS Safari, echtes Drag & Drop).
 2. Nur-Lese-Modus des Hosts am PC prüfen (T1.4).
 3. Drucker-Test (Phase 4) mit microSD-Karte.
 4. Restpunkte: `HOST_WRITING`/`BUSY` (T2.2, T2.3), Stromausfall (T2.8), Flash-Modus per Web,

@@ -35,7 +35,7 @@ Beim ersten Build lädt der Component Manager `esp_tinyusb`, `tinyusb` und `mdns
 | `tools\backup_flash.ps1 -Port COM4` | komplettes 16-MB-Flash nach `backup\` lesen – über USB-Serial/JTAG **unzuverlässig** (Abschnitt 6) |
 | `python tools\api_test.py <ip> [--drive E:] [--size-kb N]` | End-to-End-Test der Web-API gegen den echten Dongle (Abschnitt 10); **verändert den Laufwerksinhalt** |
 | `python tools\mock_server.py [--port N] [--scenario NAME]` | Testserver: bildet die Geräte-API ohne Hardware nach, zum Entwickeln und Testen der Weboberfläche (Abschnitt 11) |
-| `tools\ui_test.py` | Browser-Test der Weboberfläche gegen den Testserver (Playwright, `pip install playwright`); in Arbeit |
+| `tools\ui_test.py` | Browser-Test der Weboberfläche gegen den Testserver (Playwright, `pip install playwright`); 566 Prüfungen, ca. 19 Minuten |
 
 ## 3. Smoke-Test bauen und flashen
 
@@ -345,4 +345,4 @@ Wie die Firmware bearbeitet der Testserver nur eine Anfrage gleichzeitig, verlan
 `datadrive-mock`, damit ein Link aus der Oberfläche nie auf einem echten Dongle landet.
 
 Der automatische Browser-Test `tools/ui_test.py` (Playwright, einmalig
-`pip install playwright`) läuft gegen diesen Testserver; er ist in Arbeit.
+`pip install playwright`) läuft gegen diesen Testserver (`python tools/ui_test.py --base http://localhost:8090`).
