@@ -73,3 +73,7 @@ CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC=y
 
 # ---- OTA: new firmware must confirm itself (ota_init), otherwise the bootloader rolls back ----
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Throughput (measured before: download 487 kB/s HTTP, 389 kB/s HTTPS; upload about 1 MB/s)
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=11520

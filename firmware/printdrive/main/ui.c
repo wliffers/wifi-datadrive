@@ -354,7 +354,8 @@ static char qr_content(const pd_wifi_status_t *w, char *text, size_t len)
         char ssid[70], pass[40];
         wifi_escape(ssid, sizeof(ssid), w->ap_ssid);
         wifi_escape(pass, sizeof(pass), w->ap_pass);
-        snprintf(text, len, "WIFI:T:WPA;S:%s;P:%s;;", ssid, pass);
+        // Bounded: the access point name is "DataDrive-XXXX" and its password 10 characters.
+        snprintf(text, len, "WIFI:T:WPA;S:%.40s;P:%.20s;;", ssid, pass);
         return 'w';
     }
     text[0] = 0;
