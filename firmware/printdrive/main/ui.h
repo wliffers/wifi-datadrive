@@ -20,6 +20,13 @@ void ui_start(void);
 /** Short message shown in the bottom line for a few seconds. */
 void ui_notify(const char *msg, bool error);
 
+/** Display language: "de" (default) or "en". Loaded from NVS by ui_init(). */
+const char *ui_get_lang(void);
+
+/** Set the display language ("de" or "en", else ESP_ERR_INVALID_ARG) and store it in NVS.
+ *  Applied with the next redraw. */
+esp_err_t ui_set_lang(const char *lang);
+
 #ifdef __cplusplus
 }
 #endif

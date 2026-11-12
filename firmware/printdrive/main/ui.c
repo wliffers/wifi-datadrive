@@ -1,5 +1,6 @@
 // Status screen layout (160 x 80):
 //   y  0..15  header bar, colour = state: BOOT / USB / BEREIT / UPLOAD / WLAN / FEHLER / GESPERRT
+//             (all texts German or English, see s_txt; the language follows the web UI)
 //   y 19      address line  (IP, or setup access point SSID)      } left column x 3..105,
 //   y 29      second line   (hostname.local, or access point password) } max 17 characters
 //   y 40      storage line  + bar at y 50 (x 3..105)                }
@@ -25,12 +26,147 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "nvs.h"
 #include "pd_wifi.h"
 #include "qrcode.h"
 #include "sdkconfig.h"
 #include "ui.h"
 
 static const char *TAG = "ui";
+
+// ---- display language (follows the web UI, NVS "pd_ui"/"lang") --------------------
+// Width limits (5x7 font, 6 px per character): left column 17 characters, bottom lines 26,
+// QR captions 12, titles at scale 2 at most 8 characters (the Wi-Fi tag sits at the right).
+// Every English text is no longer than the German one where that matters, or within the limit.
+
+typedef enum {
+    T_STARTING, T_LOG_SERIAL,
+    T_TITLE_ERROR, T_TITLE_LOCKED, T_TITLE_WLAN, T_TITLE_READY, T_TITLE_BUTTON, T_TAG_WLAN,
+    T_QR_NO_WLAN, T_QR_CLICK_CLOSE, T_QR_ERROR, T_QR_ADDRESS, T_QR_CLICK, T_QR_CLOSE,
+    T_QR_JOIN1, T_QR_JOIN2, T_QR_CLICK_ZU,
+    T_HOLD_RELEASE, T_HOLD_FLASH, T_HOLD_KEEP,
+    T_RESET_LOGIN, T_RESET_DONE, T_RESET_FAILED,
+    T_N_KEY_DAMAGED, T_N_UNLOCK_FIRST, T_N_HOST_ACTIVE, T_N_UPLOAD_MODE, T_N_USB_PROVIDED,
+    T_N_HOST_WRITING, T_N_TRANSFER, T_N_SWITCH_FAILED,
+    T_FLASH_MODE, T_FLASH_EXIT1, T_FLASH_EXIT2,
+    T_WLAN_CONNECTING, T_WLAN_NOT_SET,
+    T_KEY_AREA, T_DAMAGED, T_UNLOCK1, T_UNLOCK2, T_NO_FS, T_FORMAT_WEB,
+    T_HOST_NONE, T_HOST_EJECTED, T_HOST_NO_DRIVE, T_HOST_WRITING, T_HOST_READING, T_HOST_STANDBY,
+    T_HOST_CONNECTED, T_HOST_READONLY,
+    T_WEB_ERASE, T_ENCRYPTED, T_FILES,
+    T_COUNT
+} txt_t;
+
+static const char *const s_txt[T_COUNT][2] = {
+    [T_STARTING] = {"startet ...", "starting ..."},
+    [T_LOG_SERIAL] = {"Log: serielle Konsole", "Log: serial console"},
+    [T_TITLE_ERROR] = {"FEHLER", "ERROR"},
+    [T_TITLE_LOCKED] = {"GESPERRT", "LOCKED"},
+    [T_TITLE_WLAN] = {"WLAN", "WIFI"},
+    [T_TITLE_READY] = {"BEREIT", "READY"},
+    [T_TITLE_BUTTON] = {"TASTE", "BUTTON"},
+    [T_TAG_WLAN] = {"WLAN", "WiFi"},
+    [T_QR_NO_WLAN] = {"Kein WLAN", "No WiFi"},
+    [T_QR_CLICK_CLOSE] = {"Klick = schließen", "Click = close"},
+    [T_QR_ERROR] = {"QR-Fehler", "QR error"},
+    [T_QR_ADDRESS] = {"Adresse", "Address"},
+    [T_QR_CLICK] = {"Klick:", "Click:"},
+    [T_QR_CLOSE] = {"schließen", "close"},
+    [T_QR_JOIN1] = {"WLAN", "Join"},
+    [T_QR_JOIN2] = {"beitreten", "WiFi"},
+    [T_QR_CLICK_ZU] = {"Klick: zu", "Click: close"},
+    [T_HOLD_RELEASE] = {"Loslassen:", "Release:"},
+    [T_HOLD_FLASH] = {"Flash-Modus", "Flash mode"},
+    [T_HOLD_KEEP] = {"Weiter halten:", "Keep holding:"},
+    [T_RESET_LOGIN] = {"Anmeldung", "Login"},
+    [T_RESET_DONE] = {"zurückgesetzt", "reset"},
+    [T_RESET_FAILED] = {"Reset fehlgeschlagen", "Reset failed"},
+    [T_N_KEY_DAMAGED] = {"Schlüsselbereich defekt", "Key area damaged"},
+    [T_N_UNLOCK_FIRST] = {"Erst im Browser entsperren", "Unlock in browser first"},
+    [T_N_HOST_ACTIVE] = {"Gerät aktiv! 2x = OK", "Host active! 2x = OK"},
+    [T_N_UPLOAD_MODE] = {"Upload-Modus", "Upload mode"},
+    [T_N_USB_PROVIDED] = {"USB bereitgestellt", "Drive on USB"},
+    [T_N_HOST_WRITING] = {"Gerät schreibt - warten", "Host writing - wait"},
+    [T_N_TRANSFER] = {"Up-/Download läuft", "Transfer running"},
+    [T_N_SWITCH_FAILED] = {"Umschalten fehlgeschl.", "Switch failed"},
+    [T_FLASH_MODE] = {"Download-Modus", "Download mode"},
+    [T_FLASH_EXIT1] = {"Zum Beenden: aus-", "To exit: unplug"},
+    [T_FLASH_EXIT2] = {"und einstecken", "and plug in again"},
+    [T_WLAN_CONNECTING] = {"WLAN verbinde...", "WiFi connecting.."},
+    [T_WLAN_NOT_SET] = {"WLAN nicht konfig.", "No WiFi set up"},
+    [T_KEY_AREA] = {"Schlüsselbereich", "Key area"},
+    [T_DAMAGED] = {"beschädigt", "damaged"},
+    [T_UNLOCK1] = {"Im Browser", "Unlock in"},
+    [T_UNLOCK2] = {"entsperren", "web browser"},
+    [T_NO_FS] = {"Kein Dateisystem!", "No file system!"},
+    [T_FORMAT_WEB] = {"Im Web formatieren", "Format in web UI"},
+    [T_HOST_NONE] = {"Kein USB-Gerät", "No USB host"},
+    [T_HOST_EJECTED] = {"Gerät: ausgeworfen", "Host: ejected"},
+    [T_HOST_NO_DRIVE] = {"Gerät: kein Laufwerk", "Host: no drive"},
+    [T_HOST_WRITING] = {"Gerät schreibt...", "Host writing..."},
+    [T_HOST_READING] = {"Gerät liest...", "Host reading..."},
+    [T_HOST_STANDBY] = {"Gerät: Standby", "Host: standby"},
+    [T_HOST_CONNECTED] = {"Gerät: verbunden", "Host: connected"},
+    [T_HOST_READONLY] = {"Gerät: nur lesen", "Host: read-only"},
+    [T_WEB_ERASE] = {"Im Web: Löschen", "Web UI: erase"},
+    [T_ENCRYPTED] = {"verschlüsselt", "encrypted"},
+    [T_FILES] = {"Datei(en)", "file(s)"},
+};
+
+static volatile uint8_t s_lang;      // 0 = de (default), 1 = en
+
+static const char *tr(txt_t id)
+{
+    return s_txt[id][s_lang ? 1 : 0];
+}
+
+static void load_lang(void)
+{
+    nvs_handle_t h;
+    char v[4] = "";
+    size_t len = sizeof(v);
+    if (nvs_open("pd_ui", NVS_READONLY, &h) == ESP_OK) {
+        if (nvs_get_str(h, "lang", v, &len) != ESP_OK) {
+            v[0] = 0;
+        }
+        nvs_close(h);
+    }
+    s_lang = strcmp(v, "en") == 0 ? 1 : 0;
+}
+
+const char *ui_get_lang(void)
+{
+    return s_lang ? "en" : "de";
+}
+
+esp_err_t ui_set_lang(const char *lang)
+{
+    uint8_t l;
+    if (lang && strcmp(lang, "de") == 0) {
+        l = 0;
+    } else if (lang && strcmp(lang, "en") == 0) {
+        l = 1;
+    } else {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (l == s_lang) {
+        return ESP_OK;              // the web UI calls this on every switch: no needless NVS write
+    }
+    s_lang = l;                     // the LCD follows with its next redraw (250 ms)
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("pd_ui", NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_str(h, "lang", lang);
+        if (err == ESP_OK) {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "display language not saved: %s", esp_err_to_name(err));
+    }
+    return err;
+}
 
 static char s_msg[32];
 static bool s_msg_error;
@@ -85,12 +221,13 @@ static const uint16_t s_accent[ANIM_COUNT] = {
 
 esp_err_t ui_init(void)
 {
+    load_lang();
     esp_err_t err = display_init();
     if (err == ESP_OK) {
         display_fill(DISPLAY_BLACK);
         header("BOOT", DISPLAY_GREY);
         display_text(3, 24, "WiFi DataDrive", DISPLAY_WHITE, DISPLAY_BLACK, 1);
-        display_text(3, 36, "startet ...", DISPLAY_GREY, DISPLAY_BLACK, 1);
+        display_text(3, 36, tr(T_STARTING), DISPLAY_GREY, DISPLAY_BLACK, 1);
         display_flush();
     }
     board_led_set(40, 40, 40, 1);
@@ -100,9 +237,9 @@ esp_err_t ui_init(void)
 void ui_show_fatal(const char *msg)
 {
     display_fill(DISPLAY_BLACK);
-    header("FEHLER", DISPLAY_RED);
+    header(tr(T_TITLE_ERROR), DISPLAY_RED);
     display_text(3, 24, msg, DISPLAY_WHITE, DISPLAY_BLACK, 1);
-    display_text(3, 60, "Log: serielle Konsole", DISPLAY_GREY, DISPLAY_BLACK, 1);
+    display_text(3, 60, tr(T_LOG_SERIAL), DISPLAY_GREY, DISPLAY_BLACK, 1);
     display_flush();
     board_led_set(255, 0, 0, 4);
 }
@@ -228,16 +365,18 @@ static char qr_content(const pd_wifi_status_t *w, char *text, size_t len)
 // which for the join code includes the password - so no re-encoding every 250 ms).
 static void draw_qr_screen(const pd_wifi_status_t *w)
 {
+    static uint8_t drawn_lang;
     char text[96];
     const char kind = qr_content(w, text, sizeof(text));
-    if (strcmp(text, s_qr_drawn) == 0) {
+    if (strcmp(text, s_qr_drawn) == 0 && drawn_lang == s_lang) {
         return;
     }
     strlcpy(s_qr_drawn, text, sizeof(s_qr_drawn));
+    drawn_lang = s_lang;
     display_fill(DISPLAY_WHITE);
     if (!kind) {
-        draw_black(10, 22, "Kein WLAN", 2);
-        draw_black(10, 46, "Klick = schließen", 1);
+        draw_black(10, 22, tr(T_QR_NO_WLAN), 2);
+        draw_black(10, 46, tr(T_QR_CLICK_CLOSE), 1);
         display_flush();
         return;
     }
@@ -249,19 +388,19 @@ static void draw_qr_screen(const pd_wifi_status_t *w)
     cfg.max_qrcode_version = 6;
     cfg.qrcode_ecc_level = ESP_QRCODE_ECC_LOW;
     if (esp_qrcode_generate(&cfg, text) != ESP_OK) {
-        draw_black(10, 30, "QR-Fehler", 2);
+        draw_black(10, 30, tr(T_QR_ERROR), 2);
     }
     const int cx = DISPLAY_H + 4;
     if (kind == 'u') {
-        draw_black(cx, 6, "Adresse", 1);
+        draw_black(cx, 6, tr(T_QR_ADDRESS), 1);
         draw_wrapped(cx, 18, w->sta_ip);
-        draw_black(cx, 58, "Klick:", 1);
-        draw_black(cx, 68, "schließen", 1);
+        draw_black(cx, 58, tr(T_QR_CLICK), 1);
+        draw_black(cx, 68, tr(T_QR_CLOSE), 1);
     } else {
-        draw_black(cx, 6, "WLAN", 1);
-        draw_black(cx, 16, "beitreten", 1);
+        draw_black(cx, 6, tr(T_QR_JOIN1), 1);
+        draw_black(cx, 16, tr(T_QR_JOIN2), 1);
         draw_wrapped(cx, 30, w->ap_ssid);
-        draw_black(cx, 68, "Klick: zu", 1);
+        draw_black(cx, 68, tr(T_QR_CLICK_ZU), 1);
     }
     display_flush();
     ESP_LOGI(TAG, "QR %c: %d modules, scale %d px", kind, info.size, info.scale);
@@ -282,10 +421,10 @@ static void draw_hold_screen(int64_t held)
     char line[32];
     const int left = (int)((HOLD_RESET_MS - held + 999) / 1000);
     display_fill(DISPLAY_BLACK);
-    header("TASTE", DISPLAY_ORANGE);
-    display_text(3, 21, "Loslassen:", DISPLAY_WHITE, DISPLAY_BLACK, 1);
-    display_text(3, 31, "Flash-Modus", DISPLAY_YELLOW, DISPLAY_BLACK, 1);
-    display_text(3, 44, "Weiter halten:", DISPLAY_WHITE, DISPLAY_BLACK, 1);
+    header(tr(T_TITLE_BUTTON), DISPLAY_ORANGE);
+    display_text(3, 21, tr(T_HOLD_RELEASE), DISPLAY_WHITE, DISPLAY_BLACK, 1);
+    display_text(3, 31, tr(T_HOLD_FLASH), DISPLAY_YELLOW, DISPLAY_BLACK, 1);
+    display_text(3, 44, tr(T_HOLD_KEEP), DISPLAY_WHITE, DISPLAY_BLACK, 1);
     snprintf(line, sizeof(line), "Reset in %d s", left);
     display_text(3, 54, line, DISPLAY_RED, DISPLAY_BLACK, 1);
     // progress bar for the 5 s .. 10 s window
@@ -300,12 +439,12 @@ static void draw_reset_screen(void)
     display_fill(DISPLAY_BLACK);
     if (s_reset_ok) {
         header("RESET", DISPLAY_GREEN);
-        display_text(3, 24, "Anmeldung", DISPLAY_WHITE, DISPLAY_BLACK, 1);
-        display_text(3, 34, "zurückgesetzt", DISPLAY_WHITE, DISPLAY_BLACK, 1);
+        display_text(3, 24, tr(T_RESET_LOGIN), DISPLAY_WHITE, DISPLAY_BLACK, 1);
+        display_text(3, 34, tr(T_RESET_DONE), DISPLAY_WHITE, DISPLAY_BLACK, 1);
         display_text(3, 52, "admin / admin", DISPLAY_YELLOW, DISPLAY_BLACK, 1);
     } else {
-        header("FEHLER", DISPLAY_RED);
-        display_text(3, 30, "Reset fehlgeschlagen", DISPLAY_WHITE, DISPLAY_BLACK, 1);
+        header(tr(T_TITLE_ERROR), DISPLAY_RED);
+        display_text(3, 30, tr(T_RESET_FAILED), DISPLAY_WHITE, DISPLAY_BLACK, 1);
     }
     display_flush();
 }
@@ -319,12 +458,12 @@ static void do_switch(int64_t t)
     drive_result_t r;
     if (d.crypt == DRIVE_CRYPT_DAMAGED) {
         s_confirm_until_ms = 0;
-        ui_notify("Schlüsselbereich defekt", true);
+        ui_notify(tr(T_N_KEY_DAMAGED), true);
         return;
     }
     if (d.crypt == DRIVE_CRYPT_LOCKED) {
         s_confirm_until_ms = 0;
-        ui_notify("Erst im Browser entsperren", true);
+        ui_notify(tr(T_N_UNLOCK_FIRST), true);
         return;
     }
     if (d.owner == DRIVE_OWNER_USB) {
@@ -332,7 +471,7 @@ static void do_switch(int64_t t)
         r = drive_set_owner(DRIVE_OWNER_APP, force);
         if (r == DRIVE_ERR_HOST_ACTIVE) {
             s_confirm_until_ms = t + 4000;
-            ui_notify("Gerät aktiv! 2x = OK", true);
+            ui_notify(tr(T_N_HOST_ACTIVE), true);
             return;
         }
     } else {
@@ -340,13 +479,13 @@ static void do_switch(int64_t t)
     }
     s_confirm_until_ms = 0;
     if (r == DRIVE_OK) {
-        ui_notify(d.owner == DRIVE_OWNER_USB ? "Upload-Modus" : "USB bereitgestellt", false);
+        ui_notify(tr(d.owner == DRIVE_OWNER_USB ? T_N_UPLOAD_MODE : T_N_USB_PROVIDED), false);
     } else if (r == DRIVE_ERR_HOST_WRITING) {
-        ui_notify("Gerät schreibt - warten", true);
+        ui_notify(tr(T_N_HOST_WRITING), true);
     } else if (r == DRIVE_ERR_BUSY) {
-        ui_notify("Up-/Download läuft", true);
+        ui_notify(tr(T_N_TRANSFER), true);
     } else {
-        ui_notify("Umschalten fehlgeschl.", true);
+        ui_notify(tr(T_N_SWITCH_FAILED), true);
     }
     ESP_LOGI(TAG, "button: switch result %d", r);
 }
@@ -355,9 +494,9 @@ static void enter_flash_mode(void)
 {
     display_fill(DISPLAY_BLACK);
     header("FLASH", DISPLAY_RED);
-    display_text(3, 24, "Download-Modus", DISPLAY_WHITE, DISPLAY_BLACK, 1);
-    display_text(3, 36, "Zum Beenden: aus-", DISPLAY_GREY, DISPLAY_BLACK, 1);
-    display_text(3, 46, "und einstecken", DISPLAY_GREY, DISPLAY_BLACK, 1);
+    display_text(3, 24, tr(T_FLASH_MODE), DISPLAY_WHITE, DISPLAY_BLACK, 1);
+    display_text(3, 36, tr(T_FLASH_EXIT1), DISPLAY_GREY, DISPLAY_BLACK, 1);
+    display_text(3, 46, tr(T_FLASH_EXIT2), DISPLAY_GREY, DISPLAY_BLACK, 1);
     display_flush();
     vTaskDelay(pdMS_TO_TICKS(300));
     drive_restart_to_download();
@@ -502,17 +641,17 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w, bool draw
     const anim_id_t an = pick_anim(d, w, t);
     colour = s_accent[an];
     if (locked) {                          // before the error case: fs_ok is false while locked
-        title = "GESPERRT";
+        title = tr(T_TITLE_LOCKED);
     } else if (damaged || d->owner == DRIVE_OWNER_NONE || !d->fs_ok) {
-        title = "FEHLER";
+        title = tr(T_TITLE_ERROR);
     } else if (d->upload_active) {
         title = "UPLOAD";
     } else if (d->owner == DRIVE_OWNER_USB) {
         title = "USB";
     } else if (!w->sta_connected && w->ap_active) {
-        title = "WLAN";
+        title = tr(T_TITLE_WLAN);
     } else {
-        title = "BEREIT";
+        title = tr(T_TITLE_READY);
     }
 
     // LED in state colour, dim; kept up to date while an overlay owns the LCD
@@ -527,7 +666,7 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w, bool draw
     display_fill(DISPLAY_BLACK);
     header(title, colour);
     // Wi-Fi indicator in the header
-    const char *wtag = w->sta_connected ? "WLAN" : (w->ap_active ? "AP" : "----");
+    const char *wtag = w->sta_connected ? tr(T_TAG_WLAN) : (w->ap_active ? "AP" : "----");
     display_text(DISPLAY_W - display_text_width(wtag, 1) - 3, 4, wtag,
                  header_fg(colour), colour, 1);
 
@@ -543,20 +682,20 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w, bool draw
         snprintf(line, sizeof(line), strlen(w->ap_pass) <= 14 ? "PW %s" : "%.17s", w->ap_pass);
         display_text(3, 29, line, DISPLAY_CYAN, DISPLAY_BLACK, 1);
     } else {
-        display_text(3, 19, w->sta_configured ? "WLAN verbinde..." : "WLAN nicht konfig.", DISPLAY_GREY,
+        display_text(3, 19, tr(w->sta_configured ? T_WLAN_CONNECTING : T_WLAN_NOT_SET), DISPLAY_GREY,
                      DISPLAY_BLACK, 1);
     }
 
     // Storage
     if (damaged) {
-        display_text(3, 40, "Schlüsselbereich", DISPLAY_RED, DISPLAY_BLACK, 1);
-        display_text(3, 50, "beschädigt", DISPLAY_RED, DISPLAY_BLACK, 1);
+        display_text(3, 40, tr(T_KEY_AREA), DISPLAY_RED, DISPLAY_BLACK, 1);
+        display_text(3, 50, tr(T_DAMAGED), DISPLAY_RED, DISPLAY_BLACK, 1);
     } else if (locked) {
-        display_text(3, 40, "Im Browser", DISPLAY_YELLOW, DISPLAY_BLACK, 1);
-        display_text(3, 50, "entsperren", DISPLAY_YELLOW, DISPLAY_BLACK, 1);
+        display_text(3, 40, tr(T_UNLOCK1), DISPLAY_YELLOW, DISPLAY_BLACK, 1);
+        display_text(3, 50, tr(T_UNLOCK2), DISPLAY_YELLOW, DISPLAY_BLACK, 1);
     } else if (d->needs_format) {
-        display_text(3, 40, "Kein Dateisystem!", DISPLAY_RED, DISPLAY_BLACK, 1);
-        display_text(3, 50, "Im Web formatieren", DISPLAY_GREY, DISPLAY_BLACK, 1);
+        display_text(3, 40, tr(T_NO_FS), DISPLAY_RED, DISPLAY_BLACK, 1);
+        display_text(3, 50, tr(T_FORMAT_WEB), DISPLAY_GREY, DISPLAY_BLACK, 1);
     } else if (d->total_bytes) {
         fmt_storage(line, sizeof(line), d);
         display_text(3, 40, line, DISPLAY_WHITE, DISPLAY_BLACK, 1);
@@ -577,17 +716,17 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w, bool draw
     } else {
         const char *host;
         if (!d->usb_connected) {
-            host = "Kein USB-Gerät";
+            host = tr(T_HOST_NONE);
         } else if (d->owner != DRIVE_OWNER_USB) {
-            host = d->host_ejected ? "Gerät: ausgeworfen" : "Gerät: kein Laufwerk";
+            host = tr(d->host_ejected ? T_HOST_EJECTED : T_HOST_NO_DRIVE);
         } else if (d->host_write_idle_ms < CONFIG_PD_HOST_WRITE_GUARD_MS) {
-            host = "Gerät schreibt...";
+            host = tr(T_HOST_WRITING);
         } else if (d->host_idle_ms < CONFIG_PD_HOST_WRITE_GUARD_MS) {
-            host = "Gerät liest...";
+            host = tr(T_HOST_READING);
         } else if (d->usb_suspended) {
-            host = "Gerät: Standby";
+            host = tr(T_HOST_STANDBY);
         } else {
-            host = d->host_writable ? "Gerät: verbunden" : "Gerät: nur lesen";
+            host = tr(d->host_writable ? T_HOST_CONNECTED : T_HOST_READONLY);
         }
         display_text(3, 59, host, DISPLAY_WHITE, DISPLAY_BLACK, 1);
     }
@@ -596,11 +735,11 @@ static void render(const drive_status_t *d, const pd_wifi_status_t *w, bool draw
     if (now_ms() < s_msg_until_ms) {
         display_text(3, 70, s_msg, s_msg_error ? DISPLAY_RED : DISPLAY_GREEN, DISPLAY_BLACK, 1);
     } else if (damaged) {
-        display_text(3, 70, "Im Web: Löschen", DISPLAY_GREY, DISPLAY_BLACK, 1);
+        display_text(3, 70, tr(T_WEB_ERASE), DISPLAY_GREY, DISPLAY_BLACK, 1);
     } else if (locked) {
-        display_text(3, 70, "verschlüsselt", DISPLAY_GREY, DISPLAY_BLACK, 1);
+        display_text(3, 70, tr(T_ENCRYPTED), DISPLAY_GREY, DISPLAY_BLACK, 1);
     } else {
-        snprintf(line, sizeof(line), "%lu Datei(en)", (unsigned long)d->file_count);
+        snprintf(line, sizeof(line), "%lu %s", (unsigned long)d->file_count, tr(T_FILES));
         display_text(3, 70, line, DISPLAY_GREY, DISPLAY_BLACK, 1);
     }
     anim_draw();                 // after the text: the box is the last thing drawn

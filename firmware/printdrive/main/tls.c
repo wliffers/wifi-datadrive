@@ -6,13 +6,17 @@
 #include <time.h>
 #include "esp_app_desc.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_random.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "mbedtls/asn1.h"
 #include "mbedtls/ecp.h"
 #include "mbedtls/oid.h"
 #include "mbedtls/pk.h"
+#include "mbedtls/platform.h"
 #include "mbedtls/platform_util.h"
 #include "mbedtls/sha256.h"
 #include "mbedtls/x509_crt.h"
@@ -619,3 +623,137 @@ esp_err_t pd_tls_read_ca(uint8_t **der, size_t *len)
     nvs_close(h);
     return err == ESP_ERR_NVS_NOT_FOUND ? ESP_ERR_NOT_FOUND : err;
 }
+
+// ------------------------------------------------------------------ reserved TLS record buffers
+//
+// Measured with 0.4.0 (dynamic mbedTLS buffers): every incoming 16 KiB record needed a fresh
+// 16749-byte block, which a heap fragmented by Wi-Fi/lwIP buffers often did not have - uploads
+// failed at once. Now the record buffers are static per connection (CONFIG_MBEDTLS_DYNAMIC_BUFFER
+// off) and come from two blocks reserved at boot. mbedTLS's allocator is only replaced while the
+// HTTPS server runs; without it mbedTLS uses calloc()/free() (CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC),
+// which on this board without PSRAM is the same internal RAM as CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC.
+
+#if defined(CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC) && defined(CONFIG_PD_HTTPS_OPTION)
+
+#ifdef CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN
+#define POOL_IN_CONTENT  CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN
+#define POOL_OUT_CONTENT CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN
+#else
+#define POOL_IN_CONTENT  CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN
+#define POOL_OUT_CONTENT CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN
+#endif
+// mbedTLS adds 333 bytes to the content length (13 header + 16 IV + 48 MAC + 256 CBC padding);
+// the dynamic-buffer variant (should it be switched on again) adds a small header on top.
+#define POOL_SLACK 512
+
+typedef struct {
+    uint8_t *mem;
+    size_t min;      // serves requests of more than min ...
+    size_t cap;      // ... and at most cap bytes
+    bool used;
+} pool_slot_t;
+
+static pool_slot_t s_pool[2];   // [0] input record buffer, [1] output record buffer
+static portMUX_TYPE s_pool_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint32_t s_pool_misses;
+
+/** mbedTLS calloc (any task: TLS server, Wi-Fi supplicant, pd_crypt). */
+static void *pool_calloc(size_t n, size_t size)
+{
+    if (n != 0 && size > SIZE_MAX / n) {
+        return NULL;
+    }
+    const size_t len = n * size;
+    bool tls_sized = false;
+    for (size_t i = 0; i < sizeof(s_pool) / sizeof(s_pool[0]); i++) {
+        pool_slot_t *s = &s_pool[i];
+        if (!s->mem || len <= s->min || len > s->cap) {
+            continue;
+        }
+        tls_sized = true;
+        bool take = false;
+        taskENTER_CRITICAL(&s_pool_mux);
+        if (!s->used) {
+            s->used = true;
+            take = true;
+        }
+        taskEXIT_CRITICAL(&s_pool_mux);
+        if (take) {
+            memset(s->mem, 0, len);
+            return s->mem;
+        }
+    }
+    if (tls_sized) {
+        s_pool_misses++;
+    }
+    return heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+static void pool_free(void *p)
+{
+    if (!p) {
+        return;
+    }
+    for (size_t i = 0; i < sizeof(s_pool) / sizeof(s_pool[0]); i++) {
+        if (p == s_pool[i].mem) {
+            taskENTER_CRITICAL(&s_pool_mux);
+            s_pool[i].used = false;
+            taskEXIT_CRITICAL(&s_pool_mux);
+            return;
+        }
+    }
+    heap_caps_free(p);   // also everything allocated with calloc() before the hook was installed
+}
+
+esp_err_t pd_tls_reserve_buffers(void)
+{
+    if (s_pool[0].mem) {
+        return ESP_OK;
+    }
+    const size_t cap_in = POOL_IN_CONTENT + POOL_SLACK, cap_out = POOL_OUT_CONTENT + POOL_SLACK;
+    uint8_t *in = heap_caps_malloc(cap_in, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    uint8_t *out = in ? heap_caps_malloc(cap_out, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) : NULL;
+    if (!in || !out) {
+        heap_caps_free(in);
+        return ESP_ERR_NO_MEM;
+    }
+    s_pool[0] = (pool_slot_t){.mem = in, .min = POOL_IN_CONTENT, .cap = cap_in};
+    s_pool[1] = (pool_slot_t){.mem = out, .min = POOL_OUT_CONTENT, .cap = cap_out};
+    mbedtls_platform_set_calloc_free(pool_calloc, pool_free);
+    ESP_LOGI(TAG, "TLS record buffers reserved (%u + %u bytes)", (unsigned)cap_in, (unsigned)cap_out);
+    return ESP_OK;
+}
+
+void pd_tls_release_buffers(void)
+{
+    if (!s_pool[0].mem || s_pool[0].used || s_pool[1].used) {
+        return;
+    }
+    mbedtls_platform_set_calloc_free(calloc, free);
+    heap_caps_free(s_pool[0].mem);
+    heap_caps_free(s_pool[1].mem);
+    memset(s_pool, 0, sizeof(s_pool));
+}
+
+uint32_t pd_tls_buffer_misses(void)
+{
+    return s_pool_misses;
+}
+
+#else   // no custom mbedTLS allocator configured, or HTTPS compiled out
+
+esp_err_t pd_tls_reserve_buffers(void)
+{
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+void pd_tls_release_buffers(void)
+{
+}
+
+uint32_t pd_tls_buffer_misses(void)
+{
+    return 0;
+}
+
+#endif

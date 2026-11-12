@@ -11,11 +11,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "ota.h"
+#include "pd_time.h"
 #include "pd_wifi.h"
 #include "sdkconfig.h"
 #include "tls.h"
+#include "ui.h"
 #include "web_common.h"
 #include "web_crypt.h"
+#include "web_dav.h"
 
 static const char *TAG = "web";
 
@@ -35,6 +38,106 @@ static const char *owner_str(drive_owner_t o)
 static long idle_json(uint32_t ms)
 {
     return ms == UINT32_MAX ? -1 : (long)ms;
+}
+
+// ---- clock, auto-lock, display language (0.5.0) ---------------------------------------------
+// Status fields (about 160 bytes at most, the TZ string is <= 63 characters):
+//   "time":{"epoch":N,"synced":B,"tz":"..."}, "autolock":{"minutes":N,"on_detach":B}, "lang":"de|en"
+static void append_clock_settings(char *buf, size_t len)
+{
+    char tz[PD_TIME_TZ_MAX + 1];
+    pd_time_get_tz(tz, sizeof(tz));
+    web_appendf(buf, len, ",\"time\":{\"epoch\":%lu,\"synced\":%s,\"tz\":", (unsigned long)pd_time_now(),
+                pd_time_synced() ? "true" : "false");
+    web_json_str(buf, len, tz);
+    uint16_t minutes;
+    bool on_detach;
+    drive_autolock_get(&minutes, &on_detach);
+    web_appendf(buf, len, "},\"autolock\":{\"minutes\":%u,\"on_detach\":%s},\"lang\":\"%s\"", (unsigned)minutes,
+                on_detach ? "true" : "false", ui_get_lang());
+}
+
+/** Unsigned decimal query parameter (1..10 digits) -> *out. */
+static bool query_uint(httpd_req_t *req, const char *key, uint32_t *out)
+{
+    char v[12];
+    if (!web_query_param(req, key, v, sizeof(v)) || !v[0] || strlen(v) > 10) {
+        return false;
+    }
+    for (const char *p = v; *p; p++) {
+        if (*p < '0' || *p > '9') {
+            return false;
+        }
+    }
+    const unsigned long long n = strtoull(v, NULL, 10);
+    if (n > UINT32_MAX) {
+        return false;
+    }
+    *out = (uint32_t)n;
+    return true;
+}
+
+// POST /api/settings/time?tz=<POSIX TZ> (admin). '+' must be sent as %2B (a raw '+' means space).
+static esp_err_t h_set_tz(httpd_req_t *req)
+{
+    char tz[PD_TIME_TZ_MAX + 2];
+    if (!web_query_param(req, "tz", tz, sizeof(tz)) || !pd_time_tz_valid(tz)) {
+        return web_send_error(req, "400 Bad Request", "BAD_REQUEST",
+                              "Ungültige Zeitzone (POSIX-TZ, höchstens 63 Zeichen)");
+    }
+    if (pd_time_set_tz(tz) != ESP_OK) {
+        return web_send_error(req, "500 Internal Server Error", "IO", "Einstellung konnte nicht gespeichert werden");
+    }
+    return web_send_result(req, DRIVE_OK);
+}
+
+// POST /api/time?epoch=<unix seconds> (user): only while NTP has not set the clock.
+// Answer {"ok":true,"set":true|false}; set=false: NTP has synced, the clock was left alone.
+static esp_err_t h_set_time(httpd_req_t *req)
+{
+    uint32_t epoch;
+    if (!query_uint(req, "epoch", &epoch)) {
+        return web_send_error(req, "400 Bad Request", "BAD_REQUEST", "epoch fehlt");
+    }
+    const esp_err_t err = pd_time_set_client(epoch);
+    if (err == ESP_ERR_INVALID_STATE) {
+        return web_send_json(req, "200 OK", "{\"ok\":true,\"set\":false}");
+    }
+    if (err != ESP_OK) {
+        return web_send_error(req, "400 Bad Request", "BAD_REQUEST", "Uhrzeit nicht plausibel");
+    }
+    return web_send_json(req, "200 OK", "{\"ok\":true,\"set\":true}");
+}
+
+// POST /api/settings/autolock?minutes=N&on_detach=0|1 (admin)
+static esp_err_t h_set_autolock(httpd_req_t *req)
+{
+    uint32_t minutes;
+    char det[8];
+    if (!query_uint(req, "minutes", &minutes) || minutes > DRIVE_AUTOLOCK_MINUTES_MAX ||
+        !web_query_param(req, "on_detach", det, sizeof(det)) ||
+        (strcmp(det, "0") && strcmp(det, "1") && strcmp(det, "true") && strcmp(det, "false"))) {
+        return web_send_error(req, "400 Bad Request", "BAD_REQUEST",
+                              "minutes (0-1440) und on_detach (0/1) erforderlich");
+    }
+    const bool on_detach = strcmp(det, "1") == 0 || strcmp(det, "true") == 0;
+    if (drive_autolock_set((uint16_t)minutes, on_detach) != ESP_OK) {
+        return web_send_error(req, "500 Internal Server Error", "IO", "Einstellung konnte nicht gespeichert werden");
+    }
+    return web_send_result(req, DRIVE_OK);
+}
+
+// POST /api/settings/lang?value=de|en (user): the web UI calls it when the user switches language.
+static esp_err_t h_set_lang(httpd_req_t *req)
+{
+    char v[4];
+    if (!web_query_param(req, "value", v, sizeof(v)) || (strcmp(v, "de") && strcmp(v, "en"))) {
+        return web_send_error(req, "400 Bad Request", "BAD_REQUEST", "value muss de oder en sein");
+    }
+    if (ui_set_lang(v) != ESP_OK) {
+        return web_send_error(req, "500 Internal Server Error", "IO", "Einstellung konnte nicht gespeichert werden");
+    }
+    return web_send_result(req, DRIVE_OK);
 }
 
 static esp_err_t h_status(httpd_req_t *req)
@@ -74,8 +177,19 @@ static esp_err_t h_status(httpd_req_t *req)
     web_appendf(buf, sizeof(buf), "}");
     web_appendf(buf, sizeof(buf), ",\"upload\":{\"active\":%s,\"name\":", d.upload_active ? "true" : "false");
     web_json_str(buf, sizeof(buf), d.upload_name);
-    web_appendf(buf, sizeof(buf), ",\"received\":%lu,\"total\":%lu}", (unsigned long)d.upload_received,
+    web_appendf(buf, sizeof(buf), ",\"received\":%lu,\"total\":%lu,\"resumable\":", (unsigned long)d.upload_received,
                 (unsigned long)d.upload_total);
+    {   // interrupted upload kept for resuming (web_files.c, /api/upload/resume), else null
+        char rp[DRIVE_PATH_MAX + 1];
+        uint32_t rsize = 0, roff = 0;
+        if (drive_upload_resumable(rp, sizeof(rp), &rsize, &roff)) {
+            web_appendf(buf, sizeof(buf), "{\"path\":");
+            web_json_str(buf, sizeof(buf), rp);
+            web_appendf(buf, sizeof(buf), ",\"size\":%lu,\"offset\":%lu}}", (unsigned long)rsize, (unsigned long)roff);
+        } else {
+            web_appendf(buf, sizeof(buf), "null}");
+        }
+    }
     web_appendf(buf, sizeof(buf), ",\"wifi\":{\"sta_configured\":%s,\"sta_connected\":%s,\"ssid\":",
                 w.sta_configured ? "true" : "false", w.sta_connected ? "true" : "false");
     web_json_str(buf, sizeof(buf), w.sta_ssid);
@@ -90,9 +204,11 @@ static esp_err_t h_status(httpd_req_t *req)
     ota_get_info(part, sizeof(part), &pending);
     web_appendf(buf, sizeof(buf), ",\"ota\":{\"partition\":\"%s\",\"pending_verify\":%s}", part,
                 pending ? "true" : "false");
+    web_appendf(buf, sizeof(buf), ",\"webdav\":%s", web_dav_enabled() ? "true" : "false");
     web_appendf(buf, sizeof(buf), ",\"crypt\":{\"enabled\":%s,\"unlocked\":%s,\"damaged\":%s}",
                 d.crypt != DRIVE_CRYPT_OFF ? "true" : "false", locked ? "false" : "true",
                 d.crypt == DRIVE_CRYPT_DAMAGED ? "true" : "false");
+    append_clock_settings(buf, sizeof(buf));   // "time", "autolock", "lang" - before the HTTPS fields
 #ifdef CONFIG_PD_HTTPS_OPTION
     pd_tls_info_t t;
     pd_tls_get_info(&t);
@@ -208,6 +324,10 @@ static const web_route_t s_routes[] = {
     {"/api/format", HTTP_POST, h_format, WEB_ROLE_ADMIN},
     {"/api/reboot", HTTP_POST, h_reboot, WEB_ROLE_ADMIN},
     {"/api/log", HTTP_GET, h_log, WEB_ROLE_ADMIN},
+    {"/api/settings/time", HTTP_POST, h_set_tz, WEB_ROLE_ADMIN},
+    {"/api/time", HTTP_POST, h_set_time, WEB_ROLE_USER},
+    {"/api/settings/autolock", HTTP_POST, h_set_autolock, WEB_ROLE_ADMIN},
+    {"/api/settings/lang", HTTP_POST, h_set_lang, WEB_ROLE_USER},
 };
 
 esp_err_t web_system_register(httpd_handle_t server)

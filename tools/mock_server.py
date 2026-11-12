@@ -114,6 +114,32 @@ Behaviour mirrored from the firmware
   GET /api/https/ca.cer (user; 404 NOT_FOUND until the first enable). The mock keeps serving plain HTTP:
   the setting only becomes `https_active` after a restart (reboot/update) or /mock/set?https=0|1.
 
+* API v5 (docs/15_api_v5.md):
+  - Clock: `time` {epoch, synced, tz} in /api/status, POST /api/settings/time?tz= (admin), POST /api/time?epoch=
+    (user; ignored with set:false while NTP-synced). Every time stamp (mtime of listings, upload parameters `mtime`
+    and `now`) is real Unix time (UTC) from v5 on. Files uploaded without `mtime` and new folders get the device
+    clock, 0 while it is unknown (scenario ap_setup, /mock/set?clock=unsynced).
+  - Automatic lock: `autolock` {minutes, on_detach} in /api/status, POST /api/settings/autolock (admin). File
+    requests (and host reads/writes) count as activity, status polls do not; never locks while an upload by another
+    client runs or the host writes. Simulate idle time with /mock/set?idle_s=N. on_detach: locks 10 s after
+    usb_connected=0 or after 60 s of usb_suspended=1.
+  - Display language: `lang` in /api/status, POST /api/settings/lang?value=de|en (user).
+  - Resumable upload: GET /api/upload/resume?path=&size=, POST /api/upload?path=&size=&offset=N (409
+    RESUME_MISMATCH with the server's `offset`, also for offset=0 while a part of that file is held and for
+    offset > size; Content-Length != size - offset: 400), `upload.resumable` in /api/status. A broken resumable
+    upload keeps whole 4 KiB blocks; one at a time; discarded by any fresh upload (also push and WebDAV PUT), format,
+    hand-over to USB, lock and restart. The resume query always answers (0 while locked or owned by USB).
+  - Folder ZIP: GET /api/zip?path= streams a stored ZIP (chunked, data descriptors, UTF-8 names, folder entries,
+    hidden names left out; refused like a download; 413 TOO_MANY_FILES above 4096 files, 404 NOT_FOUND for a file;
+    the firmware switches to ZIP64 where needed, the mock's archives are always small).
+  - WebDAV at /dav/ (HTTP Basic only, cookie ignored): OPTIONS, PROPFIND (Depth 0/1), GET, HEAD, PUT, DELETE, MKCOL,
+    MOVE, COPY, LOCK/UNLOCK (answered, not enforced), PROPPATCH (accepted, ignored). Same roles and drive rules as
+    the file API. `webdav` switch in /api/status, POST /api/settings/webdav?value=0|1 (admin; off: /dav/ answers
+    404). Names with a leading dot and desktop.ini / Thumbs.db / ehthumbs.db: reads 404, writes 403. PROPFIND
+    without Depth means infinity: 403. LOCK on a new name: 201 (nothing is created).
+        curl -u admin:admin123 -X PROPFIND -H "Depth: 1" http://127.0.0.1:8080/dav/
+        curl -u admin:admin123 -T Teil.3mf "http://127.0.0.1:8080/dav/Projekte/Teil.3mf"
+
 Scenarios (`--scenario NAME` or `GET /mock/scenario?name=NAME`)
 ---------------------------------------------------------------
     usb_active    default: drive provided to a connected USB host, a few files, 2 folders
@@ -147,7 +173,7 @@ Control endpoints (GET, no CSRF header, no login, exist only in the mock)
     usb_connected=0|1       host plugged in. Like the device: unplugging while owner=usb
                             switches to app, plugging in while owner=app provides the
                             drive - unless `owner=` is given in the same call
-    usb_suspended=0|1       status flag only
+    usb_suspended=0|1       status flag (and: autolock on_detach locks after 60 s of suspend)
     host_ejected=0|1        host ejected the drive (owner=usb switches to app, see above)
     host_writable=0|1       host may write (takes effect at once, unlike the API setting)
     host_writing=1|hold|0   1: host wrote "now" (HOST_WRITING for write_guard_ms);
@@ -192,6 +218,14 @@ Control endpoints (GET, no CSRF header, no login, exist only in the mock)
     ota_fail=<CODE>|none    every /api/ota fails with that code (after the body, except
                             BUSY/HOST_WRITING/TOO_LARGE) until cleared
     next_version=<x.y.z>    version reported after the next successful /api/ota
+    clock=synced|unsynced|manual|<unix s>   device clock (API v5): NTP-synced, unknown (epoch 0), set by a
+                            browser (now, or the given time; not synced)
+    resumable=PATH|SIZE|OFFSET   pretend a broken resumable upload exists (content 'PK\\3\\4' + zero bytes);
+                            none clears
+    upload_drop_after=<bytes>    the next upload/push connection is reset after that many body bytes (a
+                            resumable upload keeps the whole 4 KiB blocks received); none clears
+    idle_s=<n>              pretend the last file activity, host access, unplugging and suspend were n s ago (the automatic
+                            lock strikes at once if due)
     reset=1                 back to the start of the current scenario
 """
 from __future__ import annotations
@@ -199,7 +233,6 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
-import calendar
 import collections
 import hashlib
 import hmac
@@ -221,13 +254,18 @@ import zipfile
 import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import unquote_to_bytes
+from email.utils import formatdate
+from urllib.parse import quote, unquote_to_bytes, urlsplit
+from xml.etree import ElementTree
+from xml.sax.saxutils import escape as xml_escape
+import mimetypes
+import uuid
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HTML = "firmware/printdrive/main/web/index.html"
 
-VERSION = "0.3.0"
-NEXT_VERSION = "0.3.1"           # reported after a successful POST /api/ota
+VERSION = "0.5.0"
+NEXT_VERSION = "0.5.1"           # reported after a successful POST /api/ota
 CSRF_HEADER = "X-PrintDrive"
 NAME_MAX = 120                      # DRIVE_NAME_MAX: bytes (UTF-8) of an uploaded/renamed name
 FILE_NAME_MAX = 255                 # DRIVE_FILE_NAME_MAX: existing (host-created) names
@@ -270,7 +308,19 @@ SCAN_MAX = 20                       # networks in the answer
 CRYPT_DEFAULT_PASSWORD = "Geheimes-Passwort-12"
 CRYPT_DEFAULT_RECOVERY = "7K3M-Q9XD-4WTB-HN2C-5RYE-8FGA-ZP6V-JC3S"
 WIFI_MAX = 5
-OTA_MAX = 0x280000                  # size of one firmware partition
+# API v5 (docs/15_api_v5.md)
+TZ_DEFAULT = "CET-1CEST,M3.5.0,M10.5.0/3"   # POSIX TZ of Germany (default of /api/settings/time)
+TZ_MAX = 63                         # bytes of a TZ string
+EPOCH_MIN = 1_700_000_000           # plausible clock for POST /api/time: after the "build date" (firmware: its real one)
+EPOCH_MAX = 4_102_444_800           # ... and before 2100-01-01
+AUTOLOCK_MAX = 1440                 # minutes
+DETACH_LOCK_S = 10                  # on_detach: lock this long after the host disappeared ...
+SUSPEND_LOCK_S = 60                 # ... or after this long in USB suspend
+RESUME_BLOCK = 4096                 # a broken resumable upload keeps whole blocks of this size
+ZIP_FILES_MAX = 4096                # more files in the tree: 413 TOO_MANY_FILES (firmware limit)
+DAV_PREFIX = "/dav"
+DAV_REALM = "DataDrive"
+OTA_MAX = 0x280000                 # size of one firmware partition
 OTA_VERIFY_S = 15                   # a new firmware counts as good after this uptime
 SESSION_COOKIE = "dd_session"
 DEVICES_MAX = 8                     # remembered ("trusted") devices
@@ -322,7 +372,11 @@ ERRORS = {
     "DRIVE_LOCKED": (423, "Das Laufwerk ist gesperrt. Bitte zuerst entsperren."),
     "CRYPT_DAMAGED": (423, "Der Schlüsselbereich des Laufwerks ist beschädigt. Nur Löschen und neu einrichten hilft."),
     "CRYPT_UNAVAILABLE": (503, "Die Verschlüsselung ist auf diesem Speicher nicht möglich."),
+    # API v5 (docs/15_api_v5.md)
+    "RESUME_MISMATCH": (409, "Der Upload kann an dieser Stelle nicht fortgesetzt werden."),
+    "TOO_MANY_FILES": (413, "Der Ordner enthält zu viele Dateien für ein ZIP (höchstens 4096)."),
 }
+TEXT_NOT_A_DIR = "Das ist eine Datei, kein Ordner."
 TEXT_DEFAULT_PASSWORD = "Bitte ein anderes Passwort als das Auslieferungspasswort wählen."
 TEXT_NO_USER = "Diesen Benutzer gibt es nicht."
 TEXT_USER_EXISTS = "Diesen Benutzer gibt es schon."
@@ -336,7 +390,11 @@ UPLOAD_PATHS = ("/api/upload", "/api/push", "/api/ota")
 LOCKED_ROUTES = {("GET", "/api/files"), ("GET", "/api/download"), ("POST", "/api/mode"), ("POST", "/api/mkdir"),
                  ("POST", "/api/delete"), ("POST", "/api/move"), ("POST", "/api/copy"),
                  ("POST", "/api/upload/check"), ("POST", "/api/upload"), ("POST", "/api/push"),
-                 ("POST", "/api/format")}
+                 ("POST", "/api/format"), ("GET", "/api/zip")}
+# GET /api/upload/resume always answers (offset 0 while locked or owned by USB: nothing can be held then).
+# Requests that count as activity for the automatic lock (API v5); status polls do not.
+ACTIVITY_PATHS = {"/api/files", "/api/download", "/api/mode", "/api/mkdir", "/api/delete", "/api/move", "/api/copy",
+                  "/api/upload/check", "/api/upload", "/api/push", "/api/zip", "/api/upload/resume"}
 
 SCENARIO_HELP = {
     "usb_active": "default: drive provided to a connected USB host, a few files and folders",
@@ -403,7 +461,15 @@ SET_HELP = {
     "wifi_count": "0..5 (number of stored networks)",
     "copy_kbps": "KiB/s for /api/copy, 0 = unlimited (makes the blocking visible)",
     "ota_fail": "error CODE for every /api/ota until 'none' (e.g. INVALID_FILE, IO)",
-    "next_version": "version reported after the next successful /api/ota (default 0.3.1)",
+    "next_version": "version reported after the next successful /api/ota (default 0.5.1)",
+    "clock": "synced|unsynced|manual|<unix s> (device clock: NTP-synced, unknown (epoch 0), set from a browser; a "
+             "number sets the clock to that time, not synced)",
+    "resumable": "PATH|SIZE|OFFSET or none (pretend a broken resumable upload of PATH with SIZE bytes exists, "
+                 "OFFSET bytes received; '|' separates)",
+    "upload_drop_after": "bytes or none (the next upload/push connection is reset after that many body bytes; a "
+                         "resumable upload keeps the received whole 4 KiB blocks)",
+    "idle_s": "seconds (pretend the last file activity, host access, unplugging and suspend were that long ago; triggers the automatic "
+              "lock if due)",
     "reset": "1",
 }
 
@@ -415,8 +481,10 @@ class ClientGone(Exception):
 # ============================================================== helpers
 
 def local_now() -> int:
-    """Seconds since 1970 in local time (the FAT convention of the contract)."""
-    return calendar.timegm(time.localtime())
+    """Unix seconds (UTC). API v5 reports every time stamp as real Unix time; until v4 the contract used local
+    wall-clock seconds. Scenario files carry stamps written by someone with a clock, independent of the device
+    clock (see Device.clock())."""
+    return int(time.time())
 
 
 def make_zip() -> bytes:
@@ -628,6 +696,17 @@ def walk(node: Node, prefix: str = ""):
             yield from walk(child, path + "/")
 
 
+def visible_walk(node: Node, prefix: str = ""):
+    """Like walk(), but skips hidden names (and everything below them), like the listing."""
+    for child in list(node.children.values()):
+        if is_hidden(child.name):
+            continue
+        path = prefix + child.name
+        yield path, child
+        if child.is_dir:
+            yield from visible_walk(child, path + "/")
+
+
 def subtree_size(node: Node) -> int:
     if not node.is_dir:
         return node.size
@@ -795,7 +874,21 @@ class Device:
         self.ssid = "MeinWLAN"
         self.networks = ["MeinWLAN"]      # stored networks (passwords are never kept/reported)
         self.wifi_connect_at = None
-        self.clock_offset = None          # set by the firmware's undocumented upload param `now`
+        # device clock (API v5): synced (NTP), unsynced (unknown: epoch 0) or manual (set by POST /api/time or the
+        # upload parameter `now`; then clock_offset = device time - PC time)
+        self.clock_mode = "synced"
+        self.clock_offset = 0.0
+        self.tz = TZ_DEFAULT
+        self.lang = "de"                  # display language (API v5)
+        self.autolock_min = 0             # automatic lock of the encrypted drive: idle minutes, 0 = off
+        self.autolock_detach = False      # ... and/or when the USB host is unplugged
+        self.detach_at = None             # on_detach: monotonic time the host disappeared (lock DETACH_LOCK_S later)
+        self.suspend_since = None         # monotonic time the host went into USB suspend
+        self.last_activity = now          # last file request (status polls do not count)
+        self.partial = None               # kept broken resumable upload (dict) or None
+        self.upload_drop_after = None     # bytes
+        self.webdav = True                # WebDAV switch (optional in the contract)
+        self.dav_locks = {}               # token -> path (LOCK is answered, never enforced)
         # authentication
         self.auth_enabled = self.default_auth
         # The mock starts with the delivery password already changed; only `default_login` keeps admin/admin.
@@ -957,6 +1050,7 @@ class Device:
 
     def _sc_ap_setup(self):
         self._few_files()
+        self.clock_mode = "unsynced"           # no internet, no NTP: the clock is unknown until a browser sets it
         self.wifi_mode = "ap"
         self.ssid = ""
         self.networks = []
@@ -1003,17 +1097,20 @@ class Device:
     def drive_locked(self) -> bool:
         return self.crypt_enabled and not self.crypt_unlocked
 
-    def _crypt_lock(self):
+    def _crypt_lock(self, why: str = ""):
         self.crypt_unlocked = False
         self.owner = "none"
         self.host_ejected = False
         self.last_read = self.last_write = None
         self.write_hold = False
-        self.log("I", "crypt", "drive locked")
+        self.detach_at = None
+        self.discard_partial("drive locked")
+        self.log("I", "crypt", "drive locked" + (f" ({why})" if why else ""))
 
     def _crypt_unlock(self):
         """After unlocking the drive reports itself like after a change of mode."""
         self.crypt_unlocked = True
+        self.last_activity = time.monotonic()
         self.log("I", "crypt", "drive unlocked")
         if self.fs_ok and self.usb_connected:
             self._provide()
@@ -1040,6 +1137,58 @@ class Device:
         if cert or ca or not self.cert_sha256:
             self.cert_sha256 = self._fp()
             self.cert_expires = time.strftime("%Y-%m-%d", time.gmtime(time.time() + 820 * 86400))
+
+    # ---------------------------------------------------------- clock, auto-lock, resumable upload (API v5)
+
+    def clock(self) -> int:
+        """Device time as Unix seconds, 0 = unknown."""
+        if self.clock_mode == "unsynced":
+            return 0
+        return int(time.time() + (self.clock_offset if self.clock_mode == "manual" else 0))
+
+    def set_clock(self, epoch: int):
+        self.clock_mode = "manual"
+        self.clock_offset = epoch - time.time()
+        self.log("I", "time", f"clock set by a client: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(epoch))} UTC")
+
+    def time_json(self) -> dict:
+        return {"epoch": self.clock(), "synced": self.clock_mode == "synced", "tz": self.tz}
+
+    def discard_partial(self, why: str):
+        if self.partial is not None:
+            self.log("I", "drive", f"resumable upload '{self.partial['path']}' discarded ({why})")
+            self.partial = None
+
+    def partial_json(self):
+        p = self.partial
+        return None if p is None else {"path": p["path"], "size": p["size"], "offset": p["offset"]}
+
+    def partial_offset(self, path, size: int) -> int:
+        p = self.partial
+        return p["offset"] if p is not None and p["path"] == path and p["size"] == size else 0
+
+    def busy_for_lock(self) -> bool:
+        """The automatic lock never strikes while an operation runs or the host writes."""
+        return self.other_upload is not None or self.host_wrote_recently() or self.write_hold
+
+    def autolock_tick(self):
+        if not (self.crypt_enabled and self.crypt_unlocked and not self.crypt_damaged) or self.pending_boot:
+            self.detach_at = None
+            return
+        if self.busy_for_lock():
+            return
+        now = time.monotonic()
+        if self.autolock_detach and self.detach_at is not None and now - self.detach_at >= DETACH_LOCK_S:
+            self._crypt_lock("automatic: USB host unplugged")
+            return
+        if (self.autolock_detach and self.usb_suspended and self.suspend_since is not None
+                and now - self.suspend_since >= SUSPEND_LOCK_S):
+            self._crypt_lock("automatic: USB host suspended")
+            return
+        if self.autolock_min > 0:
+            last = max(x for x in (self.last_activity, self.last_read, self.last_write) if x is not None)
+            if time.monotonic() - last >= self.autolock_min * 60:
+                self._crypt_lock(f"automatic: {self.autolock_min} min without activity")
 
     def crypt_check_any(self, secret) -> bool:
         """Drive password or (current) recovery key."""
@@ -1129,6 +1278,7 @@ class Device:
             self.wifi_connect_at = None
             self.wifi_mode = "sta"
             self.log("I", "wifi", f"connected to '{self.ssid}', IP {FAKE_IP}")
+        self.autolock_tick()
 
     def is_offline(self) -> bool:
         return not self.online or self.pending_boot
@@ -1143,7 +1293,12 @@ class Device:
         self.offline_until = None
         self.boot_t = at
         self.other_upload = None
-        self.clock_offset = None
+        # The RTC keeps the time across a software restart (power loss would clear it: /mock/set?clock=unsynced).
+        self.partial = None                     # resumable uploads live in RAM only
+        self.detach_at = None
+        self.suspend_since = None
+        self.dav_locks.clear()
+        self.last_activity = at
         self.host_ejected = False
         self.last_read = self.last_write = None
         self.sessions.clear()                   # sessions live in RAM only
@@ -1205,6 +1360,7 @@ class Device:
 
     def _provide(self):
         """do_mount_usb()"""
+        self.discard_partial("drive handed to USB")
         self.owner = "usb"
         self.host_ejected = False
         self.host_write_applied = self.host_writable
@@ -1287,8 +1443,8 @@ class Device:
         return err or self.upload_app_check(segs, size, overwrite)
 
     def store_upload(self, segs, data: bytes, size: int, mtime: int):
-        if mtime < MTIME_MIN:                    # not given: the device clock, if it was ever set
-            mtime = local_now() + self.clock_offset if self.clock_offset is not None else 0
+        if mtime < MTIME_MIN:                    # not given: the device clock (0 while it is unknown)
+            mtime = self.clock()
         parent = self.resolve(segs[:-1])
         name = segs[-1]
         if parent is None or not parent.is_dir:  # folder vanished meanwhile (cannot happen: one request at a time)
@@ -1351,7 +1507,7 @@ class Device:
             return "NOT_FOUND"
         if segs[-1].lower() in parent.children:
             return "EXISTS"
-        parent.children[segs[-1].lower()] = Node(segs[-1], True, mtime=local_now() + (self.clock_offset or 0))
+        parent.children[segs[-1].lower()] = Node(segs[-1], True, mtime=self.clock())
         self.log("I", "drive", f"mkdir '{'/'.join(segs)}'")
         return None
 
@@ -1442,6 +1598,7 @@ class Device:
         return None
 
     def format(self):
+        self.discard_partial("format")
         self.root = Node("", True)
         self.fill = 0
         self.needs_format = False
@@ -1555,6 +1712,7 @@ class Device:
             rate = (self.upload_kbps or 400) * 1024
             received = int((time.monotonic() - self.other_upload) * rate) % total
             upload = {"active": True, "name": "Upload von anderem Gerät.3mf", "received": received, "total": total}
+        upload["resumable"] = self.partial_json()
         sta = self.wifi_mode == "sta"
         ap = self.wifi_mode in ("ap", "connecting")
         return {
@@ -1587,7 +1745,31 @@ class Device:
             },
             "ota": {"partition": self.ota_partition,
                     "pending_verify": self.ota_verify_until is not None and time.monotonic() < self.ota_verify_until},
+            "time": self.time_json(),
+            "autolock": {"minutes": self.autolock_min, "on_detach": self.autolock_detach},
+            "lang": self.lang,
+            "webdav": self.webdav,
         }
+
+    # ---------------------------------------------------------- folder ZIP and WebDAV helpers (API v5)
+
+    def zip_source(self, raw):
+        """GET /api/zip: returns (node, top-level prefix, error code, error text)."""
+        segs, err = parse_path(raw, existing=True)
+        err = err or self._fs_ready()
+        if err:
+            return None, "", err, ""
+        if any(is_hidden(s) for s in segs):
+            return None, "", "NOT_FOUND", ""
+        node = self.resolve(segs)
+        if node is None:
+            return None, "", "NOT_FOUND", ""
+        if not node.is_dir:
+            return None, "", "NOT_FOUND", TEXT_NOT_A_DIR      # like the firmware: a file is "no such folder"
+        files = sum(0 if n.is_dir else 1 for _, n in visible_walk(node))
+        if files > ZIP_FILES_MAX:
+            return None, "", "TOO_MANY_FILES", ""
+        return node, (segs[-1] + "/") if segs else "", None, ""
 
     def tree_summary(self) -> dict:
         dirs = files = 0
@@ -1641,6 +1823,14 @@ class Device:
                       "damaged": self.crypt_damaged, "retry_after": self.crypt_lockout.blocked_s(),
                       "kdf_ms": self.crypt_kdf_ms, "failed_unlocks": self.crypt_lockout.fails_total()},
             "scan_ms": self.scan_ms,
+            "clock": self.clock_mode, "time": self.time_json(), "lang": self.lang,
+            "autolock": {"minutes": self.autolock_min, "on_detach": self.autolock_detach,
+                         "idle_s": round(time.monotonic() - max(x for x in (self.last_activity, self.last_read,
+                                                                            self.last_write) if x is not None), 1),
+                         "lock_after_detach_s": None if self.detach_at is None else
+                         round(max(0.0, self.detach_at + DETACH_LOCK_S - time.monotonic()), 1)},
+            "resumable": self.partial_json(), "upload_drop_after": self.upload_drop_after,
+            "webdav": self.webdav, "dav_locks": len(self.dav_locks),
             "wifi_networks": [{"ssid": n, "active": self.wifi_mode == "sta" and n == self.ssid}
                               for n in self.networks],
             "copy_kbps": self.copy_kbps, "ota_fail": self.ota_fail,
@@ -1742,6 +1932,32 @@ class Device:
                 if pct > 100:
                     raise ValueError("upload_fail_at must be 0..100")
                 v["upload_fail_at"] = pct
+        if "clock" in q:
+            c = q["clock"].strip().lower()
+            if c in ("synced", "unsynced", "manual"):
+                v["clock"] = c
+            elif re.fullmatch(r"\d{1,11}", c) and EPOCH_MIN < int(c) < EPOCH_MAX:
+                v["clock"] = int(c)
+            else:
+                raise ValueError(f"clock must be synced, unsynced, manual or Unix seconds {EPOCH_MIN}..{EPOCH_MAX}")
+        if "resumable" in q:
+            if is_cleared(q["resumable"]):
+                v["resumable"] = None
+            else:
+                parts = q["resumable"].split("|")
+                if len(parts) != 3 or not parts[1].strip().isdigit() or not parts[2].strip().isdigit():
+                    raise ValueError("resumable must be PATH|SIZE|OFFSET (e.g. Projekte/Teil.3mf|1048576|262144) or none")
+                rpath, rsize, roff = parts[0], int(parts[1]), int(parts[2])
+                segs, err = parse_path(rpath)
+                if err or not segs:
+                    raise ValueError("resumable: invalid path")
+                if not 0 < roff < rsize or rsize > 0xFFFFFFFF:
+                    raise ValueError("resumable: needs 0 < OFFSET < SIZE <= 4 GiB")
+                v["resumable"] = (rpath, rsize, roff)
+        if "upload_drop_after" in q:
+            v["upload_drop_after"] = None if is_cleared(q["upload_drop_after"]) else parse_size(q["upload_drop_after"])
+        if "idle_s" in q:
+            v["idle_s"] = parse_nonneg(q["idle_s"])
 
         notes = []
         if v.get("reset"):
@@ -1803,6 +2019,7 @@ class Device:
             self.usb_connected = v["usb_connected"]
             if self.usb_connected:
                 self.log("I", "drive", "USB host attached")
+                self.detach_at = None                   # back within the grace time: no automatic lock
                 if auto and self.owner == "app" and self.fs_ok and self.other_upload is None:
                     self._provide()
                     notes.append("host attached: drive provided automatically (owner=usb), like the device; "
@@ -1813,7 +2030,16 @@ class Device:
                     self._mount_app()
                     notes.append("host detached: owner switched to app automatically, like the device; "
                                  "add owner=usb to the same call to prevent this")
+                if self.autolock_detach and self.crypt_enabled and self.crypt_unlocked and not self.crypt_damaged:
+                    self.detach_at = time.monotonic()   # applied by autolock_tick() (never during an operation)
+                    notes.append(f"autolock on_detach: the drive is locked in {DETACH_LOCK_S} s")
         if "usb_suspended" in v:
+            if v["usb_suspended"] and not self.usb_suspended:
+                self.suspend_since = time.monotonic()
+                if self.autolock_detach and self.crypt_enabled and self.crypt_unlocked:
+                    notes.append(f"autolock on_detach: the drive is locked after {SUSPEND_LOCK_S} s of suspend")
+            elif not v["usb_suspended"]:
+                self.suspend_since = None
             self.usb_suspended = v["usb_suspended"]
         if "host_ejected" in v:
             if v["host_ejected"] and not self.host_ejected:
@@ -1902,6 +2128,41 @@ class Device:
             if self.online and self.pending_boot:
                 self._boot(time.monotonic())
                 notes.append("restart finished")
+        if "clock" in v:
+            c = v["clock"]
+            if isinstance(c, int):
+                self.set_clock(c)
+            elif c == "manual":
+                self.set_clock(int(time.time()))
+            else:
+                self.clock_mode, self.clock_offset = c, 0.0
+            notes.append(f"clock: {self.clock_mode}, epoch {self.clock()}")
+        if "resumable" in v:
+            if v["resumable"] is None:
+                self.discard_partial("mock")
+            else:
+                rpath, rsize, roff = v["resumable"]
+                filler = b"PK\x03\x04" + bytes(max(0, min(roff, STORE_MAX if rsize <= STORE_MAX else STORE_HEAD) - 4))
+                self.partial = {"path": rpath, "size": rsize, "offset": roff, "data": bytearray(filler[:roff]),
+                                "tail": bytearray(filler[-TAIL_SIZE:]) if roff >= 4 else bytearray(filler[:roff])}
+                notes.append(f"resumable upload '{rpath}': {roff} of {rsize} bytes (content: 'PK\\3\\4' + zero bytes)")
+        if "upload_drop_after" in v:
+            self.upload_drop_after = v["upload_drop_after"]
+        if "idle_s" in v:
+            back = v["idle_s"]
+            self.last_activity -= back
+            if self.last_read is not None:
+                self.last_read -= back
+            if self.last_write is not None:
+                self.last_write -= back
+            if self.detach_at is not None:
+                self.detach_at -= back
+            if self.suspend_since is not None:
+                self.suspend_since -= back
+        self.autolock_tick()
+        if "idle_s" in v or "usb_connected" in v:
+            notes.append("drive is " + ("locked" if self.drive_locked() else "unlocked" if self.crypt_enabled
+                                        else "not encrypted"))
         return notes
 
     def take_fail_next(self, path: str, is_post: bool = True):
@@ -1936,6 +2197,7 @@ class Handler(BaseHTTPRequestHandler):
         self._route(self.command)
 
     do_HEAD = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _other_method
+    do_PROPFIND = do_PROPPATCH = do_MKCOL = do_MOVE = do_COPY = do_LOCK = do_UNLOCK = _other_method   # WebDAV
 
     # ---------------------------------------------------------- plumbing
 
@@ -1947,6 +2209,7 @@ class Handler(BaseHTTPRequestHandler):
         self._status = None
         self._info = ""
         self._user, self._token, self._locked = None, None, False
+        self._activity = False
         self.close_connection = True
         t0 = time.monotonic()
         path, _, query = self.path.partition("#")[0].partition("?")
@@ -1964,6 +2227,8 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._abort("internal error in mock")
         finally:
+            if self._activity:                   # the idle time of the automatic lock starts when the request ends
+                dev.last_activity = time.monotonic()
             ms = (time.monotonic() - t0) * 1000
             status = "---" if self._status is None else str(self._status)
             line = f"{time.strftime('%H:%M:%S')} {method:<4} {self.path} -> {status}"
@@ -1983,6 +2248,9 @@ class Handler(BaseHTTPRequestHandler):
             time.sleep(dev.delay_ms / 1000)
 
         clen = self._content_length()
+        if path == DAV_PREFIX or path.startswith(DAV_PREFIX + "/"):     # WebDAV (API v5): HTTP Basic only
+            self._dav(method, path, clen)
+            return
         if is_mock:                                   # control endpoints: never authenticated
             mock = {"/mock": self._mock_help, "/mock/": self._mock_help, "/mock/state": self._mock_state,
                     "/mock/set": self._mock_set, "/mock/scenario": self._mock_scenario}
@@ -2044,6 +2312,14 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/format"): (self._api_format, "admin"),
             ("POST", "/api/reboot"): (self._api_reboot, "admin"),
             ("POST", "/api/ota"): (self._api_ota, "admin"),
+            # API v5
+            ("POST", "/api/settings/time"): (self._api_settings_time, "admin"),
+            ("POST", "/api/time"): (self._api_time, "user"),
+            ("POST", "/api/settings/autolock"): (self._api_settings_autolock, "admin"),
+            ("POST", "/api/settings/lang"): (self._api_settings_lang, "user"),
+            ("POST", "/api/settings/webdav"): (self._api_settings_webdav, "admin"),
+            ("GET", "/api/upload/resume"): (self._api_upload_resume, "user"),
+            ("GET", "/api/zip"): (self._api_zip, "user"),
         }
         entry = routes.get((method, path))
         if entry is None:
@@ -2074,6 +2350,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._drain(clen)
                 self._error("FORBIDDEN_ROLE")
                 return
+        if path in ACTIVITY_PATHS:
+            self._activity = True                     # automatic lock: file requests count, status polls do not
+            dev.last_activity = time.monotonic()
         if method == "POST":
             # CSRF protection, like check_csrf() in every POST handler.
             if self.headers.get(CSRF_HEADER) != "1":
@@ -2699,13 +2978,31 @@ class Handler(BaseHTTPRequestHandler):
         path = q["path"]
         overwrite = (q.get("overwrite") not in ("0", "false")) if push else flag(q, "overwrite")
         force = push and flag(q, "force")
-        segs, err = dev.upload_static_check(path, clen)
+        # API v5: resumable upload (/api/upload only): size = whole file, offset = where this body starts
+        resume = not push and "offset" in q
+        offset, size = 0, clen
+        if resume:
+            if not re.fullmatch(r"\d{1,20}", q.get("offset") or "") or not re.fullmatch(r"\d{1,20}", q.get("size") or ""):
+                self._drain(clen)
+                self._error("BAD_REQUEST", "offset und size müssen Zahlen sein")
+                return
+            offset, size = int(q["offset"]), int(q["size"])
+            server_off = dev.partial_offset(path, size)
+            if offset <= size and offset + clen != size:
+                self._drain(clen)
+                self._error("BAD_REQUEST", "Content-Length muss size - offset sein")
+                return
+            if offset != server_off:                   # also offset=0 while a part of this file is held
+                self._drain(clen)
+                self._error("RESUME_MISMATCH", extra={"offset": server_off}, info=f"(server offset {server_off})")
+                return
+        segs, err = dev.upload_static_check(path, size)
         took = False
         if not err and push and dev.owner == "usb":
             err = dev.set_owner("app", force)           # same rules as /api/mode?target=app
             took = err is None
         if not err:
-            err = dev.upload_app_check(segs, clen, overwrite)
+            err = dev.upload_app_check(segs, size, overwrite)
 
         def extra() -> dict:
             return {"took_over": took, "provided": took} if push else {}
@@ -2721,36 +3018,59 @@ class Handler(BaseHTTPRequestHandler):
             self._error(err, extra=extra())
             return
 
-        dev.log("I", "drive", f"{'push' if push else 'upload'} start '{path}' ({clen} bytes)")
+        prev = dev.partial if resume and offset > 0 else None
+        dev.discard_partial("continued" if prev else "another upload")   # one partial upload at a time
+        dev.log("I", "drive", f"{'push' if push else 'upload'} {'resume' if prev else 'start'} '{path}' "
+                              f"({clen} bytes" + (f" from offset {offset} of {size})" if resume else ")"))
         stop_at = None
         if dev.upload_fail_at is not None:
             stop_at = int(clen * dev.upload_fail_at / 100)
             dev.upload_fail_at = None
-        keep_limit = clen if clen <= STORE_MAX else STORE_HEAD
-        head, tail, keep = bytearray(), bytearray(), bytearray()
+        if dev.upload_drop_after is not None:
+            stop_at = min(clen, dev.upload_drop_after) if stop_at is None else min(stop_at, dev.upload_drop_after)
+            dev.upload_drop_after = None
+        keep_limit = size if size <= STORE_MAX else STORE_HEAD
+        keep = bytearray(prev["data"]) if prev else bytearray()
+        # rolling end of the stream: enough to cut back to a block boundary and still have TAIL_SIZE bytes
+        tail = bytearray(prev["tail"]) if prev else bytearray()
+        got = [0]
 
         def on_data(data: bytes):
-            if len(head) < 4:
-                head.extend(data[:4 - len(head)])
+            got[0] += len(data)
             if len(keep) < keep_limit:
                 keep.extend(data[:keep_limit - len(keep)])
             tail.extend(data)
-            del tail[:-TAIL_SIZE]
+            del tail[:-(TAIL_SIZE + 2 * RESUME_BLOCK)]
+
+        def keep_partial() -> str:
+            """A broken resumable upload keeps the received whole blocks (RAM bookkeeping, data in the temp file)."""
+            if not resume:
+                return "nothing kept"
+            new_off = offset + got[0] // RESUME_BLOCK * RESUME_BLOCK
+            if new_off <= offset and not prev:
+                return "nothing kept (less than one block)"
+            cut = offset + got[0] - new_off            # bytes beyond the last whole block
+            t = tail[:len(tail) - cut] if cut else tail
+            dev.partial = {"path": path, "size": size, "offset": new_off, "data": keep[:min(new_off, keep_limit)],
+                           "tail": bytearray(t[-TAIL_SIZE:])}
+            return f"resumable at offset {new_off} of {size}"
 
         t0 = time.monotonic()
         try:
             received = self._read_body(clen, throttled=True, on_data=on_data, stop_at=stop_at)
         except (ClientGone, ConnectionError, TimeoutError, socket.timeout):
             dev.log("W", "web", "upload connection lost (-1)")
-            dev.log("W", "drive", f"upload aborted '{path}'")
-            self._info = "upload aborted, nothing stored:"
+            kept = keep_partial()
+            dev.log("W", "drive", f"upload aborted '{path}' after {got[0]} bytes, {kept}")
+            self._info = f"upload aborted, {kept}:"
             give_back()
             raise
         if received < clen:
             dev.log("W", "web", "upload connection lost (-1)")
-            dev.log("W", "drive", f"upload aborted '{path}' after {received} bytes")
+            kept = keep_partial()
+            dev.log("W", "drive", f"upload aborted '{path}' after {received} bytes, {kept}")
             give_back()
-            self._abort(f"upload_fail_at: connection reset after {received} of {clen} B")
+            self._abort(f"connection reset after {received} of {clen} B ({kept})")
             return
 
         dt = max(time.monotonic() - t0, 1e-6)
@@ -2758,21 +3078,28 @@ class Handler(BaseHTTPRequestHandler):
         name = segs[-1]
         if has_suffix_ci(name, ".3mf"):
             # "PK\5\6" must start at least 22 bytes (size of the record) before the end.
-            zip_ok = bytes(head) == b"PK\x03\x04" and tail.find(b"PK\x05\x06", 0, max(0, len(tail) - 18)) >= 0
+            end = bytes(tail[-TAIL_SIZE:])
+            zip_ok = bytes(keep[:4]) == b"PK\x03\x04" and end.find(b"PK\x05\x06", 0, max(0, len(end) - 18)) >= 0
             if not zip_ok:
                 err = "INVALID_FILE"
+        if not err and resume:                           # the final checks run again when the file is complete
+            err = dev.upload_app_check(segs, size, overwrite)
+            if err == "NO_SPACE":
+                err = None                               # the space was reserved when the upload began
         if not err:
             mtime = leading_uint(q.get("mtime"))
-            client_now = leading_uint(q.get("now"))      # firmware extra: sets the device clock once
-            if client_now > 1_700_000_000 and dev.clock_offset is None:
-                dev.clock_offset = client_now - local_now()
-            dev.store_upload(segs, bytes(keep), clen, mtime)
+            client_now = leading_uint(q.get("now"))      # as before: sets the device clock once, if it is unknown
+            if EPOCH_MIN < client_now < EPOCH_MAX and dev.clock_mode == "unsynced":
+                dev.set_clock(client_now)
+            dev.store_upload(segs, bytes(keep), size, mtime)
         else:
             dev.log("W", "drive", f"upload failed '{path}': {ERRORS[err][1]}")
         dev.log("I", "web", f"upload '{path}' {clen} bytes in {dt * 1000:.0f} ms ({clen / 1024 / dt:.1f} KB/s): "
                             f"{ERRORS[err][1] if err else 'OK'}")
         give_back()
         info = f"{clen} B in {dt:.2f} s" + (f" = {clen / 1024 / dt:.0f} KB/s" if dt >= 0.05 else "")
+        if resume:
+            info += f" (resumable, offset {offset} of {size})"
         if push and not err:
             info += f" took_over={took}"
         self._result(err, info, extra=extra() if push else None)
@@ -2814,6 +3141,130 @@ class Handler(BaseHTTPRequestHandler):
         der = b"\x30\x82\x01\x00" + hashlib.sha256(self.dev.ca_sha256.encode()).digest() * 8   # not a real certificate
         self._send(200, der, "application/x-x509-ca-cert",
                    headers=[("Content-Disposition", 'attachment; filename="DataDrive-CA.cer"')])
+
+    # ---------------------------------------------------------- API v5: clock, auto-lock, language, WebDAV switch
+
+    def _api_settings_time(self, q, clen):
+        self._drain(clen)
+        tz = q.get("tz")
+        if not tz or len(tz.encode("utf-8")) > TZ_MAX or not re.fullmatch(r"[\x21-\x7e]+", tz):
+            self._error("BAD_REQUEST", "tz fehlt oder ist ungültig (1 bis 63 druckbare ASCII-Zeichen ohne Leerzeichen)")
+            return
+        self.dev.tz = tz
+        self.dev.log("I", "time", f"time zone '{tz}'")
+        self._json(200, {"ok": True, "time": self.dev.time_json()}, f"tz={tz}")
+
+    def _api_time(self, q, clen):
+        self._drain(clen)
+        dev = self.dev
+        raw = q.get("epoch") or ""
+        if not re.fullmatch(r"\d{1,11}", raw) or not EPOCH_MIN < int(raw) < EPOCH_MAX:
+            self._error("BAD_REQUEST", "epoch fehlt oder ist nicht plausibel")
+            return
+        done = dev.clock_mode != "synced"          # an NTP-synced clock is never overridden
+        if done:
+            dev.set_clock(int(raw))
+        self._json(200, {"ok": True, "set": done}, "clock set" if done else "NTP-synced, ignored")
+
+    def _api_settings_autolock(self, q, clen):
+        self._drain(clen)
+        dev = self.dev
+        if "minutes" not in q and "on_detach" not in q:
+            self._error("BAD_REQUEST", "minutes oder on_detach fehlt")
+            return
+        minutes, detach = dev.autolock_min, dev.autolock_detach
+        if "minutes" in q:
+            if not re.fullmatch(r"\d{1,4}", q["minutes"] or "") or int(q["minutes"]) > AUTOLOCK_MAX:
+                self._error("BAD_REQUEST", f"minutes muss 0 bis {AUTOLOCK_MAX} sein")
+                return
+            minutes = int(q["minutes"])
+        if "on_detach" in q:
+            if q["on_detach"] not in ("0", "1", "true", "false"):
+                self._error("BAD_REQUEST", "on_detach muss 0 oder 1 sein")
+                return
+            detach = q["on_detach"] in ("1", "true")
+        if minutes != dev.autolock_min:
+            dev.last_activity = time.monotonic()    # a changed time counts from now
+        dev.autolock_min, dev.autolock_detach = minutes, detach
+        dev.log("I", "crypt", f"autolock: {minutes} min, on detach {int(detach)}")
+        self._json(200, {"ok": True, "autolock": {"minutes": minutes, "on_detach": detach}},
+                   f"autolock {minutes} min, on_detach={int(detach)}")
+
+    def _api_settings_lang(self, q, clen):
+        self._drain(clen)
+        value = q.get("value")
+        if value not in ("de", "en"):
+            self._error("BAD_REQUEST", "value muss de oder en sein")
+            return
+        self.dev.lang = value
+        self._json(200, {"ok": True, "lang": value}, f"display language {value}")
+
+    def _api_settings_webdav(self, q, clen):
+        self._drain(clen)
+        value = q.get("value")
+        if value not in ("0", "1"):
+            self._error("BAD_REQUEST", "value muss 0 oder 1 sein")
+            return
+        self.dev.webdav = value == "1"
+        self.dev.log("I", "dav", f"WebDAV {'on' if self.dev.webdav else 'off'}")
+        self._json(200, {"ok": True, "webdav": self.dev.webdav}, f"webdav={value}")
+
+    # ---------------------------------------------------------- API v5: resumable upload, folder ZIP
+
+    def _api_upload_resume(self, q):
+        if not self._need(q, "path"):
+            return
+        if not re.fullmatch(r"\d{1,20}", q.get("size") or ""):
+            self._error("BAD_REQUEST", "size fehlt oder ist ungültig")
+            return
+        off = self.dev.partial_offset(q["path"], int(q["size"]))
+        self._json(200, {"ok": True, "offset": off}, f"offset {off}")
+
+    def _api_zip(self, q):
+        dev = self.dev
+        node, prefix, err, text = dev.zip_source(q.get("path", ""))
+        if err:
+            self._error(err, text)
+            return
+        fname = (prefix[:-1] or "DataDrive") + ".zip"
+        ascii_name = fname.encode("ascii", "replace").decode().replace("?", "_").replace('"', "_")
+        self._status = 200
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Content-Disposition",
+                         f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(fname, safe='')}")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        out = self.wfile
+
+        class Chunked:
+            """Write-only stream without tell/seek: zipfile then writes data descriptors (bit 3), like the device."""
+            sent = 0
+
+            def write(self, b):
+                if b:
+                    out.write(f"{len(b):X}\r\n".encode() + bytes(b) + b"\r\n")
+                    Chunked.sent += len(b)
+                return len(b)
+
+            def flush(self):
+                out.flush()
+
+        count = 0
+        with zipfile.ZipFile(Chunked(), "w", zipfile.ZIP_STORED) as z:
+            entries = ([(prefix, node)] if prefix else []) + list(visible_walk(node, prefix))
+            for path, n in entries:
+                name = path if not n.is_dir or path.endswith("/") else path + "/"
+                t = time.localtime(n.mtime) if n.mtime >= MTIME_MIN else None
+                zi = zipfile.ZipInfo(name, date_time=t[:6] if t and t.tm_year >= 1980 else (1980, 1, 1, 0, 0, 0))
+                zi.compress_type = zipfile.ZIP_STORED
+                zi.external_attr = (0o40775 << 16) | 0x10 if n.is_dir else 0o644 << 16
+                z.writestr(zi, b"" if n.is_dir else n.data)
+                count += 1
+        out.write(b"0\r\n\r\n")
+        self._info = f"{count} entries, {Chunked.sent} B (stored, chunked)"
 
     def _api_host_writable(self, q, clen):
         self._drain(clen)
@@ -2944,6 +3395,366 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True, "restart": True},
                    f"{clen} B in {time.monotonic() - t0:.2f} s, restarting as {dev.next_version}")
         dev.restart()
+
+    # ---------------------------------------------------------- WebDAV (API v5): /dav/, HTTP Basic only
+
+    DAV_ALLOW = "OPTIONS, PROPFIND, PROPPATCH, GET, HEAD, PUT, DELETE, MKCOL, MOVE, COPY, LOCK, UNLOCK"
+    DAV_STATUS = {      # (code, method group) -> HTTP status that WebDAV clients expect (RFC 4918)
+        ("NOT_FOUND", "parent"): 409, ("EXISTS", "mkcol"): 405, ("EXISTS", "target"): 412,
+        ("BAD_NAME", "target"): 403, ("IS_DIR", "put"): 405,
+    }
+
+    def _dav_error(self, code: str, status=None, text: str = ""):
+        """Same JSON body as the API (clients ignore it, it helps when debugging), WebDAV-like HTTP status."""
+        st, default = ERRORS.get(code, (status or 400, ""))
+        hdrs = []
+        if code in ("UNAUTHORIZED", "BAD_LOGIN"):
+            hdrs.append(("WWW-Authenticate", f'Basic realm="{DAV_REALM}", charset="UTF-8"'))
+        if code == "LOCKED":
+            hdrs.append(("Retry-After", str(max(1, self.dev.blocked_s()))))
+        if status == 405:
+            hdrs.append(("Allow", self.DAV_ALLOW))
+        self._info = (self._info + " " + code).strip()
+        body = json.dumps({"ok": False, "code": code, "error": text or default}, ensure_ascii=False).encode("utf-8")
+        self._send(status or st, body, "application/json", headers=hdrs)
+
+    def _dav_auth(self):
+        """HTTP Basic only: a session cookie is ignored here (no CSRF header needed, none checked)."""
+        dev = self.dev
+        user = None
+        auth = self.headers.get("Authorization") or ""
+        if auth[:6].lower() == "basic ":
+            if dev.locked():
+                self._locked = True
+            else:
+                try:
+                    raw = base64.b64decode(auth[6:].strip(), validate=True).decode("utf-8")
+                except (binascii.Error, UnicodeDecodeError, ValueError):
+                    raw = ""
+                name, _, pw = raw.partition(":")
+                user = dev.check_credentials(name, pw) if raw else None
+        if user is None and not dev.auth_enabled:
+            user = next((u for u in dev.users if u["role"] == "admin"), dev.users[0] if dev.users else None)
+        self._user = user
+
+    def _dav(self, method: str, path: str, clen):
+        dev = self.dev
+        if not dev.webdav:
+            self._drain(clen)
+            self._send(404, b"Nothing matches the given URI", "text/plain")
+            return
+        if dev.auth_unavailable:
+            self._drain(clen)
+            self._dav_error("AUTH_UNAVAILABLE")
+            return
+        self._dav_auth()
+        if self._user is None:
+            self._drain(clen)
+            self._dav_error("LOCKED" if self._locked else "UNAUTHORIZED")
+            return
+        if dev.auth_enabled and dev.is_default_password(self._user):
+            self._drain(clen)
+            self._dav_error("MUST_CHANGE_PASSWORD")
+            return
+        try:
+            rel = unquote_to_bytes(path[len(DAV_PREFIX):]).decode("utf-8").strip("/")
+        except UnicodeDecodeError:
+            self._drain(clen)
+            self._dav_error("BAD_NAME")
+            return
+        if method == "OPTIONS":
+            self._drain(clen)
+            self._send(200, b"", "text/plain", headers=[("DAV", "1, 2"), ("Allow", self.DAV_ALLOW),
+                                                        ("MS-Author-Via", "DAV")])
+            return
+        handlers = {"PROPFIND": self._dav_propfind, "GET": self._dav_get, "HEAD": self._dav_get,
+                    "PUT": self._dav_put, "DELETE": self._dav_delete, "MKCOL": self._dav_mkcol,
+                    "MOVE": self._dav_move, "COPY": self._dav_move, "LOCK": self._dav_lock,
+                    "UNLOCK": self._dav_unlock, "PROPPATCH": self._dav_proppatch}
+        handler = handlers.get(method)
+        if handler is None:
+            self._drain(clen)
+            self._dav_error("BAD_REQUEST", 405, "Methode nicht unterstützt")
+            return
+        # same drive rules as the file API
+        if dev.drive_locked():
+            self._drain(clen)
+            self._dav_error(dev.locked_code())
+            return
+        err = dev._fs_ready()
+        if err:
+            self._drain(clen)
+            self._dav_error(err)
+            return
+        self._activity = True
+        dev.last_activity = time.monotonic()
+        handler(method, rel, clen)
+
+    @staticmethod
+    def _dav_junk(rel) -> bool:
+        """Probe and metadata files of Windows and macOS (like web_dav.c): any segment with a leading dot, and
+        desktop.ini / Thumbs.db / ehthumbs.db as the last segment. Reads answer 404, writes 403."""
+        segs = rel.split("/") if rel else []
+        return any(s.startswith(".") for s in segs) or bool(segs) and segs[-1].lower() in (
+            "desktop.ini", "thumbs.db", "ehthumbs.db")
+
+    def _dav_node(self, rel):
+        """Existing object (hidden and junk names do not exist): (node, segments) or (None, None)."""
+        segs, err = parse_path(rel, existing=True)
+        if err or any(is_hidden(s) for s in segs) or self._dav_junk(rel):
+            return None, None
+        node = self.dev.resolve(segs)
+        return (node, segs) if node is not None else (None, None)
+
+    @staticmethod
+    def _dav_href(segs, is_dir: bool) -> str:
+        return DAV_PREFIX + "/" + quote("/".join(segs), safe="/") + ("/" if is_dir and segs else "")
+
+    @staticmethod
+    def _dav_meta(n: Node):
+        mtime = n.mtime if n.mtime >= MTIME_MIN else MTIME_MIN
+        etag = f'"{n.size:x}-{mtime:x}"'
+        ctype = mimetypes.guess_type(n.name)[0] or "application/octet-stream"
+        return mtime, etag, ctype
+
+    def _dav_response(self, segs, n: Node) -> str:
+        mtime, etag, ctype = self._dav_meta(n)
+        props = [f"<D:displayname>{xml_escape(segs[-1] if segs else '')}</D:displayname>",
+                 f"<D:getlastmodified>{formatdate(mtime, usegmt=True)}</D:getlastmodified>",
+                 f"<D:creationdate>{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(mtime))}</D:creationdate>"]
+        if n.is_dir:
+            props.append("<D:resourcetype><D:collection/></D:resourcetype>")
+        else:
+            props += ["<D:resourcetype/>", f"<D:getcontentlength>{n.size}</D:getcontentlength>",
+                      f"<D:getcontenttype>{ctype}</D:getcontenttype>", f"<D:getetag>{xml_escape(etag)}</D:getetag>"]
+        if not segs:
+            props += [f"<D:quota-available-bytes>{self.dev.free()}</D:quota-available-bytes>",
+                      f"<D:quota-used-bytes>{self.dev.used_by_files()}</D:quota-used-bytes>"]
+        props.append("<D:supportedlock><D:lockentry><D:lockscope><D:exclusive/></D:lockscope>"
+                     "<D:locktype><D:write/></D:locktype></D:lockentry></D:supportedlock>")
+        return (f"<D:response><D:href>{xml_escape(self._dav_href(segs, n.is_dir))}</D:href><D:propstat><D:prop>"
+                f"{''.join(props)}</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>")
+
+    def _dav_propfind(self, method, rel, clen):
+        self._drain(clen)                              # the requested property list is ignored: all are sent
+        depth = (self.headers.get("Depth") or "infinity").strip().lower()    # missing = infinity (RFC 4918)
+        if depth not in ("0", "1"):
+            self._dav_error("FORBIDDEN", 403, "Depth: infinity wird nicht unterstützt")
+            return
+        node, segs = self._dav_node(rel)
+        if node is None:
+            self._dav_error("NOT_FOUND")
+            return
+        items = [(segs, node)]
+        if depth == "1" and node.is_dir:
+            items += [(segs + [c.name], c) for c in node.children.values() if not is_hidden(c.name)]
+        body = ('<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:">'
+                + "".join(self._dav_response(s, n) for s, n in items) + "</D:multistatus>")
+        self._info = f"depth {depth}, {len(items)} entries"
+        self._send(207, body.encode("utf-8"), 'application/xml; charset="utf-8"')
+
+    def _dav_get(self, method, rel, clen):
+        self._drain(clen)
+        node, segs = self._dav_node(rel)
+        if node is None:
+            self._dav_error("NOT_FOUND")
+            return
+        if node.is_dir:
+            self._dav_error("IS_DIR", 405)
+            return
+        mtime, etag, ctype = self._dav_meta(node)
+        self._info = f"{len(node.data)} B"
+        self._send(200, node.data, ctype, headers=[("Last-Modified", formatdate(mtime, usegmt=True)), ("ETag", etag)])
+
+    def _dav_put(self, method, rel, clen):
+        dev = self.dev
+        if clen is None or self.headers.get("Transfer-Encoding"):
+            self._dav_error("BAD_REQUEST", 411, "Content-Length fehlt (chunked wird nicht angenommen)")
+            return
+        if self._dav_junk(rel):                        # macOS ._* / .DS_Store, desktop.ini, Thumbs.db
+            self._drain(clen)
+            self._dav_error("FORBIDDEN", 403, "Dieser Name ist nicht erlaubt.")
+            return
+        segs, err = parse_path(rel)
+        if not err and not segs:
+            self._drain(clen)
+            self._dav_error("IS_DIR", 405)
+            return
+        err = err or check_name(segs[-1], dev.types) or ("TOO_LARGE" if clen > 0xFFFFFFFF else None)
+        if err:
+            self._drain(clen)
+            self._dav_error(err)
+            return
+        parent = dev.resolve(segs[:-1])
+        if parent is None or not parent.is_dir:
+            self._drain(clen)
+            self._dav_error("NOT_FOUND", 409, "Der Zielordner fehlt.")
+            return
+        old = parent.children.get(segs[-1].lower())
+        if old is not None and old.is_dir:
+            self._drain(clen)
+            self._dav_error("IS_DIR", 405)
+            return
+        if clen + FREE_RESERVE > dev.free():
+            self._drain(clen)
+            self._dav_error("NO_SPACE")
+            return
+        dev.discard_partial("another upload")
+        keep_limit = clen if clen <= STORE_MAX else STORE_HEAD
+        keep, tail = bytearray(), bytearray()
+
+        def on_data(data: bytes):
+            if len(keep) < keep_limit:
+                keep.extend(data[:keep_limit - len(keep)])
+            tail.extend(data)
+            del tail[:-TAIL_SIZE]
+        self._read_body(clen, throttled=True, on_data=on_data)
+        if clen > 0 and has_suffix_ci(segs[-1], ".3mf"):   # empty files are allowed (Windows creates them first)
+            if not (bytes(keep[:4]) == b"PK\x03\x04" and tail.find(b"PK\x05\x06", 0, max(0, len(tail) - 18)) >= 0):
+                self._dav_error("INVALID_FILE")
+                return
+        dev.store_upload(segs, bytes(keep), clen, 0)
+        self._info = f"{clen} B {'replaced' if old else 'created'}"
+        self._send(204 if old is not None else 201, b"", "text/plain")
+
+    def _dav_delete(self, method, rel, clen):
+        self._drain(clen)
+        node, segs = self._dav_node(rel)
+        if node is None:
+            self._dav_error("NOT_FOUND")
+        elif not segs:
+            self._dav_error("FORBIDDEN", 403, "Das Hauptverzeichnis kann nicht gelöscht werden.")
+        else:
+            err = self.dev.delete("/".join(segs), True)      # a collection goes with everything in it
+            if err:
+                self._dav_error(err)
+            else:
+                self._send(204, b"", "text/plain")
+
+    def _dav_mkcol(self, method, rel, clen):
+        if clen:
+            self._drain(clen)
+            self._dav_error("BAD_REQUEST", 415, "MKCOL mit Inhalt wird nicht unterstützt")
+            return
+        if not rel:
+            self._dav_error("EXISTS", 405)
+            return
+        if self._dav_junk(rel):
+            self._dav_error("FORBIDDEN", 403, "Dieser Name ist nicht erlaubt.")
+            return
+        err = self.dev.mkdir(rel)
+        if err:
+            self._dav_error(err, self.DAV_STATUS.get((err, "mkcol")) or self.DAV_STATUS.get((err, "parent")))
+        else:
+            self._send(201, b"", "text/plain")
+
+    def _dav_move(self, method, rel, clen):
+        self._drain(clen)
+        dev = self.dev
+        dest = self.headers.get("Destination") or ""
+        dpath = urlsplit(dest).path
+        if not (dpath == DAV_PREFIX or dpath.startswith(DAV_PREFIX + "/")):
+            self._dav_error("BAD_REQUEST", 400, "Destination fehlt oder liegt nicht unter /dav/")
+            return
+        try:
+            drel = unquote_to_bytes(dpath[len(DAV_PREFIX):]).decode("utf-8").strip("/")
+        except UnicodeDecodeError:
+            self._dav_error("BAD_NAME", 403)
+            return
+        overwrite = (self.headers.get("Overwrite") or "T").strip().upper() != "F"
+        node, segs = self._dav_node(rel)
+        if node is None:
+            self._dav_error("NOT_FOUND")
+            return
+        dsegs, err = parse_path(drel)
+        if not segs or err or not dsegs or drel == rel:
+            self._dav_error("BAD_NAME", 403)
+            return
+        lsrc, ldst = [s.lower() for s in segs], [s.lower() for s in dsegs]
+        if len(lsrc) > len(ldst) and lsrc[:len(ldst)] == ldst:
+            self._dav_error("BAD_NAME", 403, "Das Ziel enthält die Quelle.")
+            return
+        dparent = dev.resolve(dsegs[:-1])
+        if dparent is None or not dparent.is_dir:
+            self._dav_error("NOT_FOUND", 409, "Der Zielordner fehlt.")
+            return
+        target = dparent.children.get(dsegs[-1].lower())
+        if target is node and method == "COPY":
+            self._dav_error("BAD_NAME", 403, "Quelle und Ziel sind gleich.")
+            return
+        existed = target is not None and target is not node     # MOVE onto itself = case-only rename
+        if existed and not overwrite:
+            self._dav_error("EXISTS", 412)
+            return
+        if existed:
+            dev.delete(drel, True)
+        err = dev.move(rel, drel) if method == "MOVE" else dev.copy(rel, drel)
+        if err:
+            self._dav_error(err, self.DAV_STATUS.get((err, "target")) or self.DAV_STATUS.get((err, "parent")))
+        else:
+            self._send(204 if existed else 201, b"", "text/plain")
+
+    def _dav_lock(self, method, rel, clen):
+        """Answered so that Windows and macOS write, but never enforced (one user at a time anyway)."""
+        if clen and clen > 65536:
+            self._drain(clen)
+            self._dav_error("BAD_REQUEST", 400, "Anfrage zu groß")
+            return
+        self._drain(clen)
+        segs, err = parse_path(rel, existing=True)
+        if err or self._dav_junk(rel):
+            self._dav_error("FORBIDDEN", 403, "Dieser Name ist nicht erlaubt.")
+            return
+        parent = self.dev.resolve(segs[:-1]) if segs else None
+        if segs and (parent is None or not parent.is_dir):
+            self._dav_error("NOT_FOUND", 409, "Der Zielordner fehlt.")
+            return
+        created = bool(segs) and self.dev.resolve(segs) is None      # firmware: placeholder until the PUT
+        m = re.search(r"opaquelocktoken:[0-9a-f-]+", self.headers.get("If") or "")
+        token = m.group(0) if m else f"opaquelocktoken:{uuid.uuid4()}"
+        self.dev.dav_locks[token] = rel
+        href = xml_escape(self._dav_href(segs, False))
+        body = ('<?xml version="1.0" encoding="utf-8"?><D:prop xmlns:D="DAV:"><D:lockdiscovery><D:activelock>'
+                "<D:locktype><D:write/></D:locktype><D:lockscope><D:exclusive/></D:lockscope><D:depth>0</D:depth>"
+                f"<D:timeout>Second-3600</D:timeout><D:locktoken><D:href>{token}</D:href></D:locktoken>"
+                f"<D:lockroot><D:href>{href}</D:href></D:lockroot></D:activelock></D:lockdiscovery></D:prop>")
+        self._send(201 if created else 200, body.encode("utf-8"), 'application/xml; charset="utf-8"',
+                   headers=[("Lock-Token", f"<{token}>")])
+
+    def _dav_unlock(self, method, rel, clen):
+        self._drain(clen)
+        self.dev.dav_locks.pop((self.headers.get("Lock-Token") or "").strip("<> "), None)
+        self._send(204, b"", "text/plain")
+
+    def _dav_proppatch(self, method, rel, clen):
+        """Accepted and ignored (Windows sets its Win32 times): every property is answered with 200."""
+        if clen is None or clen > 65536:
+            self._drain(clen)
+            self._dav_error("BAD_REQUEST", 400, "Anfrage fehlt oder ist zu groß")
+            return
+        body = bytearray()
+        self._read_body(clen, on_data=body.extend)
+        node, segs = self._dav_node(rel)
+        if node is None:
+            self._dav_error("NOT_FOUND")
+            return
+        try:
+            root = ElementTree.fromstring(bytes(body)) if body else None
+        except ElementTree.ParseError:
+            self._dav_error("BAD_REQUEST", 400, "XML nicht lesbar")
+            return
+        names = []
+        if root is not None:
+            for prop in root.iter("{DAV:}prop"):
+                names += [child.tag for child in prop]
+        props = []
+        for i, tag in enumerate(names):
+            ns, _, local = tag[1:].partition("}") if tag.startswith("{") else ("", "", tag)
+            props.append(f'<x{i}:{local} xmlns:x{i}="{xml_escape(ns)}"/>' if ns else f"<{local}/>")
+        out = (f'<?xml version="1.0" encoding="utf-8"?><D:multistatus xmlns:D="DAV:"><D:response>'
+               f"<D:href>{xml_escape(self._dav_href(segs, node.is_dir))}</D:href><D:propstat><D:prop>{''.join(props)}"
+               "</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>")
+        self._send(207, out.encode("utf-8"), 'application/xml; charset="utf-8"')
 
     # ---------------------------------------------------------- /mock
 

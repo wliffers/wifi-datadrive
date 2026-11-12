@@ -68,8 +68,13 @@ menu "DataDrive"
         default n
         help
             Off: the device serves plain HTTP only and the web UI shows no HTTPS section.
-            Measured on the T-Dongle-S3 (no PSRAM) with 0.4.0: with HTTPS on, uploads fail
-            because the 16 KiB TLS record buffer cannot be allocated (about 50 KiB free heap,
-            fragmented). Needs a memory rework before it can be enabled by default.
+            0.4.0 (dynamic mbedTLS buffers): with HTTPS on, uploads failed because the 16 KiB
+            TLS record buffer could not be allocated (about 50 KiB free heap, fragmented).
+            0.5.0: static record buffers (CONFIG_MBEDTLS_DYNAMIC_BUFFER off) reserved once at
+            boot (needs CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC, see sdkconfig.defaults), one TLS
+            connection at a time, port-80 redirect as a small task. HTTPS mode then costs about
+            35 KiB heap more than plain HTTP, but needs no large block after boot.
+            Recommendation: y, once the measurements (30 MB upload with the drive encryption
+            unlocked, file list with 300 files) pass on the device.
 
 endmenu

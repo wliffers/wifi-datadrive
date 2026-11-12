@@ -352,6 +352,14 @@ dialog ul.wl li+li{margin-top:6px}
 .sig .off{fill:var(--line)}
 .scanmsg{display:flex;gap:10px;align-items:center;padding:12px;color:var(--muted);font-size:14px}
 
+/* ---------- 0.5: folder upload, resumable uploads, clock, network drive ---------- */
+.upall{padding:0 16px 8px}
+.uploads .linkbtn{min-height:32px;padding:0 4px;margin-left:-4px}
+.notice .linkbtn{min-height:0;padding:0;font-size:inherit}
+.item select.field{width:auto;max-width:100%}
+.lockedv #resHint{display:none!important}
+.cap #upBtn,.cap #upDirBtn,.cap #fab,.cap #sDl,.cap #lockedUp,.cap #emptyUp,.cap #resHint,.cap #caDl{display:none!important}
+
 /* ---------- Phone ---------- */
 @media (max-width:720px){
   h1{font-size:20px}
@@ -362,10 +370,11 @@ dialog ul.wl li+li{margin-top:6px}
   .cr.mid{display:none}
   .cr.ellc{display:inline-flex}
   .crumbs a,.crumbs [aria-current]{max-width:150px}
-  .search{flex:1 1 100%;order:3}
+  .search{flex:1 1 230px;order:3}
   .sort-m{display:block;order:2;flex:0 1 auto;width:auto;min-height:40px;padding:0 4px;border-color:transparent;background:transparent;color:var(--muted);font-size:14px;font-weight:600}
-  .toolbar .mk{order:2;width:44px;padding:0;background:none;color:var(--muted)}
-  .toolbar .mk .bl{display:none}
+  .toolbar .mk,.toolbar .ud{order:2;width:44px;padding:0;background:none;color:var(--muted)}
+  .toolbar .bl{display:none}
+  .toolbar .ud{order:4}
   .cols{display:none}
   .row{grid-template-columns:40px minmax(0,1fr) 44px;padding-left:4px;padding-right:0}
   .row .num,.row .date{display:none}
@@ -409,7 +418,8 @@ dialog ul.wl li+li{margin-top:6px}
   <symbol id="i-usb" viewBox="0 0 24 24"><path d="M9 3h6v5H9zM7 8h10v5a5 5 0 0 1-10 0zM12 18v3"/></symbol>
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></symbol>
   <symbol id="i-newdir" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM12 10.5v5M9.5 13h5"/></symbol>
-  <symbol id="i-card" viewBox="0 0 24 24"><path d="M7 3h7l4 4v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 7v3M12 7v3"/></symbol>
+  <symbol id="i-updir" viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM12 16v-5.5M9.5 13l2.5-2.5 2.5 2.5"/></symbol>
+  <symbol id="i-card"viewBox="0 0 24 24"><path d="M7 3h7l4 4v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 7v3M12 7v3"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5l9.5 16.5h-19zM12 9.5v4.5M12 17v.3"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
@@ -443,6 +453,7 @@ dialog ul.wl li+li{margin-top:6px}
     <svg class="logo" aria-hidden="true"><use href="#logo"/></svg>
     <div><h1>WiFi DataDrive</h1><p class="muted" data-t="loginLead"></p></div>
     <div class="notice" id="loginNote" role="status" hidden></div>
+    <div class="notice info" id="cpLogin" hidden></div>
     <div><label class="lbl" for="lUser" data-t="userName"></label><input class="field" id="lUser" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="24"></div>
     <div><label class="lbl" for="lPass" data-t="password"></label><input class="field" id="lPass" type="password" autocomplete="current-password" maxlength="64"></div>
     <label class="chk"><input type="checkbox" id="lTrust" checked><span><span data-t="trust"></span><small data-t="trustX"></small></span></label>
@@ -469,6 +480,7 @@ dialog ul.wl li+li{margin-top:6px}
 </main>
 
 <div class="wrap" id="app">
+  <div class="notice info" id="cpHint" hidden></div>
   <div class="notice" id="notice" role="status" hidden></div>
 
   <!-- ================= Files view ================= -->
@@ -523,6 +535,7 @@ dialog ul.wl li+li{margin-top:6px}
         <option value="size,-1" data-t="sBig"></option><option value="size,1" data-t="sSmall"></option>
       </select>
       <button class="btn mk" id="mkBtn" data-tl="newDir" hidden><svg class="i"><use href="#i-newdir"/></svg><span class="bl" data-t="newDir"></span></button>
+      <button class="btn ud" id="upDirBtn" data-tl="upDir" hidden><svg class="i"><use href="#i-updir"/></svg><span class="bl" data-t="upDir"></span></button>
       <button class="btn primary up" id="upBtn" hidden><svg class="i"><use href="#i-upload"/></svg><span data-t="upload"></span></button>
     </div>
     <div class="bars">
@@ -542,6 +555,7 @@ dialog ul.wl li+li{margin-top:6px}
         <button class="btn primary" id="clipPaste" data-t="pasteHere"></button><button class="btn" id="clipX" data-t="cancel"></button>
       </div>
     </div>
+    <div class="notice info" id="resHint" hidden></div>
     <div class="list" id="list"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
   </main>
 
@@ -560,7 +574,7 @@ dialog ul.wl li+li{margin-top:6px}
         <div class="item"><div class="txt"><h3 data-t="theme"></h3></div>
           <div class="seg" id="theme" role="group" data-tl="theme">
             <button data-v="" data-t="tAuto"></button><button data-v="light" data-t="tLight"></button><button data-v="dark" data-t="tDark"></button></div></div>
-        <div class="item"><div class="txt"><h3 data-t="language"></h3></div>
+        <div class="item"><div class="txt"><h3 data-t="language"></h3><p id="langX" data-t="langX" hidden></p></div>
           <div class="seg" id="langSeg" role="group" data-tl="language"><button data-v="de" lang="de">Deutsch</button><button data-v="en" lang="en">English</button></div></div>
       </div>
     </section>
@@ -577,6 +591,9 @@ dialog ul.wl li+li{margin-top:6px}
         <div class="item"><div class="txt"><h3 id="netTitle">WLAN</h3><p id="netSub"></p></div></div>
         <div class="item col"><div class="kv"><span data-t="addr"></span><span id="netAddr">–</span></div>
           <div class="kv"><span data-t="host"></span><span id="netHost">–</span></div></div>
+        <div class="item col"><div class="inner"><div class="txt"><h3 data-t="davT"></h3><p data-t="davX"></p></div>
+          <label class="switch" hidden><input type="checkbox" id="swDav" data-tl="davT"><i></i></label></div>
+          <div class="fp"><span data-t="addr"></span><code id="davAddr">–</code></div><ul class="hl" id="davHow"></ul></div>
         <div class="item"><div class="txt"><h3 data-t="wifiSaved"></h3><p data-t="wifiSavedX"></p></div></div>
         <div id="wifiList"></div>
         <div class="foot"><span class="small" id="wifiCount"></span><button class="btn" id="wifiAdd"><svg class="i"><use href="#i-plus"/></svg><span data-t="wifiAdd"></span></button></div>
@@ -594,6 +611,9 @@ dialog ul.wl li+li{margin-top:6px}
             <button class="btn adm" id="cSetup" data-t="cSetup" hidden></button><button class="btn adm" id="cPw" data-t="cPw" hidden></button>
             <button class="btn adm" id="cRec" data-t="cRec" hidden></button>
             <button class="btn outline-danger adm" id="cOff" data-t="cDisable" hidden></button><button class="btn outline-danger adm" id="cErase" data-t="cErase" hidden></button></div></div>
+        <div class="item col adm" id="alItem" hidden><div class="inner"><div class="txt"><h3 data-t="alT"></h3><p data-t="alX"></p></div>
+          <select class="field" id="alSel" data-tl="alT"></select></div>
+          <div class="inner"><div class="txt" data-t="alDet"></div><label class="switch"><input type="checkbox" id="swDet" data-tl="alDet"><i></i></label></div></div>
         <div class="item adm"><div class="txt"><h3 data-t="usbWriteT"></h3><p data-t="usbWriteX"></p></div>
           <label class="switch"><input type="checkbox" id="swWrite" data-tl="usbWriteT"><i></i></label></div>
         <div class="item"><div class="txt"><h3 data-t="autoT"></h3><p data-t="autoX"></p></div>
@@ -632,6 +652,8 @@ dialog ul.wl li+li{margin-top:6px}
           <div class="kv"><span data-t="slot"></span><span id="sysSlot">–</span></div>
           <div class="kv"><span data-t="uptime"></span><span id="sysUp">–</span></div>
           <div class="kv"><span data-t="heap"></span><span id="sysHeap">–</span></div></div>
+        <div class="item col" id="timeItem" hidden><div class="kv"><span data-t="clock"></span><span id="sysTime">–</span></div>
+          <div class="inner"><div class="txt"><h3 data-t="tzT"></h3><p data-t="tzX"></p></div><select class="field" id="tzSel" data-tl="tzT"></select></div></div>
         <div class="item col"><div class="inner"><div class="txt"><h3 data-t="otaT"></h3><p data-t="otaX"></p></div>
           <button class="btn" id="otaBtn" data-t="otaPick"></button></div>
           <div class="notice info" id="otaPend" hidden><svg class="i"><use href="#i-alert"/></svg><span data-t="otaPend"></span></div>
@@ -658,10 +680,12 @@ dialog ul.wl li+li{margin-top:6px}
 
 <button class="btn primary fab" id="fab" data-tl="upload" hidden><svg class="i"><use href="#i-upload"/></svg><span class="fl" data-t="upload"></span></button>
 <input type="file" id="picker" multiple hidden>
+<input type="file" id="dirPicker" webkitdirectory multiple hidden>
 <input type="file" id="otaPick" accept=".bin,application/octet-stream" hidden>
 
 <aside class="uploads" id="uploads" data-tl="uploads" hidden>
   <header><strong id="upHead">Uploads</strong><button class="icon-btn" id="upMore" data-tt="upMore"><svg class="i"><use href="#i-upload"/></svg></button><button class="icon-btn" id="upClose" data-tt="close"><svg class="i"><use href="#i-x"/></svg></button></header>
+  <div class="upall" id="upAll" hidden><span class="small" id="upAllT"></span><span class="bar"><i></i></span></div>
   <ul id="upList"></ul>
 </aside>
 
@@ -941,6 +965,22 @@ de: {
   renewCa: "Auch die Zertifizierungsstelle neu erzeugen (danach muss das Zertifikat auf allen Geräten neu installiert werden)",
   today: "Heute", yesterday: "Gestern",
   dur: s => s < 90 ? "gerade eben" : s < 5400 ? Math.round(s / 60) + " Minuten" : s < 129600 ? Math.round(s / 3600) + " Stunden" : Math.round(s / 86400) + " Tagen",
+  savedT: "Gespeichert.", upDir: "Ordner hochladen", zipDl: "Als ZIP herunterladen",
+  zipNo: "Ein ZIP-Download ist nur möglich, solange die Dateiverwaltung aktiv ist. Im Moment gehört das Laufwerk dem USB-Gerät – bitte zuerst die Dateiverwaltung aktivieren.",
+  upAll: (n, a, b) => `„${n}“: ${a} von ${b} Dateien`, dirFail: (n, f, b) => `„${n}“: ${f} von ${b} Dateien nicht gespeichert.`,
+  upResume: p => `Wird fortgesetzt ab ${p} %`, upRetry: "Verbindung unterbrochen – neuer Versuch …",
+  upLostR: "Verbindung unterbrochen. Der Upload lässt sich fortsetzen.", upGoOn: "Fortsetzen",
+  resX: (n, p) => `Der Upload von „${n}“ wurde bei ${p} % unterbrochen. Wähle dieselbe Datei noch einmal aus, um ihn fortzusetzen – lädst du zuerst etwas anderes hoch, wird der Rest verworfen.`,
+  langX: "Gilt auch für das Display am Stick.",
+  clock: "Uhrzeit des Laufwerks", tNet: "aus dem Netz", tBrowser: "vom Browser gesetzt", tNone: "nicht gestellt",
+  tzT: "Zeitzone", tzX: "Für die Zeitangaben der Dateien und am Display.",
+  alT: "Automatisch sperren", alX: "Sperrt das Laufwerk nach der gewählten Zeit ohne Zugriff. Wird der Stick abgezogen, ist es danach immer gesperrt.",
+  alOff: "Aus", alMin: n => `nach ${n} Minuten`, alCustom: "Eigene Zeit …", alMinL: "Minuten (1 bis 1440)", alBad: "Bitte eine ganze Zahl von 1 bis 1440 eingeben.",
+  alDet: "Sperren, wenn das USB-Gerät getrennt wird",
+  davT: "Als Netzlaufwerk verbinden", davX: "Die Dateien direkt im Explorer oder in einer Datei-App öffnen (WebDAV). Das geht nur, solange die Dateiverwaltung aktiv ist – nicht, während das Laufwerk dem USB-Gerät bereitgestellt ist.",
+  davHow: "<li><b>Windows:</b> Explorer › Dieser PC › „Netzlaufwerk verbinden“, die Adresse eintragen und mit Benutzername und Passwort anmelden. Über http erlaubt Windows die Anmeldung mit Passwort erst nach einer einmaligen Einstellung – dafür gibt es im Projekt das Skript unter tools/webdav.</li><li><b>Handy:</b> eine Datei-App mit WebDAV verwenden und dort die Adresse eintragen. Die App „Dateien“ des iPhones kann kein WebDAV.</li>",
+  cpX: "Du bist im Anmeldefenster des Telefons. Die WLAN-Einrichtung klappt hier. Für Dateien das Fenster schließen – am iPhone „Ohne Internet verwenden“ wählen – und im Browser http://192.168.4.1 öffnen.",
+  cpGo: "Zur WLAN-Einrichtung", cpAdded: "Dieses Fenster trennt sich gleich. Danach ins Heim-WLAN wechseln und die Adresse vom Display öffnen.",
   E: {
     BAD_NAME: "Dieser Name ist nicht erlaubt.", BAD_REQUEST: "Die Anfrage war ungültig.", INCOMPLETE: "Die Übertragung war unvollständig.",
     FORBIDDEN: "Anfrage nicht erlaubt.", NOT_FOUND: "Die Datei oder der Ordner wurde nicht gefunden.",
@@ -972,6 +1012,7 @@ de: {
     "pw.BAD_LOGIN": "Das aktuelle Passwort stimmt nicht.",
     "up.NOT_FOUND": "Der Zielordner existiert nicht mehr – nicht hochgeladen.",
     "mk.NOT_FOUND": "Der übergeordnete Ordner existiert nicht mehr.",
+    "zip.TOO_MANY_FILES": "Zu viele Dateien für ein ZIP (höchstens 4096). Bitte Unterordner einzeln laden.", "zip.TOO_LARGE": "Der Ordner ist zu groß für ein ZIP (höchstens 4 GB). Bitte Unterordner einzeln laden.",
     "paste.BAD_NAME": "Ein Ordner lässt sich nicht in sich selbst einfügen, und Pfade dürfen höchstens 8 Ebenen tief sein.",
     "paste.NOT_FOUND": "Das Element oder der Zielordner existiert nicht mehr.",
     "user.NOT_FOUND": "Diesen Benutzer gibt es nicht mehr.", "user.EXISTS": "Diesen Benutzernamen gibt es schon (Groß- und Kleinschreibung zählen nicht).",
@@ -1224,6 +1265,22 @@ en: {
   renewCa: "Also create a new certificate authority (the certificate then has to be installed again on every device)",
   today: "Today", yesterday: "Yesterday",
   dur: s => s < 90 ? "less than a minute" : s < 5400 ? Math.round(s / 60) + " minutes" : s < 129600 ? Math.round(s / 3600) + " hours" : Math.round(s / 86400) + " days",
+  savedT: "Saved.", upDir: "Upload folder", zipDl: "Download as ZIP",
+  zipNo: "A ZIP download only works while file management is active. Right now the USB device owns the drive — please switch to file management first.",
+  upAll: (n, a, b) => `“${n}”: ${a} of ${b} files`, dirFail: (n, f, b) => `“${n}”: ${f} of ${b} files not saved.`,
+  upResume: p => `Resuming from ${p} %`, upRetry: "Connection lost — trying again …",
+  upLostR: "Connection lost. The upload can be resumed.", upGoOn: "Resume",
+  resX: (n, p) => `The upload of “${n}” stopped at ${p} %. Choose the same file again to resume it — uploading something else first discards the part already sent.`,
+  langX: "Also applies to the display on the stick.",
+  clock: "Drive time", tNet: "from the network", tBrowser: "set by the browser", tNone: "not set",
+  tzT: "Time zone", tzX: "For file times and the display.",
+  alT: "Lock automatically", alX: "Locks the drive after the chosen time without access. Pulling the stick out always leaves it locked.",
+  alOff: "Off", alMin: n => `after ${n} minutes`, alCustom: "Custom time …", alMinL: "Minutes (1 to 1440)", alBad: "Please enter a whole number from 1 to 1440.",
+  alDet: "Lock when the USB device is disconnected",
+  davT: "Connect as a network drive", davX: "Open the files directly in Explorer or a file app (WebDAV). This only works while file management is active — not while the drive is provided to the USB device.",
+  davHow: "<li><b>Windows:</b> Explorer › This PC › “Map network drive”, enter the address and sign in with user name and password. Over http, Windows allows password sign-in only after a one-time setting — the project has a script for it under tools/webdav.</li><li><b>Phone:</b> use a file app with WebDAV and enter the address there. The iPhone’s own “Files” app can’t do WebDAV.</li>",
+  cpX: "You’re in the phone’s sign-in window. Wi-Fi setup works here. For files, close it (on iPhone choose “Use Without Internet”) and open http://192.168.4.1 in the browser.",
+  cpGo: "Go to Wi-Fi setup", cpAdded: "This window will disconnect shortly. Then switch to your home Wi-Fi and open the address shown on the display.",
   E: {
     BAD_NAME: "This name isn’t allowed.", BAD_REQUEST: "The request was invalid.", INCOMPLETE: "The transfer was incomplete.",
     FORBIDDEN: "Request not allowed.", NOT_FOUND: "The file or folder wasn’t found.",
@@ -1255,6 +1312,7 @@ en: {
     "pw.BAD_LOGIN": "The current password is wrong.",
     "up.NOT_FOUND": "The target folder no longer exists — not uploaded.",
     "mk.NOT_FOUND": "The parent folder no longer exists.",
+    "zip.TOO_MANY_FILES": "Too many files for one ZIP (at most 4096). Please download the subfolders one by one.", "zip.TOO_LARGE": "The folder is too large for one ZIP (at most 4 GB). Please download the subfolders one by one.",
     "paste.BAD_NAME": "A folder can’t be pasted into itself, and paths can be at most 8 levels deep.",
     "paste.NOT_FOUND": "The item or the target folder no longer exists.",
     "user.NOT_FOUND": "This user no longer exists.", "user.EXISTS": "This user name is already taken (upper and lower case count as the same).",
@@ -1285,9 +1343,9 @@ function setLang(l){
   loc = lang === "de" ? "de-DE" : /^en/i.test(nl) ? nl : "en-GB";
   document.documentElement.lang = lang;
   nf = new Intl.NumberFormat(loc, {maximumFractionDigits: 1});
-  // mtime is local wall-clock time stored as if it were UTC (the file system has no time zone).
-  TF = new Intl.DateTimeFormat(loc, {hour: "2-digit", minute: "2-digit", timeZone: "UTC"});
-  DF = new Intl.DateTimeFormat(loc, lang === "de" ? {day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC"} : {day: "numeric", month: "short", year: "numeric", timeZone: "UTC"});
+  // API v5: mtime is real unix time (the device applies its time zone to the FAT time stamps); shown in the browser's zone.
+  TF = new Intl.DateTimeFormat(loc, {hour: "2-digit", minute: "2-digit"});
+  DF = new Intl.DateTimeFormat(loc, lang === "de" ? {day: "2-digit", month: "2-digit", year: "numeric"} : {day: "numeric", month: "short", year: "numeric"});
   $$("[data-t]").forEach(e => e.textContent = t(e.dataset.t));
   $$("[data-tl]").forEach(e => e.setAttribute("aria-label", t(e.dataset.tl)));
   $$("[data-tt]").forEach(e => { e.setAttribute("aria-label", t(e.dataset.tt)); e.title = t(e.dataset.tt); });
@@ -1297,13 +1355,20 @@ function setLang(l){
 function fsize(b){ const u = ["B","kB","MB","GB","TB"]; let i = 0; while (b >= 1024 && i < 4) { b /= 1024; i++; } return nf.format(b) + " " + u[i]; }
 function fdate(s){
   if (!s) return "–";
-  const d = new Date(s * 1000), now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
-  const day = x => Math.floor(x.getTime() / 864e5), diff = day(now) - day(d);
+  const d = new Date(s * 1000), day = x => Math.floor((x - x.getTimezoneOffset() * 6e4) / 864e5), diff = day(new Date()) - day(d);
   if (diff === 0) return t("today") + ", " + TF.format(d);
   if (diff === 1) return t("yesterday") + ", " + TF.format(d);
   return DF.format(d);
 }
-const localSecs = ms => Math.floor(ms / 1000) - new Date(ms).getTimezoneOffset() * 60;
+const secs = ms => Math.floor(ms / 1000);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
+const dirOK = "webkitdirectory" in document.createElement("input") && !isIOS;   // iPhone Safari has the property but no folder picker
+/* Captive portal (API v5): the device sends the phone's sign-in sheet to "/?captive=1". There only the Wi-Fi setup is offered:
+   downloads, uploads and "add to home screen" do not work inside the sheet. */
+const CAPTIVE = new URLSearchParams(location.search).has("captive");
+if (CAPTIVE) { history.replaceState(null, "", "/"); document.documentElement.classList.add("cap"); $("link[rel=manifest]").remove(); }
+const opts = (list, v) => list.map(([k, l]) => `<option value="${esc(k)}"${String(k) === String(v) ? " selected" : ""}>${esc(l)}</option>`).join("");
 const CATS = {model: "3mf stl obj step stp gcode amf", image: "jpg jpeg png gif webp svg bmp heic", doc: "pdf txt md doc docx odt xls xlsx csv ppt pptx", archive: "zip 7z rar gz tar", media: "mp3 wav flac m4a mp4 mov mkv avi"};
 function ftype(name){
   const m = /\.([^.]+)$/.exec(name), ext = m ? m[1].toLowerCase() : "";
@@ -1329,7 +1394,7 @@ const S = {
   fails: 0,            // consecutive failed status polls
   restart: "",         // "normal" | "download" | "format" | "update" after such a request
   sawDown: false,      // device was unreachable since the restart request
-  ups: [], working: false, upSeq: 0,
+  ups: [], working: false, upSeq: 0, groups: [],   // groups: folder uploads ({name, base, dirs, n, made, bad})
   wifi: null, users: null, devs: null, lockUntil: 0
 };
 const isAdmin = () => !!S.me && S.me.role === "admin";
@@ -1395,7 +1460,7 @@ function askNow(o){
     $("#dFields").innerHTML = fields.map((f, i) => f.type === "check"
       ? `<label class="chk"><input type="checkbox" id="dF${i}"> ${esc(f.label)}</label>`
       : `<div><label class="lbl" for="dF${i}">${esc(f.label)}</label>${f.options
-        ? `<select class="field" id="dF${i}">${f.options.map(([v, l]) => `<option value="${esc(v)}"${v === f.value ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`
+        ? `<select class="field" id="dF${i}">${opts(f.options, f.value)}</select>`
         : `<input class="field" id="dF${i}" type="${f.type || "text"}" autocomplete="${f.auto || "off"}" spellcheck="false" autocapitalize="none"${f.max ? ` maxlength="${f.max}"` : ""}>`}</div>`).join("");
     const els = fields.map((f, i) => { const el = $("#dF" + i); if (el.tagName === "INPUT" && f.type !== "check") { el.value = f.value || ""; el.placeholder = f.placeholder || ""; } return el; });
     const vals = () => fields.map((f, i) => f.type === "check" ? els[i].checked : f.type === "password" || f.raw || f.options ? els[i].value : els[i].value.trim());
@@ -1517,7 +1582,7 @@ function signedIn(j){
   clearTimeout(bootTimer);
   setMe(j);
   if (S.me.def) return showPw();
-  S.auth = "ok"; S.why = ""; S.fails = 0;
+  S.auth = "ok"; S.why = ""; S.fails = 0; langSynced = false;
   $("#vLogin").hidden = $("#vPw").hidden = true;
   document.body.classList.remove("authv");
   S.listKey = ""; S.entries = null; listSig = "";
@@ -1527,6 +1592,7 @@ function signedIn(j){
 function renderWhy(){
   const n = $("#loginNote"), w = S.why;
   n.textContent = w ? t("why_" + w) : ""; n.hidden = !w; n.className = "notice" + (w === "offline" || w === "unavail" ? "" : " info");
+  $("#cpLogin").textContent = t("cpX"); $("#cpLogin").hidden = !CAPTIVE;
 }
 function showLogin(why, keepFocus){
   S.auth = "login"; S.why = why || ""; S.me = null;
@@ -1672,6 +1738,7 @@ async function refresh(forceList){
   if (S.restart && (S.sawDown || j.uptime_s < 15)) { toast(t("ready")); S.restart = ""; S.sawDown = false; }
   const wasLocked = S.st ? isLocked() : true;
   S.fails = 0; S.st = j;
+  if (!S.working && !S.busy) syncDevice(j);
   if (!wasLocked && isLocked()) {          // locked elsewhere (or restarted): questions about files are void now
     toast(t(isDamaged() ? "dmgT" : "cLockedNow")); S.sel.clear(); S.selMode = false;
     if (!inSettings()) { if (dlgCancel) dlgCancel(); closeMenu(); }
@@ -1696,7 +1763,7 @@ async function loadFiles(){
 }
 
 /* ---------- Rendering ---------- */
-function render(){ if (S.auth !== "ok") return; renderNotice(); renderStatus(); renderList(); renderSettings(); renderLock(); }
+function render(){ if (S.auth !== "ok") return; renderNotice(); renderStatus(); renderList(); renderSettings(); renderLock(); renderHints(); }
 
 /* ---------- Encrypted drive (API v4): state, unlock view, lock ---------- */
 const crypt = () => (S.st && S.st.crypt) || {enabled: false, unlocked: true};   // firmware before v4: no encryption
@@ -1780,6 +1847,7 @@ $("#ulForm").onsubmit = async e => {
   if (S.auth !== "ok") return;
   if (r.ok) { ulMode(false); toast(t(byKey ? "ulDoneKey" : "ulDone")); S.entries = null; await refresh(true); return; }
   if (r.code === "LOCKED") return ulWait(r.retry || 5, "");
+  await cWait(r);
   const wrong = t(ulKey ? "ulWrongKey" : "ulWrongPw");
   if (r.code === "CRYPT_WRONG_PASSWORD" && r.retry) ulWait(r.retry, wrong);   // from the third wrong entry on: wait before the next one
   else $("#ulMsg").textContent = r.code === "CRYPT_WRONG_PASSWORD" ? wrong : errText(r);
@@ -1893,7 +1961,8 @@ function renderList(){
   if (!has && selMode()) { S.sel.clear(); S.selMode = false; }
   $("#searchBox").hidden = $("#sortM").hidden = !has;
   $("#upBtn").hidden = $("#mkBtn").hidden = !fm;
-  $("#upBtn").disabled = $("#fab").disabled = $("#mkBtn").disabled = !!S.switching;
+  $("#upDirBtn").hidden = !fm || !dirOK;
+  $("#upBtn").disabled = $("#fab").disabled = $("#mkBtn").disabled = $("#upDirBtn").disabled = !!S.switching;
   renderCrumbs(); renderClip();
 
   // Rebuild the list only when something visible changed (keeps focus, scroll and open menus).
@@ -1938,13 +2007,13 @@ function buildList(box, d, fm, ents, has){
   let html = `<div class="cols"><span class="lead"><input type="checkbox" class="ck" id="ckAll" aria-label="${esc(t("selectAll"))}"></span>${col("name", t("colName"))}${col("size", t("colSize"), "num")}${col("mtime", t("colDate"))}<span></span></div>`;
   if (!list.length) html += `<div class="state"><h2>${t("noHits")}</h2><p>${esc(t("noHitsX", S.q))}</p></div>`;
   for (const f of list) {
-    const isDir = f.type === "dir", ft = ftype(f.name), when = isDir ? (f.mtime ? fdate(f.mtime) : "") : fdate(f.mtime), sz = isDir ? "" : fsize(f.size);
+    const isDir = f.type === "dir", ft = ftype(f.name), when = fdate(f.mtime), sz = isDir ? "" : fsize(f.size);
     // Keep the extension visible when a long file name is shortened.
     const dot = f.name.lastIndexOf("."), split = !isDir && dot > 0 && f.name.length - dot <= 8;
     const nm = `<span class="nb">${esc(split ? f.name.slice(0, dot) : f.name)}</span>${split ? `<span class="ne">${esc(f.name.slice(dot))}</span>` : ""}`;
     html += `<div class="row${isDir ? " dir" : ""}" data-name="${esc(f.name)}" title="${esc(f.name)}">
       <span class="lead">${isDir ? `<span class="ficon dir">${icon("folder")}</span>` : `<span class="ficon ${ft.cat}${ft.label.length > 4 ? " long" : ""}">${ft.label ? esc(ft.label) : icon("file")}</span>`}<input type="checkbox" class="ck" aria-label="${esc(t("selectX", f.name))}"></span>
-      <span>${isDir ? `<a class="name" href="${dirHash(join(S.dir, f.name))}">${nm}</a>` : `<span class="name">${nm}</span>`}<span class="meta">${isDir ? t("folder") + (when ? " · " + when : "") : sz + (f.mtime ? " · " + when : "")}</span></span>
+      <span>${isDir ? `<a class="name" href="${dirHash(join(S.dir, f.name))}">${nm}</a>` : `<span class="name">${nm}</span>`}<span class="meta">${(isDir ? t("folder") : sz) + (f.mtime ? " · " + when : "")}</span></span>
       <span class="num">${sz}</span><span class="date">${when}</span>
       <button class="icon-btn" data-more aria-haspopup="menu" aria-label="${esc(t("actionsFor", f.name))}">${icon("more")}</button></div>`;
   }
@@ -1966,7 +2035,7 @@ function renderSel(){
   if (ca) { ca.checked = all; ca.indeterminate = n > 0 && !all; }
   $("#selCount").textContent = t("nSel", n);
   const items = selItems();
-  $("#sDl").hidden = !(items.length === 1 && items[0].type !== "dir");
+  $("#sDl").hidden = !items.length;
   $("#sCut").disabled = $("#sCopy").disabled = $("#sDel").disabled = !n;
   $("#sAll").disabled = all;
 }
@@ -1985,7 +2054,7 @@ function renderClip(){
 }
 $("#sX").onclick = () => { clearSel(); const b = $("#upBtn"); if (b && !b.hidden) b.focus(); };
 $("#sAll").onclick = () => { visible().forEach(e => S.sel.add(e.name)); renderSel(); };
-$("#sDl").onclick = () => { const i = selItems()[0]; if (i) download(i.name); };
+$("#sDl").onclick = () => download(selItems());
 $("#sCut").onclick = () => clipSet("cut", [...S.sel]);
 $("#sCopy").onclick = () => clipSet("copy", [...S.sel]);
 $("#sDel").onclick = () => del([...S.sel]);
@@ -2042,24 +2111,42 @@ const rowOf = name => $$(".row").find(x => x.dataset.name === name);
 const rowButton = name => { const r = rowOf(name); return r ? r.querySelector("[data-more]") : null; };
 function itemMenu(row, ev){
   const name = row.dataset.name, isDir = row.classList.contains("dir");
-  const items = [isDir ? ["open", "folder", t("open")] : ["dl", "download", t("download")],
-    ["ren", "edit", t("rename")], ["cut", "cut", t("cut")], ["copy", "copy", t("copy")], ["sel", "check", t("select")], ["del", "trash", t("delete"), 1]];
+  const items = (CAPTIVE ? isDir ? [["open", "folder", t("open")]] : [] : isDir ? [["open", "folder", t("open")], ["dl", "download", t("zipDl")]] : [["dl", "download", t("download")]]).concat([
+    ["ren", "edit", t("rename")], ["cut", "cut", t("cut")], ["copy", "copy", t("copy")], ["sel", "check", t("select")], ["del", "trash", t("delete"), 1]]);
   showMenu(row.querySelector("[data-more]"), ev, esc(name), items, async a => {
     if (a === "open") { location.hash = dirHash(join(S.dir, name)); return; }
     if (a === "cut" || a === "copy") return clipSet(a, [name]);
     if (a === "sel") { S.selMode = true; toggleSel(name, true); const r = rowOf(name); if (r) r.querySelector(".ck").focus(); return; }
-    const res = a === "dl" ? download(name) : a === "ren" ? await rename(name) : await del([name]);
+    const res = a === "dl" ? download([entry(name)]) :a === "ren" ? await rename(name) : await del([name]);
     const back = rowButton(typeof res === "string" ? res : name);   // focus the item if it still exists
     if (back) back.focus();
   }, row);
 }
 
 /* ---------- File and folder actions ---------- */
-function download(name){
-  if (blocked()) return;
-  const a = document.createElement("a");
-  a.href = "/api/download?path=" + enc(join(S.dir, name)); a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
+/* Files as plain links; folders as one ZIP each (GET /api/zip), loaded in a hidden frame: a refusal (JSON) lands in the frame
+   and is explained, a ZIP becomes a download. Several items go one after another. */
+function download(items){
+  items = items.filter(Boolean);
+  if (!items.length || blocked()) return;
+  const dir = S.dir;
+  items.forEach((i, n) => setTimeout(() => {
+    const p = enc(join(dir, i.name));
+    if (i.type !== "dir") {
+      const a = document.createElement("a");
+      a.href = "/api/download?path=" + p; a.download = i.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      return;
+    }
+    const f = document.createElement("iframe");
+    f.hidden = true; f.src = "/api/zip?path=" + p;
+    f.onload = () => {
+      let j = null; try { j = JSON.parse(f.contentDocument.body.textContent); } catch(e) {}
+      f.remove();
+      if (j && !j.ok) { authFail(j); if (S.auth === "ok") errBox(t("zipDl"), j.code === "WRONG_OWNER" ? t("zipNo") : errText(j, "zip")); }
+    };
+    document.body.appendChild(f);
+  }, n * 1500));
 }
 const BAD_CHARS = /[\/\\:*?"<>|\x00-\x1f]/;
 function nameErr(v, dir){
@@ -2227,14 +2314,55 @@ async function provide(quiet){
 function pick(){ $("#picker").click(); }
 $("#upBtn").onclick = $("#fab").onclick = $("#upMore").onclick = pick;
 $("#picker").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
+$("#upDirBtn").onclick = () => $("#dirPicker").click();
+$("#dirPicker").onchange = e => { const l = Array.from(e.target.files); e.target.value = ""; addTree(l.map(f => ({file: f, rel: f.webkitRelativePath || f.name})), []); };
 
+const newUp = (file, name, dir, g, rd) => S.ups.push({id: ++S.upSeq, file, name, dir, size: file.size, state: "queued", pct: 0, msg: t("upQueued"), g, rd});
+const dirOf = p => p.slice(0, Math.max(0, p.lastIndexOf("/")));
 function addFiles(list){
   const files = Array.from(list || []);
   if (!files.length) return;
   if (S.busy) return toast(t("waitBusy"));
-  for (const f of files) S.ups.push({id: ++S.upSeq, file: f, name: f.name, dir: S.dir, size: f.size, state: "queued", pct: 0, msg: t("upQueued")});
+  const r = S.st && S.st.upload && S.st.upload.resumable;   // the same file again: back into the folder of the unfinished upload
+  for (const f of files) newUp(f, f.name, r && f.name === base(r.path) && f.size === r.size ? dirOf(r.path) : S.dir);
   renderUploads();
   work();
+}
+// A folder (picker or drag and drop): its folders are created first (one group), then the files go through the queue.
+function addTree(files, dirs){
+  if (S.busy) return toast(t("waitBusy"));
+  const hid = p => p.split("/").some(s => s.startsWith("."));      // .DS_Store and other hidden system files: not allowed on the drive
+  files = files.filter(x => !hid(x.rel));
+  const ds = new Set(dirs.filter(d => !hid(d)));
+  files.forEach(x => { const p = x.rel.split("/"); for (let i = 1; i < p.length; i++) ds.add(p.slice(0, i).join("/")); });
+  if (!ds.size) return addFiles(files.map(x => x.file));
+  const g = {name: [...new Set([...ds].map(d => d.split("/")[0]))].join(", "), base: S.dir, dirs: [...ds].sort((a, b) => a.split("/").length - b.split("/").length), made: false, bad: new Map()};
+  S.groups.push(g);
+  for (const x of files) newUp(x.file, base(x.rel), join(g.base, dirOf(x.rel)), g, dirOf(x.rel));
+  renderUploads();
+  work();
+}
+const badDir = (g, d) => { for (const [k, m] of g.bad) if (d === k || d.startsWith(k + "/")) return m; return ""; };
+async function makeDirs(g){
+  g.made = true;
+  for (const d of g.dirs) {
+    if (badDir(g, d)) continue;                      // a parent folder failed already
+    const p = join(g.base, d), e = nameErr(base(p), dirOf(p)), r = e ? {} : await post("/api/mkdir?path=" + enc(p));
+    if (S.auth !== "ok") return;
+    if (e || !r.ok && r.code !== "EXISTS") g.bad.set(d, e || errText(r, "mk"));   // an existing folder is fine: the files go into it
+  }
+}
+// Dropped folders: walk them with the entry API (the items are only valid during the drop event).
+async function walk(ents){
+  const files = [], dirs = [], read = r => new Promise(res => r.readEntries(res, () => res([])));
+  const go = async (x, p) => {
+    const rel = p ? p + "/" + x.name : x.name;
+    if (x.isFile) { const f = await new Promise(res => x.file(res, () => res(null))); if (f) files.push({file: f, rel}); return; }
+    dirs.push(rel);
+    for (let r = x.createReader(), b; (b = await read(r)).length;) for (const y of b) await go(y, rel);
+  };
+  for (const x of ents) await go(x, "");
+  addTree(files, dirs);
 }
 const endUp = (u, state, msg) => { u.state = state; u.msg = msg; u.xhr = null; renderUploads(); };
 
@@ -2242,7 +2370,7 @@ async function work(){
   if (S.working) return;
   S.working = true; render();
   let okCount = 0, tookOver = false;
-  const failQueued = msg => S.ups.filter(u => u.state === "queued").forEach(u => endUp(u, "err", msg));
+  const failQueued = msg => { S.groups.forEach(g => g.made = true); S.ups.filter(u => u.state === "queued").forEach(u => endUp(u, "err", msg)); };
   try {
     if (!await refresh()) failQueued(t(S.auth === "ok" ? "upNoConn" : "upOut"));
     else if (broken(S.st.drive)) failQueued(isLocked() ? errText({code: isDamaged() ? "CRYPT_DAMAGED" : "DRIVE_LOCKED"}) : t("upBroken"));
@@ -2251,21 +2379,32 @@ async function work(){
         if (await activate()) tookOver = true;
         else failQueued(t(S.auth === "ok" ? "upNoApp" : "upOut"));
       }
-      let u;
-      while (S.auth === "ok" && (u = S.ups.find(x => x.state === "queued"))) { await uploadOne(u); if (u.state === "done") okCount++; }
+      let u, g;
+      while (S.auth === "ok") {
+        if ((g = S.groups.find(x => !x.made))) { await makeDirs(g); continue; }
+        if (!(u = S.ups.find(x => x.state === "queued"))) break;
+        await uploadOne(u); if (u.state === "done") okCount++;
+      }
     }
   } finally { S.working = false; }
   if (S.auth !== "ok") { failQueued(t("upOut")); return; }
   await refresh(true);
   if (okCount) {
     const what = t("savedN", okCount);
-    if (tookOver && pref.get("auto", "1") === "1") toast(await provide(true) ? what + " " + t("reprovided") : what);
+    // Handing the drive back would discard an upload that can still be resumed.
+    if (tookOver && pref.get("auto", "1") === "1" && !S.ups.some(u => u.resume && u.state === "err")) toast(await provide(true) ? what + " " + t("reprovided") : what);
     else toast(what);
+  }
+  for (const g of S.groups.filter(x => !x.told)) {    // folder uploads: one summary each
+    const its = S.ups.filter(u => u.g === g), f = its.filter(u => u.state === "err").length;
+    g.told = true;
+    if (f) toast(t("dirFail", g.name, f, its.length), true); else if (g.bad.size) toast(g.bad.values().next().value, true); else if (!its.length) toast(t("dirMade", g.name));
   }
   render();
   // A finished queue without problems needs no attention: close the panel after a moment.
-  setTimeout(() => { if (!S.working && S.ups.length && !S.ups.some(u => u.state === "err")) { S.ups = []; renderUploads(); } }, 6000);
+  setTimeout(() => { if (!S.working && S.ups.length && !S.ups.some(u => u.state === "err")) clearUps(); }, 6000);
 }
+function clearUps(){ S.ups = []; S.groups = []; renderUploads(); }
 
 // POST a raw body with progress; resolves the parsed answer, {code:"OFFLINE"} or {code:"ABORT"}.
 function xpost(url, body, onprog, keep){
@@ -2288,45 +2427,79 @@ function upErr(r, sent){
   return k ? t(k) : errText(r, "up");
 }
 async function uploadOne(u){
-  const types = S.st.types;
+  const types = S.st.types, g = u.g;
+  if (g && badDir(g, u.rd)) return endUp(u, "err", badDir(g, u.rd));
   if (types !== "all" && !types.split(",").some(x => u.name.toLowerCase().endsWith(x))) return endUp(u, "err", t("upType", types.replace(/,/g, ", ")));
   if (!u.size) return endUp(u, "err", t("upEmpty"));
   if (u.size >= GIB4) return endUp(u, "err", t("upBig"));
   const bad = nameErr(u.name, u.dir); if (bad) return endUp(u, "err", bad);
   u.state = "check"; u.msg = t("upChecking"); renderUploads();
-  const q = `path=${enc(join(u.dir, u.name))}&size=${u.size}`;
+  const path = join(u.dir, u.name), q = `path=${enc(path)}&size=${u.size}`;
   let over = 0, c = await post(`/api/upload/check?${q}&overwrite=0`);
   if (c.code === "EXISTS") {
-    const ok = await ask({title: t("upExistsT"), text: t("upExistsX", u.name), yes: t("replace"), no: t("skip"), danger: true});
-    if (S.auth !== "ok") return endUp(u, "err", t("upOut"));
-    if (!ok) return endUp(u, "skip", t("upSkipped"));
+    let ch = g && g.over;                            // folder uploads: "for all further ones" answers once
+    if (!ch) {
+      const more = !!g && S.ups.some(x => x.g === g && x.state === "queued");
+      const o = {title: t("upExistsT"), text: t("upExistsX", u.name), yes: t("replace"), no: t("skip"), danger: true, fields: more ? [{type: "check", label: t("forAll")}] : []};
+      const ok = await ask(o);
+      if (S.auth !== "ok") return endUp(u, "err", t("upOut"));
+      ch = ok ? "r" : "s";
+      if (more && o.out && o.out[0]) g.over = ch;
+    }
+    if (ch === "s") return endUp(u, "skip", t("upSkipped"));
     over = 1; c = await post(`/api/upload/check?${q}&overwrite=1`);
   }
   if (!c.ok) return endUp(u, "err", upErr(c));
   if (u.state === "cancel") return;
 
-  u.state = "up"; u.pct = 0; u.msg = "0 %"; renderUploads();
-  const lm = u.file.lastModified || Date.now();
-  let t0 = performance.now(), last = 0, rate = 0;
-  const j = await xpost(`/api/upload?path=${enc(join(u.dir, u.name))}&overwrite=${over}&mtime=${localSecs(lm)}&now=${localSecs(Date.now())}`, u.file, (loaded, total) => {
+  // API v5: an interrupted upload (same path and size) continues where the device stopped; a dropped connection is retried 3 times.
+  const url = `/api/upload?${q}&overwrite=${over}&mtime=${secs(u.file.lastModified || Date.now())}&now=${secs(Date.now())}`;
+  let off = await resumeAt(q, u.size), mis = 0, j;
+  for (;;) {
+    j = await send(u, url, off);
+    if (j.ok || j.code === "ABORT") break;
+    if (j.code === "RESUME_MISMATCH" && mis++ < 3) { off = j.offset > 0 && j.offset < u.size ? j.offset : 0; continue; }
+    if (j.code !== "OFFLINE" || u.tries >= 3) break;
+    u.tries = (u.tries || 0) + 1; u.xhr = null; u.sent = false; u.msg = t("upRetry"); renderUploads();
+    await sleep(1500 * u.tries);
+    if (u.state === "cancel" || S.auth !== "ok") return;
+    off = await resumeAt(q, u.size);
+  }
+  u.resume = j.code === "OFFLINE";
+  if (j.ok) { u.pct = 100; endUp(u, "done", t("upDone")); }
+  else if (j.code === "ABORT") endUp(u, "cancel", t("upCancelled"));
+  else { endUp(u, "err", u.resume ? t("upLostR") : upErr(j, true)); authFail(j); }
+}
+const resumeAt = async (q, n) => { const r = await api("/api/upload/resume?" + q, {timeout: 8000}); return r.ok && r.offset > 0 && r.offset < n ? r.offset : 0; };
+function send(u, url, off){
+  const t1 = performance.now(), from = Math.floor(off / u.size * 100);
+  let t0 = t1, last = 0, rate = 0;
+  u.state = "up"; u.sent = false; u.pct = off / u.size * 100; u.msg = off ? t("upResume", from) : "0 %"; renderUploads();
+  return xpost(url + "&offset=" + off, off ? u.file.slice(off) : u.file, (loaded, total) => {   // with offset (also 0) the device keeps a broken upload
     const now = performance.now(), dt = (now - t0) / 1000;
     if (dt > .4) { const r = (loaded - last) / dt; rate = rate ? rate * .7 + r * .3 : r; t0 = now; last = loaded; }
-    u.pct = loaded / total * 100;
+    u.pct = (off + loaded) / u.size * 100;
     const rest = rate ? (total - loaded) / rate : 0;
     // 100 % only means "sent"; the file counts as saved once the device confirms it.
-    u.msg = loaded >= total ? t("upSaving") : Math.floor(u.pct) + " %" + (rest > 5 ? " · " + t("upLeft", rest > 90 ? Math.round(rest / 60) + " min" : Math.round(rest) + " s") : "");
+    u.msg = loaded >= total ? t("upSaving") : off && now - t1 < 2500 ? t("upResume", from) : Math.floor(u.pct) + " %" + (rest > 5 ? " · " + t("upLeft", rest > 90 ? Math.round(rest / 60) + " min" : Math.round(rest) + " s") : "");
     if (loaded >= total && !u.sent) { u.sent = true; renderUploads(); }
     else paintUpload(u);
   }, x => u.xhr = x);
-  if (j.ok) { u.pct = 100; endUp(u, "done", t("upDone")); }
-  else if (j.code === "ABORT") endUp(u, "cancel", t("upCancelled"));
-  else { endUp(u, "err", upErr(j, true)); authFail(j); }
 }
 
 function paintUpload(u){
-  const li = document.getElementById("up" + u.id); if (!li) return;
-  li.querySelector(".s").textContent = u.msg;
-  const bar = li.querySelector(".bar>i"); if (bar) bar.style.width = u.pct.toFixed(1) + "%";
+  const li = document.getElementById("up" + u.id);
+  if (li) { li.querySelector(".s").textContent = u.msg; const bar = li.querySelector(".bar>i"); if (bar) bar.style.width = u.pct.toFixed(1) + "%"; }
+  paintAll();
+}
+// Folder upload: one line and one bar for the whole folder.
+function paintAll(){
+  const g = S.groups.find(x => S.ups.some(u => u.g === x && LIVE.includes(u.state))), box = $("#upAll");
+  box.hidden = !g; if (!g) return;
+  const its = S.ups.filter(u => u.g === g), live = u => LIVE.includes(u.state);
+  const all = its.reduce((s, u) => s + u.size, 0) || 1, done = its.reduce((s, u) => s + (live(u) ? u.size * u.pct / 100 : u.size), 0);
+  $("#upAllT").textContent = t("upAll", g.name, its.filter(u => !live(u)).length, its.length);
+  box.querySelector("i").style.width = (done / all * 100).toFixed(1) + "%";
 }
 const LIVE = ["queued", "check", "up"];
 function renderUploads(){
@@ -2337,30 +2510,34 @@ function renderUploads(){
     const done = S.ups.filter(u => u.state === "done").length, failed = S.ups.filter(u => u.state === "err").length;
     $("#upHead").textContent = active ? t("upHeadActive", active) : failed ? t("upHeadFail", failed, S.ups.length) : done ? t("upHeadDone", done) : t("uploads");
     $("#upClose").hidden = active > 0;
-    $("#upList").innerHTML = S.ups.map(u => {
+    // Files of a folder upload show only while they run or when they failed; the folder line counts the rest.
+    $("#upList").innerHTML = S.ups.filter(u => !u.g || u.state === "check" || u.state === "up" || u.state === "err").map(u => {
       const live = LIVE.includes(u.state) && !u.sent;
       return `<li id="up${u.id}"><div class="l1"><span class="n" title="${esc(join(u.dir, u.name))}">${esc(u.name)}</span>
         <span class="s ${u.state === "done" ? "ok" : ""}">${u.state === "err" ? "" : esc(u.msg)}</span>
         ${live ? `<button class="icon-btn x" data-cancel="${u.id}" aria-label="${esc(t("upCancel"))}" title="${esc(t("upCancel"))}">${icon("x")}</button>` : ""}</div>
         ${u.state === "up" ? `<div class="bar"><i style="width:${u.pct.toFixed(1)}%"></i></div>` : ""}
-        ${u.state === "err" ? `<div class="s err">${esc(u.msg)}</div>` : ""}</li>`;
+        ${u.state === "err" ? `<div class="s err">${esc(u.msg)}</div>` : ""}${u.state === "err" && u.resume ? `<button class="linkbtn" data-goon="${u.id}">${esc(t("upGoOn"))}</button>` : ""}</li>`;
     }).join("");
+    paintAll();
   }
   document.body.style.setProperty("--ph", (box.hidden ? 0 : box.offsetHeight) + "px");
   document.body.classList.toggle("has-panel", !box.hidden);
 }
 $("#upList").onclick = e => {
-  const b = e.target.closest("[data-cancel]"); if (!b) return;
-  const u = S.ups.find(x => x.id === +b.dataset.cancel); if (!u || u.sent) return;
+  const go = e.target.closest("[data-goon]"), b = go || e.target.closest("[data-cancel]"); if (!b) return;
+  const u = S.ups.find(x => x.id === +(go ? go.dataset.goon : b.dataset.cancel)); if (!u) return;
+  if (go) { if (S.busy) return toast(t("waitBusy")); Object.assign(u, {state: "queued", msg: t("upQueued"), tries: 0, resume: false}); renderUploads(); return work(); }
+  if (u.sent) return;
   if (u.xhr) u.xhr.abort(); else endUp(u, "cancel", t("upCancelled"));
 };
-$("#upClose").onclick = () => { S.ups = []; renderUploads(); };
+$("#upClose").onclick = clearUps;
 addEventListener("beforeunload", e => { if (S.working || S.busy) { e.preventDefault(); e.returnValue = ""; } });
 
 /* drag & drop anywhere in the window (into the current folder) */
 let dragDepth = 0;
 const hasFiles = e => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files");
-const canDrop = () => S.auth === "ok" && S.st && !broken(S.st.drive) && !inSettings();
+const canDrop = () => S.auth === "ok" && S.st && !broken(S.st.drive) && !inSettings() && !CAPTIVE;
 addEventListener("dragenter", e => {
   if (!hasFiles(e) || !canDrop()) return;
   e.preventDefault(); dragDepth++;
@@ -2368,7 +2545,13 @@ addEventListener("dragenter", e => {
 });
 addEventListener("dragover", e => { if (hasFiles(e)) e.preventDefault(); });
 addEventListener("dragleave", () => { if (dragDepth && --dragDepth === 0) $("#drop").hidden = true; });
-addEventListener("drop", e => { if (!hasFiles(e)) return; e.preventDefault(); dragDepth = 0; $("#drop").hidden = true; if (canDrop()) addFiles(e.dataTransfer.files); });
+addEventListener("drop", e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0; $("#drop").hidden = true;
+  if (!canDrop()) return;
+  const ents = Array.from(e.dataTransfer.items || []).map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (ents.some(x => x.isDirectory)) walk(ents); else addFiles(e.dataTransfer.files);
+});
 
 /* ---------- Settings ---------- */
 function renderSettings(){
@@ -2385,6 +2568,11 @@ function renderSettings(){
   const pr = location.protocol + "//";
   $("#netAddr").textContent = w.sta_connected ? pr + w.ip : w.ap_active ? pr + w.ap_ip : "–";
   $("#netHost").textContent = pr + w.hostname + ".local";
+  $("#langX").hidden = !("lang" in st);
+  $("#davAddr").innerHTML = [w.hostname + ".local", w.sta_connected && w.ip].filter(Boolean).map(h => esc(pr + h + "/dav/")).join("<br>");
+  $("#swDav").parentNode.hidden = !("webdav" in st);         // firmware without the setting: no switch
+  if (document.activeElement !== $("#swDav")) $("#swDav").checked = !!st.webdav;
+  if ($("#davHow").dataset.l !== lang) { $("#davHow").innerHTML = t("davHow"); $("#davHow").dataset.l = lang; }
   const hs = "https" in st;                  // firmware without HTTPS: no section
   $("#s-sec").hidden = $("#secChip").hidden = !hs;
   if (hs) {
@@ -2393,7 +2581,7 @@ function renderSettings(){
     $("#httpsPend").hidden = !st.https_restart;
     if ($("#httpsList").dataset.l !== lang) { $("#httpsList").innerHTML = t("httpsL"); $("#certHow").innerHTML = t("certHow"); $("#httpsList").dataset.l = lang; }
     $("#fpCa").textContent = st.ca_sha256 || "–"; $("#fpCert").textContent = st.cert_sha256 || "–";
-    const x = st.cert_expires, ed = x ? new Date(typeof x === "number" ? x * 1000 : x) : null;
+    const x = st.cert_expires, ed = x ? new Date(typeof x === "number" ? x * 1000 : x + "T12:00") : null;
     $("#certExp").textContent = !ed ? "–" : isNaN(ed) ? String(x) : DF.format(ed);
   }
   $("#secAp").textContent = (w.ap_active ? t("apOn", w.ap_ssid) + " " : "") + t("apX");
@@ -2407,6 +2595,15 @@ function renderSettings(){
   $("#otaPend").hidden = !(st.ota && st.ota.pending_verify);
   $("#sysUp").textContent = t("dur", st.uptime_s);
   $("#sysHeap").textContent = fsize(st.heap);
+  const tm = st.time;
+  $("#timeItem").hidden = !tm;
+  if (tm) {
+    const z = TZ.find(x => x[2] === tm.tz), ok = tm.epoch > 1e9;
+    let s = "–";
+    if (ok) try { s = new Intl.DateTimeFormat(loc, {dateStyle: "medium", timeStyle: "short", timeZone: z ? z[1] : undefined}).format(tm.epoch * 1000); } catch(e) {}
+    $("#sysTime").textContent = s + " · " + t(tm.synced ? "tNet" : ok ? "tBrowser" : "tNone");
+    fillSel($("#tzSel"), (z || !tm.tz ? [] : [[tm.tz, tm.tz]]).concat(TZ.map(x => [x[2], x[0]])), tm.tz || TZ[0][2]);
+  }
   const c = crypt(), lk = isLocked(), dmg = isDamaged();
   $("#fmtSub").textContent = t("fmtX", t(st.medium.sd ? "whereSd" : "whereFlash")) + (lk ? " " + t(dmg ? "fmtDmg" : "fmtLocked") : "");
   $("#fmtBtn").disabled = lk;
@@ -2416,6 +2613,13 @@ function renderSettings(){
   $("#cSetup").hidden = c.enabled || dmg;
   $("#cPw").hidden = $("#cRec").hidden = !canLock();          // changing the password and a new key need an unlocked drive
   $("#cOff").hidden = !c.enabled || dmg; $("#cErase").hidden = !dmg;
+  const al = st.autolock, AL = [0, 5, 15, 30, 60];
+  $("#alItem").hidden = !al || !c.enabled || dmg;
+  if (al) {
+    const m = al.minutes | 0;
+    fillSel($("#alSel"), AL.concat(AL.includes(m) ? [] : [m]).map(v => [v, v ? t("alMin", v) : t("alOff")]).concat([["c", t("alCustom")]]), m);
+    if (document.activeElement !== $("#swDet")) $("#swDet").checked = !!al.on_detach;
+  }
   $("#foot").textContent = "WiFi DataDrive " + st.version;
 }
 
@@ -2485,8 +2689,13 @@ $("#cPw").onclick = async () => {
     }});
   if (ok) toast(t("cPwDone"));
 };
-// Wrong drive password: from the third wrong entry on the answer also says how long to wait.
-const cErr = (r, ctx) => errText(r, ctx) + (r.code === "CRYPT_WRONG_PASSWORD" && r.retry ? " " + t("ulNext", r.retry) : "");
+// Wrong drive password: the wait before the next try (from the third wrong entry on) comes from the answer or, if it has none, from /api/crypt.
+async function cWait(r){
+  if (r.code !== "CRYPT_WRONG_PASSWORD" || r.retry) return;
+  const c = await api("/api/crypt", {timeout: 8000});
+  if (c.ok && c.retry) r.retry = c.retry;
+}
+const cErr = async (r, ctx) => { await cWait(r); return errText(r, ctx) + (r.code === "CRYPT_WRONG_PASSWORD" && r.retry ? " " + t("ulNext", r.retry) : ""); };
 $("#cRec").onclick = async () => {
   if (blocked()) return;
   let key = "", late = "";
@@ -2580,16 +2789,64 @@ $("#langSeg").onclick = e => {
   const b = e.target.closest("button"); if (!b) return;
   pref.set("lang", b.dataset.v); setLang(b.dataset.v);
   if (S.me) setMe({user: S.me.user, role: S.me.role, default_password: S.me.def});
-  listSig = ""; render(); renderUploads(); renderWifi(); renderUsers(); renderDevices();
+  listSig = ""; render(); renderUploads(); renderWifi(); renderUsers(); renderDevices(); sendLang();
 };
 $("#swAuto").onchange = e => pref.set("auto", e.target.checked ? "1" : "0");
-$("#swWrite").onchange = async e => {
-  if (blocked()) { e.target.checked = !e.target.checked; return; }
-  const want = e.target.checked, r = await post("/api/settings/host_writable?value=" + (want ? 1 : 0));
+// Device settings behind a switch: only the device's answer keeps the new position.
+async function setSw(e, url, msg){
+  const want = e.target.checked;
+  if (blocked()) { e.target.checked = !want; return; }
+  const r = await post(url + (want ? 1 : 0));
   if (!r.ok) { e.target.checked = !want; if (S.auth === "ok") toast(errText(r), true); return; }
   await refresh();
-  toast(t(want ? "usbWriteOn" : "usbWriteOff"));
+  toast(msg(want));
+}
+$("#swWrite").onchange = e => setSw(e, "/api/settings/host_writable?value=", w => t(w ? "usbWriteOn" : "usbWriteOff"));
+$("#swDav").onchange = e => setSw(e, "/api/settings/webdav?value=", () => t("savedT"));
+$("#swDet").onchange = e => setSw(e, `/api/settings/autolock?minutes=${S.st.autolock.minutes | 0}&on_detach=`, () => t("savedT"));
+// Device settings in a list: rebuilt from the status only when it changed (fillSel), reset after each try.
+function fillSel(sel, list, v){
+  const k = lang + JSON.stringify(list) + v;
+  if (sel.dataset.k !== k) { sel.dataset.k = k; sel.innerHTML = opts(list, v); }
+}
+async function saveSel(sel, url){
+  sel.dataset.k = "";
+  if (url && !blocked()) { const r = await post(url); if (r.ok) toast(t("savedT")); else if (S.auth === "ok") toast(errText(r), true); await refresh(); }
+  renderSettings();
+}
+$("#tzSel").onchange = e => saveSel(e.target, "/api/settings/time?tz=" + enc(e.target.value));
+$("#alSel").onchange = async e => {
+  let v = e.target.value;
+  if (v === "c") v = await ask({title: t("alT"), yes: t("save"), input: {label: t("alMinL"), value: String(S.st.autolock.minutes || 10)},
+    run: async x => /^\d+$/.test(x) && x >= 1 && x <= 1440 ? "" : t("alBad")});
+  saveSel(e.target, v !== false && `/api/settings/autolock?minutes=${+v}&on_detach=${$("#swDet").checked ? 1 : 0}`);
 };
+/* Clock (API v5): not synced from the network -> set it once from this browser. Display language follows the page language
+   the user chose (also on the sign-in page). Both quietly: a refusal changes nothing here. */
+const TZ = [["(UTC+1) Berlin, Paris, Madrid", "Europe/Berlin", "CET-1CEST,M3.5.0,M10.5.0/3"], ["(UTC) London, Dublin, Lisboa", "Europe/London", "GMT0BST,M3.5.0/1,M10.5.0"],
+  ["(UTC+2) Helsinki, Sofia, Riga", "Europe/Helsinki", "EET-2EEST,M3.5.0/3,M10.5.0/4"], ["(UTC+3) Istanbul, Minsk", "Europe/Istanbul", "TRT-3"], ["UTC", "UTC", "UTC0"],
+  ["(UTC−5) New York", "America/New_York", "EST5EDT,M3.2.0,M11.1.0"], ["(UTC−6) Chicago", "America/Chicago", "CST6CDT,M3.2.0,M11.1.0"],
+  ["(UTC−7) Denver", "America/Denver", "MST7MDT,M3.2.0,M11.1.0"], ["(UTC−8) Los Angeles", "America/Los_Angeles", "PST8PDT,M3.2.0,M11.1.0"],
+  ["(UTC−3) São Paulo", "America/Sao_Paulo", "BRT3"], ["(UTC+4) Dubai", "Asia/Dubai", "GST-4"], ["(UTC+5:30) Mumbai, Delhi", "Asia/Kolkata", "IST-5:30"],
+  ["(UTC+8) Shanghai, Taipei", "Asia/Shanghai", "CST-8"], ["(UTC+9) Tokyo, Seoul", "Asia/Tokyo", "JST-9"], ["(UTC+10) Sydney, Melbourne", "Australia/Sydney", "AEST-10AEDT,M10.1.0,M4.1.0/3"]];
+let langSynced = false, clockSet = false;
+function syncDevice(st){
+  if (st.time && !st.time.synced && !clockSet) { clockSet = true; post("/api/time?epoch=" + secs(Date.now()), {auth: true}).then(r => { if (r.set) schedule(300); }); }
+  if (!langSynced && pref.get("lang", "")) sendLang();
+}
+function sendLang(){
+  langSynced = true;
+  if (S.st && "lang" in S.st && S.st.lang !== lang) post("/api/settings/lang?value=" + lang, {auth: true}).then(r => { if (r.ok && S.st) S.st.lang = lang; });
+}
+function renderHints(){
+  const st = S.st, cp = $("#cpHint"), on = CAPTIVE;
+  let h = on ? `${icon("wifi")}<span>${esc(t("cpX"))}${isAdmin() ? ` <a href="#s-net">${esc(t("cpGo"))}</a>` : ""}</span>` : "";
+  if (cp.dataset.h !== h) { cp.innerHTML = cp.dataset.h = h; cp.hidden = !on; }
+  // An unfinished upload (API v5) continues when the same file is chosen again.
+  const r = st && st.upload && st.upload.resumable, x = $("#resHint");
+  h = r && r.size && !S.ups.length && !broken(st.drive) ?`${icon("upload")}<span>${esc(t("resX", base(r.path), Math.floor(r.offset / r.size * 100)))} <button class="linkbtn" id="resPick">${esc(t("otaPick"))}</button></span>` : "";
+  if (x.dataset.h !== h) { x.innerHTML = x.dataset.h = h; x.hidden = !h; if (h) $("#resPick").onclick = pick; }
+}
 
 /* ---------- HTTPS (admin; takes effect after a restart) ---------- */
 const protoUrl = on => (on ? "https:" : "http:") + "//" + location.hostname + "/";
@@ -2709,7 +2966,9 @@ $("#wifiAdd").onclick = async () => {
       const r = await post("/api/wifi/add", {body: form({ssid, pass})});
       return r.ok ? "" : errText(r, "wifi");
     }});
-  if (v) { toast(t("wifiAdded", v[0])); await loadWifi(); }
+  if (v && CAPTIVE) errBox(t("wifiAdd"), t("wifiAdded", v[0]) + " " + t("cpAdded"));   // the sheet loses the connection: keep the note on screen
+  else if (v) toast(t("wifiAdded", v[0]));
+  if (v) await loadWifi();
 };
 $("#wifiList").onclick = async e => {
   const b = e.target.closest("[data-wdel]"); if (!b || blocked()) return;

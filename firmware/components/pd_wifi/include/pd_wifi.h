@@ -9,6 +9,9 @@
 //  - If there are no networks or no connection after PD_WIFI_AP_FALLBACK_S seconds,
 //    a WPA2 access point "DataDrive-XXXX" is started for setup. Its password is
 //    generated once per device, stored in NVS and shown on the LCD.
+//  - While the access point is on, a captive-portal DNS responder (pd_dns.c, Kconfig
+//    PD_WIFI_CAPTIVE_PORTAL) resolves every name to the AP address, and DHCP option 114
+//    announces http://<ap-ip>/. The HTTP redirect itself is done by the web server.
 //  - Once the station is connected, the access point is switched off again after a delay.
 //  - mDNS: http://<hostname>.local
 #pragma once

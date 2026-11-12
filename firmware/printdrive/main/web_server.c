@@ -1,19 +1,30 @@
 #include "web_server.h"
 
+#include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/time.h>
 #include "auth.h"
 #include "esp_check.h"
+#include "esp_heap_caps.h"
 #include "esp_https_server.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "lwip/sockets.h"
+#include "pd_wifi.h"
 #include "sdkconfig.h"
 #include "tls.h"
 #include "web_common.h"
 #include "web_auth.h"
 #include "web_crypt.h"
+#include "web_dav.h"
 #include "web_files.h"
 #include "web_ota.h"
 #include "web_static.h"
@@ -261,6 +272,11 @@ static esp_err_t rejected(httpd_req_t *req)
 static esp_err_t dispatch(httpd_req_t *req)
 {
     const web_route_t *route = req->user_ctx;
+    if (web_dav_route(route)) {
+        // WebDAV (/dav, OPTIONS/PROPFIND on "/"): HTTP Basic only, never the session cookie, and no
+        // CSRF header (clients cannot send it; no POST there). Why that is safe: web_dav.c, top.
+        return web_dav_authorize(req, route->role) ? route->handler(req) : rejected(req);
+    }
     if (!auth_authorize(req, route->role)) {
         return rejected(req);
     }
@@ -347,27 +363,24 @@ static const web_route_t s_https_routes[] = {
     {"/api/https/ca.cer", HTTP_GET, h_https_ca, WEB_ROLE_USER},
 };
 
-/** Host for the redirect: the request's Host header (without port) if it is a plain host name
- *  or IPv4 address, else the local IPv4 address of the connection. */
-static bool redirect_host(httpd_req_t *req, char *host, size_t len)
+// ------------------------------------------------------------- port 80 while HTTPS is on
+//
+// No second esp_http_server instance (5 KiB stack + ~2 KiB state + up to five sockets): one small
+// task with a blocking listen socket answers every request with a 307 to https:// and closes the
+// connection. 307 (temporary, not cached by browsers) so that switching HTTPS off works at once.
+// A request body is never read. Only created while HTTPS runs: no RAM at all otherwise.
+
+#define REDIR_STACK     3584
+#define REDIR_REQ_SIZE  512     // request line + headers read; a longer target redirects to "/"
+#define REDIR_RESP_SIZE 768     // 51 + host (< 64) + target (< 512) + 72 always fit
+#define REDIR_TIMEOUT_S 3
+
+/** Local IPv4 address of the connection (dual-stack socket: IPv4 shows up as ::ffff:a.b.c.d). */
+static bool redirect_local_ip(int fd, char out[16])
 {
-    if (httpd_req_get_hdr_value_str(req, "Host", host, len) == ESP_OK) {
-        char *colon = strchr(host, ':');
-        if (colon) {
-            *colon = '\0';
-        }
-        bool ok = host[0] != '\0';
-        for (const char *p = host; *p && ok; p++) {
-            ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '.' ||
-                 *p == '-';
-        }
-        if (ok) {
-            return true;
-        }
-    }
     struct sockaddr_storage addr;
     socklen_t alen = sizeof(addr);
-    if (getsockname(httpd_req_to_sockfd(req), (struct sockaddr *)&addr, &alen) != 0) {
+    if (getsockname(fd, (struct sockaddr *)&addr, &alen) != 0) {
         return false;
     }
     const uint8_t *ip = NULL;
@@ -385,58 +398,253 @@ static bool redirect_host(httpd_req_t *req, char *host, size_t len)
     if (!ip) {
         return false;
     }
-    snprintf(host, len, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+    size_t n = 0;   // no printf: keeps the task stack small
+    for (int i = 0; i < 4; i++) {
+        const unsigned v = ip[i];
+        if (v >= 100) {
+            out[n++] = (char)('0' + v / 100);
+        }
+        if (v >= 10) {
+            out[n++] = (char)('0' + v / 10 % 10);
+        }
+        out[n++] = (char)('0' + v % 10);
+        if (i < 3) {
+            out[n++] = '.';
+        }
+    }
+    out[n] = '\0';
     return true;
 }
 
-/** Port 80 while HTTPS is on: every request is answered with a redirect to https://.
- *  307 (temporary, not cached by browsers) so that switching HTTPS off again works at once.
- *  A request body is never read: the connection is closed instead. */
-static esp_err_t h_redirect(httpd_req_t *req)
+/** Request target of the request line if it is a plain origin-form path, else "/". */
+static void redirect_target(const char *req, const char **target, size_t *len)
 {
-    char loc[CONFIG_HTTPD_MAX_URI_LEN + 80];   // on the stack: no static RAM while HTTPS is off
-    char host[64];
-    if (!redirect_host(req, host, sizeof(host))) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Use https://");
-        return ESP_FAIL;
+    *target = "/";
+    *len = 1;
+    const char *eol = strstr(req, "\r\n");
+    const char *sp = strchr(req, ' ');
+    if (!eol || !sp || sp > eol || sp[1] != '/') {
+        return;
     }
-    snprintf(loc, sizeof(loc), "https://%s%s", host, req->uri);
-    httpd_resp_set_status(req, "307 Temporary Redirect");
-    httpd_resp_set_hdr(req, "Location", loc);
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    if (req->content_len > 0) {
-        httpd_resp_set_hdr(req, "Connection", "close");
+    const char *s = sp + 1, *e = s;
+    while (e < eol && *e != ' ') {
+        if ((unsigned char)*e <= 0x20 || (unsigned char)*e >= 0x7F) {
+            return;   // never copy control characters into the Location header
+        }
+        e++;
     }
-    httpd_resp_send(req, NULL, 0);
-    return req->content_len > 0 ? ESP_FAIL : ESP_OK;
+    if (e == eol) {
+        return;       // no " HTTP/x.y" in what was read
+    }
+    *target = s;
+    *len = (size_t)(e - s);
+}
+
+/** Host header without port and trailing dot if it is a plain name or IPv4 address, else "". */
+static void redirect_find_host(const char *req, char host[64])
+{
+    host[0] = '\0';
+    for (const char *p = strstr(req, "\r\n"); p; p = strstr(p, "\r\n")) {
+        p += 2;
+        if (p[0] == '\r' || p[0] == '\0') {
+            return;   // end of the headers (or of what was read)
+        }
+        if (strncasecmp(p, "Host:", 5) != 0) {
+            continue;
+        }
+        p += 5;
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
+        const char *end = strstr(p, "\r\n");
+        if (!end) {
+            return;   // cut off
+        }
+        size_t n = 0;
+        while (p + n < end && p[n] != ':') {
+            const char ch = p[n];
+            const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+                            ch == '.' || ch == '-';
+            if (!ok || n >= 63) {
+                return;
+            }
+            n++;
+        }
+        if (n > 0 && p[n - 1] == '.') {
+            n--;      // fully qualified form "name."
+        }
+        memcpy(host, p, n);
+        host[n] = '\0';
+        return;
+    }
+}
+
+/** Names of the stick itself: an IPv4 address, <hostname>, <hostname>.local. */
+static bool redirect_host_is_ours(const char *h, const pd_wifi_status_t *w)
+{
+    const size_t n = strlen(h), hl = strlen(w->hostname);
+    if (strspn(h, "0123456789.") == n) {
+        return true;
+    }
+    if (hl == 0) {
+        return false;
+    }
+    return strcasecmp(h, w->hostname) == 0 ||
+           (n == hl + 6 && strncasecmp(h, w->hostname, hl) == 0 && strcasecmp(h + hl, ".local") == 0);
+}
+
+static void redirect_send(int fd, const char *s, size_t n)
+{
+    while (n > 0) {
+        const ssize_t k = send(fd, s, n, 0);
+        if (k <= 0) {
+            return;
+        }
+        s += k;
+        n -= (size_t)k;
+    }
+}
+
+static size_t redirect_put(char *buf, size_t pos, const char *s, size_t n)
+{
+    if (pos + n >= REDIR_RESP_SIZE) {
+        return pos;   // cannot happen (sizes above), but never overflow
+    }
+    memcpy(buf + pos, s, n);
+    return pos + n;
+}
+
+static void redirect_answer(int fd, char *req, char *resp)
+{
+    size_t n = 0;
+    while (n < REDIR_REQ_SIZE - 1) {
+        const ssize_t got = recv(fd, req + n, REDIR_REQ_SIZE - 1 - n, 0);
+        if (got <= 0) {
+            break;
+        }
+        n += (size_t)got;
+        req[n] = '\0';
+        if (strstr(req, "\r\n\r\n")) {
+            break;
+        }
+    }
+    req[n] = '\0';
+    if (n == 0) {
+        return;       // nothing arrived (timeout or closed)
+    }
+    pd_wifi_status_t w;
+    pd_wifi_get_status(&w);
+    char host[64], ip[16];
+    const bool have_ip = redirect_local_ip(fd, ip);
+    const char *target;
+    size_t tlen;
+    redirect_target(req, &target, &tlen);
+    redirect_find_host(req, host);
+    if (host[0] && !redirect_host_is_ours(host, &w)) {
+        // A foreign name: a captive-portal check (the setup AP's DNS answers every name with the
+        // stick) or a DNS alias. The certificate only names the stick, so go to its address -
+        // on the setup AP to the setup page, as web_static_not_found() does without HTTPS.
+        const bool via_ap = have_ip && w.ap_active && w.ap_ip[0] && strcmp(ip, w.ap_ip) == 0;
+        host[0] = '\0';
+        target = via_ap ? "/?captive=1" : "/";
+        tlen = strlen(target);
+    }
+    if (!host[0]) {
+        if (!have_ip) {
+            static const char bad[] = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\n"
+                                      "Content-Length: 12\r\nConnection: close\r\n\r\nUse https://";
+            redirect_send(fd, bad, sizeof(bad) - 1);
+            return;
+        }
+        memcpy(host, ip, strlen(ip) + 1);
+    }
+    static const char head[] = "HTTP/1.1 307 Temporary Redirect\r\nLocation: https://";
+    static const char tail[] = "\r\nCache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    size_t len = redirect_put(resp, 0, head, sizeof(head) - 1);
+    len = redirect_put(resp, len, host, strlen(host));
+    len = redirect_put(resp, len, target, tlen);
+    len = redirect_put(resp, len, tail, sizeof(tail) - 1);
+    redirect_send(fd, resp, len);
+}
+
+static void redirect_task(void *arg)
+{
+    const int lfd = (int)(intptr_t)arg;
+    char req[REDIR_REQ_SIZE], resp[REDIR_RESP_SIZE];
+    while (true) {
+        const int fd = accept(lfd, NULL, NULL);
+        if (fd < 0) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+        const struct timeval tv = {.tv_sec = REDIR_TIMEOUT_S, .tv_usec = 0};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        redirect_answer(fd, req, resp);
+        closesocket(fd);
+    }
 }
 
 static esp_err_t start_redirect_server(void)
 {
-    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.server_port = 80;
-    cfg.ctrl_port = ESP_HTTPD_DEF_CTRL_PORT + 1;   // the HTTPS server uses the default one
-    cfg.stack_size = 5120;   // h_redirect keeps the Location URL (~1.1 KB) on the stack
-    cfg.max_open_sockets = 2;
-    cfg.max_uri_handlers = 5;
-    cfg.lru_purge_enable = true;
-    cfg.recv_wait_timeout = 5;
-    cfg.send_wait_timeout = 5;
-    cfg.uri_match_fn = httpd_uri_match_wildcard;
-    httpd_handle_t server = NULL;
-    ESP_RETURN_ON_ERROR(httpd_start(&server, &cfg), TAG, "redirect server");
-    static const httpd_method_t methods[] = {HTTP_GET, HTTP_HEAD, HTTP_POST, HTTP_PUT, HTTP_DELETE};
-    for (size_t i = 0; i < sizeof(methods) / sizeof(methods[0]); i++) {
-        const httpd_uri_t uri = {.uri = "/*", .method = methods[i], .handler = h_redirect};
-        ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri), TAG, "redirect handler");
+#if CONFIG_LWIP_IPV6
+    const int fd = socket(PF_INET6, SOCK_STREAM, 0);
+    struct in6_addr inaddr_any = IN6ADDR_ANY_INIT;
+    struct sockaddr_in6 addr = {
+        .sin6_family = PF_INET6,
+        .sin6_addr = inaddr_any,
+        .sin6_port = htons(80),
+    };
+#else
+    const int fd = socket(PF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr = {
+        .sin_family = PF_INET,
+        .sin_addr = {.s_addr = htonl(INADDR_ANY)},
+        .sin_port = htons(80),
+    };
+#endif
+    if (fd < 0) {
+        ESP_LOGE(TAG, "port 80: no socket (%d)", errno);
+        return ESP_FAIL;
+    }
+    const int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, 4) != 0) {
+        ESP_LOGE(TAG, "port 80: bind/listen failed (%d)", errno);
+        closesocket(fd);
+        return ESP_FAIL;
+    }
+    if (xTaskCreate(redirect_task, "http80", REDIR_STACK, (void *)(intptr_t)fd, tskIDLE_PRIORITY + 4, NULL) != pdPASS) {
+        closesocket(fd);
+        return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
 }
 
+/** TLS session opened/closed (HTTPS server task): heap figures for the measurements in the log
+ *  (/api/log), at most one line per 5 s. */
+static void https_session_cb(esp_https_server_user_cb_arg_t *arg)
+{
+    static int64_t s_last_us = INT64_MIN / 2;
+    const int64_t now = esp_timer_get_time();
+    if (now - s_last_us < 5000000) {
+        return;
+    }
+    s_last_us = now;
+    ESP_LOGI(TAG, "TLS session %s: heap free %u, largest block %u, lowest since boot %u, buffer misses %lu",
+             arg->user_cb_state == HTTPD_SSL_USER_CB_SESS_CREATE ? "open" : "closed",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+             (unsigned)esp_get_minimum_free_heap_size(), (unsigned long)pd_tls_buffer_misses());
+}
+
 /**
- * Start the HTTPS server on 443. Memory: one TLS session is a few KB while idle (mbedTLS
- * dynamic buffers) and about 21 KB more while a record is being received/sent, so the number
- * of open connections is kept small; the server handles one request at a time anyway.
+ * Start the HTTPS server on 443. Memory (CONFIG_MBEDTLS_DYNAMIC_BUFFER off): each connection has
+ * fixed record buffers (16.3 KiB in + 4.3 KiB out) for its whole life. They are reserved once at
+ * boot (pd_tls_reserve_buffers()), and the server keeps ONE connection: a new one closes the idle
+ * one first (LRU purge, close before accept), so the reserved buffers are always free for it.
+ * Per connection the heap still provides ~6 KiB in small blocks (contexts, parsed certificate),
+ * plus ~6 KiB more during a full handshake.
  */
 static esp_err_t start_https_server(const httpd_config_t *base, httpd_handle_t *server)
 {
@@ -445,20 +653,38 @@ static esp_err_t start_https_server(const httpd_config_t *base, httpd_handle_t *
     if (!pd_tls_server_credentials(&crt, &crt_len, &key, &key_len)) {
         return ESP_ERR_INVALID_STATE;
     }
+    const esp_err_t pool = pd_tls_reserve_buffers();
+    if (pool != ESP_OK) {
+        ESP_LOGW(TAG, "TLS buffers not reserved (%s): taken from the heap per connection", esp_err_to_name(pool));
+    }
     httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
     cfg.httpd = *base;
-    cfg.httpd.stack_size = 12288;     // handlers + mbedTLS record processing
-    cfg.httpd.max_open_sockets = 3;   // each open TLS session costs heap
+    cfg.httpd.stack_size = 12288;       // handlers + mbedTLS record processing
+    // One TLS connection: the web UI sends one request at a time anyway; parallel browser
+    // connections (page load) close the idle one and are retried by the browser.
+    cfg.httpd.max_open_sockets = 1;
+    cfg.httpd.lru_purge_enable = true;
+    // Detect dead peers (phone left the network) after ~25 s idle instead of holding the slot.
+    cfg.httpd.keep_alive_enable = true;
+    cfg.httpd.keep_alive_idle = 10;
+    cfg.httpd.keep_alive_interval = 5;
+    cfg.httpd.keep_alive_count = 3;
+    // recv/send timeouts stay as for HTTP (10 s): under TLS a single receive timeout already
+    // ends an upload (esp-tls does not report it as HTTPD_SOCK_ERR_TIMEOUT).
     cfg.servercert = crt;
     cfg.servercert_len = crt_len;
-    cfg.prvtkey_pem = key;            // DER is accepted as well
+    cfg.prvtkey_pem = key;              // DER is accepted as well
     cfg.prvtkey_len = key_len;
     cfg.transport_mode = HTTPD_SSL_TRANSPORT_SECURE;
     cfg.port_secure = 443;
-    cfg.session_tickets = true;       // browsers resume instead of a full handshake per connection
-    cfg.tls_handshake_timeout_ms = 8000;
+    cfg.session_tickets = true;         // browsers resume (no ECDHE/ECDSA) instead of a full handshake
+    cfg.tls_handshake_timeout_ms = 5000;   // a client that stalls in the handshake blocks the server
+    cfg.user_cb = https_session_cb;
     const esp_err_t err = httpd_ssl_start(server, &cfg);
     pd_tls_release_server_credentials();   // the server keeps its own copy
+    if (err != ESP_OK) {
+        pd_tls_release_buffers();          // plain HTTP follows: give the memory back
+    }
     return err;
 }
 
@@ -471,7 +697,10 @@ esp_err_t web_server_start(void)
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 10240;   // FatFs + LFN + URL/query buffers
-    cfg.max_uri_handlers = 56;   // 47 routes (static 6, files 9, system 6, wifi 5, crypt 8, auth 10, ota 1, https 2)
+    cfg.max_uri_handlers = 80;   // 70 routes with HTTPS (auth 10, crypt 8, files 11, ota 1, https 2, static 6, system 10, wifi 5, webdav 15, zip in files)
+    // Wildcard templates (WebDAV "/dav/?*"). Templates without '*'/'?' still match exactly as with
+    // the default matcher (same length + same bytes of the path without the query string).
+    cfg.uri_match_fn = httpd_uri_match_wildcard;
     cfg.lru_purge_enable = true;
     cfg.recv_wait_timeout = 10;
     cfg.send_wait_timeout = 10;
@@ -499,6 +728,11 @@ esp_err_t web_server_start(void)
     }
 
     ESP_RETURN_ON_ERROR(web_static_register(server), TAG, "static routes");
+    ESP_RETURN_ON_ERROR(web_dav_register(server), TAG, "webdav routes");   // before any catch-all route
+    // Unknown URI (404) or method (405, e.g. next to wildcard routes): captive portal redirect on
+    // the setup access point for foreign hosts, else the HTTP server's default answer.
+    ESP_RETURN_ON_ERROR(httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, web_static_not_found), TAG, "404 handler");
+    ESP_RETURN_ON_ERROR(httpd_register_err_handler(server, HTTPD_405_METHOD_NOT_ALLOWED, web_static_not_found), TAG, "405 handler");
     ESP_RETURN_ON_ERROR(web_files_register(server), TAG, "file routes");
     ESP_RETURN_ON_ERROR(web_system_register(server), TAG, "system routes");
     ESP_RETURN_ON_ERROR(web_wifi_register(server), TAG, "wifi routes");

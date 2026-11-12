@@ -11,11 +11,13 @@
 #include "sdkconfig.h"
 #include "web_common.h"
 #include "anim.h"
+#include "pd_time.h"
 #include "web_crypt.h"
+#include "web_zip.h"
 
 static const char *TAG = "web";
 
-#define LIST_BUF_SIZE (32 * 1024)                 // packed listing, enough for ~1000 typical names
+#define LIST_BUF_SIZE (32 * 1024)                 // listing limit ("truncated"), see list_entry(); no buffer
 #define PATH_BUF_SIZE (DRIVE_SRC_PATH_MAX + 1)    // any path parameter (checked by drive_check_path())
 #define ITEM_BUF_SIZE (2 * PATH_BUF_SIZE + 96)    // one JSON entry or the head with "dir" (escaped)
 
@@ -83,7 +85,68 @@ static bool drain_body(httpd_req_t *req, size_t remaining)
 
 // ------------------------------------------------------------------ listing, download
 
-static char *s_list_mem;   // listing buffer, see web_files_register()
+/**
+ * Streamed listing. The answer is collected in the shared I/O buffer (no buffer of its own) and
+ * only sent when that part is full, so a folder of up to ~120 typical entries goes out in one
+ * piece after the folder was read completely - every error can still be answered normally.
+ * Larger folders are sent in parts while being read; a read error after the first part can only
+ * abort the connection (like a failed download).
+ */
+typedef struct {
+    httpd_req_t *req;
+    char *item;            // one JSON entry (ITEM_BUF_SIZE)
+    char *out;             // answer not sent yet
+    size_t len, cap;
+    size_t used;           // LIST_BUF_SIZE accounting of the former packed list
+    uint32_t count;
+    bool truncated;
+    bool sent;             // something went out already: an error can no longer be answered
+    esp_err_t err;         // send error
+} list_ctx_t;
+
+static esp_err_t list_flush(list_ctx_t *c)
+{
+    if (!c->sent) {
+        httpd_resp_set_type(c->req, "application/json");
+        httpd_resp_set_hdr(c->req, "Cache-Control", "no-store");
+        c->sent = true;
+    }
+    const esp_err_t err = c->len ? httpd_resp_send_chunk(c->req, c->out, c->len) : ESP_OK;
+    c->len = 0;
+    return err;
+}
+
+/** Append n bytes (n <= ITEM_BUF_SIZE < cap) to the answer, sending the collected part first if needed. */
+static bool list_put(list_ctx_t *c, const char *s, size_t n)
+{
+    if (c->len + n > c->cap && (c->err = list_flush(c)) != ESP_OK) {
+        return false;
+    }
+    memcpy(c->out + c->len, s, n);
+    c->len += n;
+    return true;
+}
+
+static bool list_entry(void *ctx, const char *name, bool is_dir, uint32_t size, uint32_t mtime)
+{
+    list_ctx_t *c = ctx;
+    // Same limit as the former 32 KiB packed list (DRIVE_LIST_HDR + name + NUL per entry), so the
+    // entries and "truncated" stay exactly as before.
+    const size_t need = DRIVE_LIST_HDR + strlen(name) + 1;
+    if (c->used + need > LIST_BUF_SIZE) {
+        c->truncated = true;
+        return true;   // a shorter name may still fit
+    }
+    c->used += need;
+    char *const item = c->item;
+    item[0] = '\0';
+    web_appendf(item, ITEM_BUF_SIZE, "%s{\"name\":", c->count ? "," : "");
+    web_json_str(item, ITEM_BUF_SIZE, name);
+    web_appendf(item, ITEM_BUF_SIZE, ",\"type\":\"%s\",\"size\":%lu,\"mtime\":%lu}", is_dir ? "dir" : "file",
+                (unsigned long)size, (unsigned long)mtime);
+    c->count++;
+    return list_put(c, item, strlen(item));
+}
 
 static esp_err_t h_files(httpd_req_t *req)
 {
@@ -91,45 +154,54 @@ static esp_err_t h_files(httpd_req_t *req)
     if (blk != DRIVE_OK) {
         return web_send_result(req, blk);
     }
-    char *mem = s_list_mem;   // allocated once at start: a 33 KiB block is not reliably free later (TLS)
+    char *const mem = (char *)web_io_buf();   // free while this handler runs (one request at a time)
     if (!mem) {
         return web_send_error(req, "500 Internal Server Error", "NO_MEM", "Zu wenig Arbeitsspeicher.");
     }
-    char *const list = mem, *const dir = mem + LIST_BUF_SIZE, *const item = dir + PATH_BUF_SIZE;
+    char *const dir = mem, *const item = dir + PATH_BUF_SIZE;
+    list_ctx_t c = {
+        .req = req,
+        .item = item,
+        .out = item + ITEM_BUF_SIZE,
+        .cap = WEB_IO_BUF_SIZE - PATH_BUF_SIZE - ITEM_BUF_SIZE,
+    };
     const param_t p = path_param(req, "dir", dir);
     if (p == PARAM_MISSING) {
         dir[0] = '\0';   // no dir: root folder
     }
-    drive_list_info_t info;
-    const drive_result_t r = p == PARAM_BAD ? DRIVE_ERR_BAD_NAME : drive_list(dir, list, LIST_BUF_SIZE, &info);
-    if (r != DRIVE_OK) {
-        return web_send_result(req, r);
+    if (p == PARAM_BAD) {
+        return web_send_result(req, DRIVE_ERR_BAD_NAME);
     }
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     item[0] = '\0';
     web_appendf(item, ITEM_BUF_SIZE, "{\"ok\":true,\"dir\":");
     web_json_str(item, ITEM_BUF_SIZE, dir);
     web_appendf(item, ITEM_BUF_SIZE, ",\"entries\":[");
-    httpd_resp_sendstr_chunk(req, item);
-    size_t pos = 0;
-    for (uint32_t i = 0; i < info.count; i++) {
-        uint32_t size, mtime;
-        memcpy(&size, list + pos, sizeof(size));
-        memcpy(&mtime, list + pos + 4, sizeof(mtime));
-        const bool is_dir = list[pos + 8] == DRIVE_ENTRY_DIR;
-        const char *name = list + pos + DRIVE_LIST_HDR;
-        pos += DRIVE_LIST_HDR + strlen(name) + 1;
-        item[0] = '\0';
-        web_appendf(item, ITEM_BUF_SIZE, "%s{\"name\":", i ? "," : "");
-        web_json_str(item, ITEM_BUF_SIZE, name);
-        web_appendf(item, ITEM_BUF_SIZE, ",\"type\":\"%s\",\"size\":%lu,\"mtime\":%lu}", is_dir ? "dir" : "file",
-                    (unsigned long)size, (unsigned long)mtime);
-        httpd_resp_sendstr_chunk(req, item);
+    list_put(&c, item, strlen(item));   // nothing collected yet: always fits, never sends
+    const drive_result_t r = drive_list_each(dir, list_entry, &c);
+    if (c.err != ESP_OK) {
+        return ESP_FAIL;   // client gone while sending
     }
-    snprintf(item, ITEM_BUF_SIZE, "],\"truncated\":%s}", info.truncated ? "true" : "false");
-    httpd_resp_sendstr_chunk(req, item);
-    return httpd_resp_sendstr_chunk(req, NULL);
+    if (r != DRIVE_OK) {
+        if (!c.sent) {
+            return web_send_result(req, r);
+        }
+        ESP_LOGE(TAG, "listing '%s' failed after the first part (%s): aborting", dir, drive_result_str(r));
+        return ESP_FAIL;   // no terminating chunk: the client sees a broken answer, not a short list
+    }
+    snprintf(item, ITEM_BUF_SIZE, "],\"truncated\":%s}", c.truncated ? "true" : "false");
+    if (!list_put(&c, item, strlen(item))) {
+        return ESP_FAIL;
+    }
+    if (!c.sent) {
+        // Complete answer in one piece (Content-Length instead of chunks: fewer TLS records).
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+        return httpd_resp_send(req, c.out, c.len);
+    }
+    if (list_flush(&c) != ESP_OK) {
+        return ESP_FAIL;
+    }
+    return httpd_resp_send_chunk(req, NULL, 0);
 }
 
 static esp_err_t h_download(httpd_req_t *req)
@@ -174,6 +246,22 @@ static esp_err_t h_download(httpd_req_t *req)
 
 // ------------------------------------------------------------------ upload, push
 
+/** Decimal number of at most 20 digits (like the test server); overflow gives ULLONG_MAX. */
+static bool parse_num(const char *s, unsigned long long *out)
+{
+    if (!s[0] || strspn(s, "0123456789") != strlen(s)) {
+        return false;
+    }
+    *out = strtoull(s, NULL, 10);   // overflow: ULLONG_MAX -> TOO_LARGE
+    return true;
+}
+
+static bool size_param(httpd_req_t *req, unsigned long long *size)
+{
+    char size_s[21];
+    return web_query_param(req, "size", size_s, sizeof(size_s)) && parse_num(size_s, size);
+}
+
 /** Validate an upload before sending data: path, type, folder, existence, free space. */
 static esp_err_t h_upload_check(httpd_req_t *req)
 {
@@ -181,41 +269,67 @@ static esp_err_t h_upload_check(httpd_req_t *req)
     if (blk != DRIVE_OK) {
         return web_send_result(req, blk);
     }
-    char path[PATH_BUF_SIZE], size_s[21];   // at most 20 digits, like the test server
+    char path[PATH_BUF_SIZE];
     const param_t p = path_param(req, "path", path);
     if (p != PARAM_OK) {
         return send_param_error(req, p, "path");
     }
-    if (!web_query_param(req, "size", size_s, sizeof(size_s)) || !size_s[0] ||
-        strspn(size_s, "0123456789") != strlen(size_s)) {
+    unsigned long long size;
+    if (!size_param(req, &size)) {
         return send_missing(req, "size");
     }
-    const unsigned long long size = strtoull(size_s, NULL, 10);   // overflow: ULLONG_MAX -> TOO_LARGE
-    drive_result_t r = drive_upload_validate(path, size);
-    if (r == DRIVE_OK) {
-        // Begin + abort performs exactly the checks the real upload will do.
-        r = drive_upload_begin(path, (uint32_t)size, web_query_flag(req, "overwrite"));
-        if (r == DRIVE_OK) {
-            drive_upload_abort();
-        }
+    // The checks of the real upload, without touching a kept interrupted upload.
+    return web_send_result(req, drive_upload_check(path, size, web_query_flag(req, "overwrite")));
+}
+
+/** GET /api/upload/resume?path=&size=: bytes held for exactly this path and size (0 = none). */
+static esp_err_t h_upload_resume(httpd_req_t *req)
+{
+    const drive_result_t blk = web_crypt_block();
+    if (blk != DRIVE_OK) {
+        return web_send_result(req, blk);
     }
-    return web_send_result(req, r);
+    char path[PATH_BUF_SIZE];
+    const param_t p = path_param(req, "path", path);
+    if (p != PARAM_OK) {
+        return send_param_error(req, p, "path");
+    }
+    unsigned long long size;
+    if (!size_param(req, &size)) {
+        return send_missing(req, "size");
+    }
+    uint32_t offset = 0;
+    const drive_result_t r = drive_upload_resume_query(path, size, &offset);
+    if (r != DRIVE_OK) {
+        return web_send_result(req, r);
+    }
+    char buf[48];
+    snprintf(buf, sizeof(buf), "{\"ok\":true,\"offset\":%lu}", (unsigned long)offset);
+    return web_send_json(req, "200 OK", buf);
+}
+
+static esp_err_t send_resume_mismatch(httpd_req_t *req, uint32_t held)
+{
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             "{\"ok\":false,\"code\":\"RESUME_MISMATCH\",\"error\":\"Der Upload kann an dieser Stelle nicht "
+             "fortgesetzt werden.\",\"offset\":%lu}",
+             (unsigned long)held);
+    return web_send_json(req, "409 Conflict", buf);
 }
 
 /**
- * Receive the request body as an upload to `path` (shared by upload and push). Returns ESP_FAIL
- * if the client is gone (nothing can be answered); otherwise ESP_OK with the result in *out,
- * which the caller still has to send. No upload session is left open in either case.
+ * Receive the request body into the upload session opened by the caller and finish it (shared
+ * by upload and push). Returns ESP_FAIL if the client is gone (nothing can be answered);
+ * otherwise ESP_OK with the result in *out, which the caller still has to send. No upload
+ * session is left open in either case. keep_partial: a broken connection keeps the received
+ * bytes for resuming (drive_upload_suspend()) instead of dropping them.
  */
-static esp_err_t receive_upload(httpd_req_t *req, const char *path, bool overwrite, drive_result_t *out)
+static esp_err_t receive_body(httpd_req_t *req, const char *path, bool keep_partial, drive_result_t *out)
 {
     uint8_t *const buf = web_io_buf();
     const size_t total = req->content_len;
-    drive_result_t r = drive_upload_begin(path, (uint32_t)total, overwrite);
-    if (r != DRIVE_OK) {
-        *out = r;
-        return drain_body(req, total) ? ESP_OK : ESP_FAIL;
-    }
+    drive_result_t r;
 
     const int64_t t0 = esp_timer_get_time();
     size_t remaining = total, fill = 0;
@@ -228,7 +342,12 @@ static esp_err_t receive_upload(httpd_req_t *req, const char *path, bool overwri
         }
         if (n <= 0) {
             ESP_LOGW(TAG, "upload connection lost (%d)", n);
-            drive_upload_abort();
+            // Store what already arrived, so the kept part ends exactly where the client resumes.
+            if (keep_partial && (fill == 0 || drive_upload_write(buf, fill) == DRIVE_OK)) {
+                drive_upload_suspend();
+            } else {
+                drive_upload_abort();
+            }
             return ESP_FAIL;   // client is gone, nothing to answer
         }
         timeouts = 0;
@@ -244,16 +363,13 @@ static esp_err_t receive_upload(httpd_req_t *req, const char *path, bool overwri
             }
         }
     }
-    // Optional: original modification time of the file, and the client's clock (both local
-    // time as seconds since 1970). The device has no clock of its own.
+    // Optional: original modification time of the file, and the client's clock (both real unix
+    // seconds). The clock is only taken while NTP has not set it (pd_time decides).
     char num[16];
     const uint32_t mtime =
         web_query_param(req, "mtime", num, sizeof(num)) ? (uint32_t)strtoul(num, NULL, 10) : 0;
-    if (web_query_param(req, "now", num, sizeof(num)) && time(NULL) < 1700000000) {
-        const struct timeval tv = {.tv_sec = (time_t)strtoul(num, NULL, 10)};
-        if (tv.tv_sec > 1700000000) {
-            settimeofday(&tv, NULL);
-        }
+    if (web_query_param(req, "now", num, sizeof(num))) {
+        pd_time_set_client((uint32_t)strtoul(num, NULL, 10));
     }
     r = drive_upload_finish(mtime);
     const int64_t dt_ms = (esp_timer_get_time() - t0) / 1000;
@@ -263,6 +379,24 @@ static esp_err_t receive_upload(httpd_req_t *req, const char *path, bool overwri
     return ESP_OK;
 }
 
+/** Fresh upload of the whole body to `path`; same contract as receive_body(). */
+static esp_err_t receive_upload(httpd_req_t *req, const char *path, bool overwrite, bool keep_partial,
+                                drive_result_t *out)
+{
+    const drive_result_t r = drive_upload_begin(path, (uint32_t)req->content_len, overwrite);
+    if (r != DRIVE_OK) {
+        *out = r;
+        return drain_body(req, req->content_len) ? ESP_OK : ESP_FAIL;
+    }
+    return receive_body(req, path, keep_partial, out);
+}
+
+/**
+ * POST /api/upload. Without offset: fresh upload of the whole body. With offset (and size = total
+ * size): the body is the rest from offset on and is appended to the interrupted upload of exactly
+ * this path and size, if the server holds exactly offset bytes of it; else 409 RESUME_MISMATCH
+ * with the server's "offset". A broken connection keeps the received part in both cases.
+ */
 static esp_err_t h_upload(httpd_req_t *req)
 {
     const drive_result_t blk = web_crypt_block();
@@ -270,12 +404,49 @@ static esp_err_t h_upload(httpd_req_t *req)
         return drain_body(req, req->content_len) ? web_send_result(req, blk) : ESP_FAIL;
     }
     char path[PATH_BUF_SIZE];
+    unsigned long long offset = 0, size = 0;
+    const param_t po = path_param(req, "offset", path);   // path buffer used before the path is read
+    const bool resume = po != PARAM_MISSING;
+    if (resume && (po != PARAM_OK || !parse_num(path, &offset))) {
+        return drain_body(req, req->content_len) ? send_missing(req, "offset") : ESP_FAIL;
+    }
     const param_t p = path_param(req, "path", path);
     if (p != PARAM_OK) {
         return drain_body(req, req->content_len) ? send_param_error(req, p, "path") : ESP_FAIL;
     }
+    const bool overwrite = web_query_flag(req, "overwrite");
     drive_result_t r;
-    if (receive_upload(req, path, web_query_flag(req, "overwrite"), &r) != ESP_OK) {
+    if (!resume) {
+        if (receive_upload(req, path, overwrite, true, &r) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        return web_send_result(req, r);
+    }
+
+    if (!size_param(req, &size)) {
+        return drain_body(req, req->content_len) ? send_missing(req, "size") : ESP_FAIL;
+    }
+    uint32_t held = 0;
+    bool mismatch = false;
+    r = drive_upload_validate(path, size);   // BAD_NAME, BAD_TYPE, TOO_LARGE, INVALID_FILE
+    if (r == DRIVE_OK && offset > size) {
+        drive_upload_resume_query(path, size, &held);
+        mismatch = true;                     // can never match what the server holds
+    } else if (r == DRIVE_OK && (unsigned long long)req->content_len != size - offset) {
+        return drain_body(req, req->content_len)
+                   ? web_send_error(req, "400 Bad Request", "BAD_REQUEST",
+                                    "Content-Length muss size minus offset sein")
+                   : ESP_FAIL;
+    } else if (r == DRIVE_OK) {
+        r = drive_upload_resume(path, (uint32_t)size, overwrite, (uint32_t)offset, &held, &mismatch);
+    }
+    if (mismatch || r != DRIVE_OK) {
+        if (!drain_body(req, req->content_len)) {
+            return ESP_FAIL;
+        }
+        return mismatch ? send_resume_mismatch(req, held) : web_send_result(req, r);
+    }
+    if (receive_body(req, path, true, &r) != ESP_OK) {
         return ESP_FAIL;
     }
     return web_send_result(req, r);
@@ -348,8 +519,9 @@ static esp_err_t h_push(httpd_req_t *req)
     if (r != DRIVE_OK) {
         err = drain_body(req, total) ? ESP_OK : ESP_FAIL;   // nothing taken over in this case
     } else {
-        // 3. Store (no session is left open afterwards, whatever happened).
-        err = receive_upload(req, path, overwrite, &r);
+        // 3. Store (no session is left open afterwards, whatever happened; push keeps no partial
+        //    upload: the drive is handed back to the USB host right after).
+        err = receive_upload(req, path, overwrite, false, &r);
     }
     // 4. Give the drive back if this request took it.
     if (took_over) {
@@ -457,6 +629,8 @@ static const web_route_t s_routes[] = {
     {"/api/files", HTTP_GET, h_files, WEB_ROLE_USER},
     {"/api/download", HTTP_GET, h_download, WEB_ROLE_USER},
     {"/api/upload/check", HTTP_POST, h_upload_check, WEB_ROLE_USER},
+    {"/api/upload/resume", HTTP_GET, h_upload_resume, WEB_ROLE_USER},
+    {"/api/zip", HTTP_GET, web_zip_get, WEB_ROLE_USER},
     {"/api/upload", HTTP_POST, h_upload, WEB_ROLE_USER},
     {"/api/push", HTTP_POST, h_push, WEB_ROLE_USER},
     {"/api/mkdir", HTTP_POST, h_mkdir, WEB_ROLE_USER},
@@ -467,8 +641,5 @@ static const web_route_t s_routes[] = {
 
 esp_err_t web_files_register(httpd_handle_t server)
 {
-    if (!s_list_mem) {
-        s_list_mem = malloc(LIST_BUF_SIZE + PATH_BUF_SIZE + ITEM_BUF_SIZE);
-    }
     return web_register_routes(server, s_routes, sizeof(s_routes) / sizeof(s_routes[0]));
 }

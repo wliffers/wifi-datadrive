@@ -1,5 +1,7 @@
 """End-to-end test of the WiFi DataDrive web API (version 3, docs/09_api_v3.md, plus version 4,
-docs/12_api_v4.md: Wi-Fi scan and drive encryption incl. recovery key renewal, erase, damaged state).
+docs/12_api_v4.md: Wi-Fi scan and drive encryption incl. recovery key renewal, erase, damaged state,
+plus version 5, docs/15_api_v5.md: clock, automatic lock, display language, resumable upload,
+folder ZIP, WebDAV).
 
 Works against the mock (tools/mock_server.py) and a real dongle.
 
@@ -8,15 +10,25 @@ Usage (the ESP-IDF Python env and the system Python provide 'requests'):
                              [--drive E:] [--size-kb 512] [--skip-destructive]
                              [--wifi-test] [--ota-probe] [--drive-password PW]
                              [--crypt-test --i-know-this-erases-the-drive [--keep-encrypted]]
+                             [--only SECTION[,SECTION...]]
 
 Sections: 1 authentication, 2 users and roles, 3 trusted devices, 4 mode and files,
 5 Wi-Fi, 6 status (+ optional OTA probe), 7 Windows drive letter (--drive),
 8 Wi-Fi scan (v4), 9 drive encryption, non-destructive (v4), 9c optional HTTPS (read-only checks),
-10 drive encryption, destructive (v4, opt-in).
+10 drive encryption, destructive (v4, opt-in),
+11 clock and time zone (v5), 12 automatic lock settings (v5), 13 display language (v5),
+14 resumable upload (v5), 15 folder as ZIP (v5), 16 WebDAV smoke test (v5; skipped if /dav/ answers 404).
+
+  --only time,zip     run only these sections (after the login, which always runs). Names: users, devices,
+                      files, wifi, status, drive, scan, crypt, https, crypt_test, time, autolock, lang, resume,
+                      zip, webdav; "v5" = time,autolock,lang,resume,zip,webdav. The v5 file sections create their
+                      own test folder if section 4 does not run.
 
 The target is left as found: owner mode restored, everything created (test folder
 _apitest_<random>, temporary user apitest_<random>, trusted devices, Wi-Fi entry) removed,
-own sessions logged out. Never formats, reboots or flashes; only touches what it created.
+changed settings (automatic lock, display language) restored, own sessions logged out. Never
+formats, reboots or flashes; only touches what it created. Section 11 may set the device clock
+to this PC's time if the device clock is not NTP-synced (like the web UI does).
 
 Options
   --skip-destructive  do not take the drive from a USB host and do not switch the mode
@@ -46,8 +58,8 @@ Options
   --keep-encrypted    with --crypt-test: stop before disable; drive stays encrypted and unlocked
                       (the recovery key is printed once, record it).
 
-Wrong passwords (login): at most 2 (one wrong login, one wrong `old` password), so the lockout
-(5 in a row) of a real device is never reached. If the account still has the delivery
+Wrong passwords (login): at most 3 (one wrong login, one wrong `old` password, one wrong WebDAV
+Basic password), never two in a row, so the lockout (5 in a row) of a real device is never reached. If the account still has the delivery
 password (`default_password: true`) the test stops and asks to change it first.
 
 Exit code: 0 all checks passed, 1 failed checks, 2 aborted (login / default password).
@@ -61,6 +73,7 @@ import socket
 import sys
 import time
 import zipfile
+import zlib
 from urllib.parse import quote, urlencode
 
 import requests
@@ -109,6 +122,8 @@ class S:                # run state (also used by the cleanup)
     keep_encrypted = False
     recovery = None
     damaged = False     # the target reports crypt.damaged (only the mock can)
+    autolock_orig = None    # (minutes, on_detach) to restore
+    lang_orig = None        # display language to restore
 
 
 def check(name, cond, info=""):
@@ -239,7 +254,7 @@ def up_timeout(n):
 
 
 def upload(path, data, overwrite=False, mtime=None, push=False, force=False, ep=None):
-    p = {"path": path, "now": str(int(time.time() - time.timezone))}
+    p = {"path": path, "now": str(int(time.time()))}       # API v5: Unix seconds (UTC)
     if overwrite:
         p["overwrite"] = "1"
     if mtime:
@@ -322,6 +337,7 @@ def locked_reqs_f(T2, P):
         ("POST upload", "POST", "/api/upload", {"path": f"{T2}/z.3mf"}, make_3mf(1)),
         ("POST push", "POST", "/api/push", {"path": f"{T2}/z.3mf"}, make_3mf(1)),
         ("POST format", "POST", "/api/format", None, None),
+        ("GET zip (v5)", "GET", "/api/zip", {"path": T2}, None),
     ]
 
 
@@ -804,6 +820,7 @@ def sec_files(a):
         expect("WRONG_OWNER: upload/check",
                call("POST", "/api/upload/check", params={"path": f"{T}/x.3mf", "size": "10"}), 409, "WRONG_OWNER")
         expect("WRONG_OWNER: download", download(PP), 409, "WRONG_OWNER")
+        expect("WRONG_OWNER: zip (v5)", call("GET", "/api/zip", params={"path": T}), 409, "WRONG_OWNER")
         drv = status().get("drive", {})
         connected = drv.get("usb_connected") and not drv.get("host_ejected")
         data_u = make_3mf(16)
@@ -1352,6 +1369,9 @@ def sec_https(a):
     head("9c. Optional HTTPS, non-destructive (status fields, roles, CA download; the setting is never changed)")
     st = status()
     keys = ("https", "https_active", "https_restart", "cert_sha256", "ca_sha256", "cert_expires")
+    if not any(k in st for k in keys):
+        skip("HTTPS checks", "no HTTPS fields in the status: HTTPS compiled out (PD_HTTPS_OPTION, default in 0.4.0/0.5.0)")
+        return
     check("status has https, https_active, https_restart, cert_sha256, ca_sha256, cert_expires",
           all(k in st for k in keys), [k for k in keys if k not in st])
     if not all(k in st for k in keys):
@@ -1385,6 +1405,474 @@ def sec_https(a):
     else:
         expect("no CA yet: GET https/ca.cer -> 404 NOT_FOUND", r, 404, "NOT_FOUND")
     check("... the setting was not changed", status().get("https") == st["https"])
+
+
+# ------------------------------------------------------------------ API v5 (docs/15_api_v5.md)
+
+def is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def v5_folder():
+    """Test folder for the v5 file sections: the one of section 4, or a new one (--only). The file manager must own
+    the drive; it is taken over like in section 4 (not with --skip-destructive). None if impossible."""
+    if status().get("drive", {}).get("owner") != "app":
+        if S.skip_destructive or not ensure_app():
+            return None
+        S.took = True
+    if not S.T_made:
+        S.T = f"_apitest_{os.urandom(3).hex()}"
+        if not okr(call("POST", "/api/mkdir", params={"path": S.T})):
+            return None
+        S.T_made = True
+    return S.T
+
+
+def allowed_exts():
+    """Extensions the target accepts for uploads (status.types), .3mf first."""
+    types = status().get("types", "all")
+    if types == "all":
+        return [".3mf", ".gcode", ".txt"]
+    exts = [e.strip().lower() for e in types.split(",") if e.strip()]
+    return sorted(exts, key=lambda e: e != ".3mf") or [".3mf"]
+
+
+def sample_for(ext, kb):
+    return make_3mf(kb) if ext == ".3mf" else os.urandom(kb * 1024)
+
+
+def sec_time(a):
+    head("11. Clock and time zone (API v5)")
+    t = status().get("time")
+    ok = check("status.time = {epoch: integer >= 0, synced: bool, tz: non-empty string}",
+               isinstance(t, dict) and is_int(t.get("epoch")) and t["epoch"] >= 0 and isinstance(t.get("synced"), bool)
+               and isinstance(t.get("tz"), str) and t["tz"] != "", t)
+    if not ok:
+        return
+    print(f"       clock: epoch {t['epoch']}, synced {t['synced']}, tz {t['tz']!r}")
+    now = int(time.time())
+    if t["epoch"]:
+        check("device clock within 2 minutes of this PC (Unix seconds, UTC)", abs(t["epoch"] - now) <= 120,
+              f"device {t['epoch']}, PC {now}")
+    check("synced implies a known time (epoch > 0)", not t["synced"] or t["epoch"] > 0, t)
+    expect("401 without login: POST settings/time", call("POST", "/api/settings/time", params={"tz": t["tz"]}, tok=None),
+           401, "UNAUTHORIZED")
+    expect("401 without login: POST time", call("POST", "/api/time", params={"epoch": str(now)}, tok=None),
+           401, "UNAUTHORIZED")
+    expect("403 FORBIDDEN without X-PrintDrive header: POST settings/time",
+           call("POST", "/api/settings/time", params={"tz": t["tz"]}, csrf=False), 403, "FORBIDDEN")
+    expect("403 FORBIDDEN without X-PrintDrive header: POST time",
+           call("POST", "/api/time", params={"epoch": str(now)}, csrf=False), 403, "FORBIDDEN")
+    u = role_token()
+    if u:
+        expect("FORBIDDEN_ROLE for user: POST settings/time",
+               call("POST", "/api/settings/time", params={"tz": t["tz"]}, tok=u), 403, "FORBIDDEN_ROLE")
+    else:
+        skip("role check for settings/time", "no temporary user possible")
+    expect("settings/time without tz -> BAD_REQUEST", call("POST", "/api/settings/time"), 400, "BAD_REQUEST")
+    expect("settings/time with an empty tz -> BAD_REQUEST",
+           call("POST", "/api/settings/time", params={"tz": ""}), 400, "BAD_REQUEST")
+    expect("settings/time with a 200-byte tz -> BAD_REQUEST",
+           call("POST", "/api/settings/time", params={"tz": "A" * 200}), 400, "BAD_REQUEST")
+    check("... tz unchanged", status().get("time", {}).get("tz") == t["tz"])
+    r = call("POST", "/api/settings/time", params={"tz": t["tz"]})     # quote() encodes '+' as %2B
+    check("settings/time with the current tz: 200, status.time.tz unchanged", okr(r)
+          and status().get("time", {}).get("tz") == t["tz"], r.text[:120])
+
+    for label, val in (("missing", None), ("implausible (12345)", "12345"), ("not a number", "jetzt"),
+                       ("year 2100", "4102444800")):
+        expect(f"POST time with epoch {label} -> BAD_REQUEST",
+               call("POST", "/api/time", params={"epoch": val} if val else None), 400, "BAD_REQUEST")
+    synced = status().get("time", {}).get("synced")
+    now = int(time.time())
+    r = call("POST", "/api/time", params={"epoch": str(now)}, tok=u or DEF)
+    j = jr(r)
+    jt = status().get("time") or {}
+    check("POST time" + (" as role user" if u else "") + ": 200 with set (bool)",
+          okr(r) and isinstance(j.get("set"), bool), r.text[:120])
+    if synced:
+        check("NTP-synced clock is not overridden (set:false; status: still synced)", j.get("set") is False
+              and jt.get("synced") is True and abs(jt.get("epoch", 0) - now) <= 120, (j, jt))
+    else:
+        check("unsynced clock is set (set:true; status: epoch = sent time, synced false)", j.get("set") is True
+              and abs(jt.get("epoch", 0) - now) <= 5 and jt.get("synced") is False, (j, jt))
+        note("the device clock was set to this PC's time (like the web UI does)")
+
+    T = v5_folder()
+    if not T:
+        skip("time stamps of uploads", "the file manager does not own the drive (--skip-destructive)")
+        return
+    ext = allowed_exts()[0]
+    data = sample_for(ext, 4)
+    p1 = f"{T}/Zeit ohne mtime{ext}"
+    r = call("POST", "/api/upload", params={"path": p1}, body=data, timeout=up_timeout(len(data)))
+    clock = status().get("time", {}).get("epoch", 0)
+    e = ls(T)[1].get(p1.rsplit("/", 1)[1], {})
+    if clock:
+        check("upload without mtime: listing mtime = device clock (Unix seconds, +-2 min)",
+              okr(r) and is_int(e.get("mtime")) and abs(e["mtime"] - clock) <= 120, f"mtime {e.get('mtime')}, clock {clock}")
+    else:
+        check("upload without mtime and unknown clock: listing mtime 0", okr(r) and e.get("mtime") == 0, e)
+    p2 = f"{T}/Zeit mit mtime{ext}"
+    r = call("POST", "/api/upload", params={"path": p2, "mtime": "1790000000"}, body=data, timeout=up_timeout(len(data)))
+    e = ls(T)[1].get(p2.rsplit("/", 1)[1], {})
+    check("upload with mtime=1790000000 (Unix seconds): listing returns it (FAT 2 s)",
+          okr(r) and abs(e.get("mtime", 0) - 1790000000) <= 2, e.get("mtime"))
+
+
+def sec_autolock(a):
+    head("12. Automatic lock of the encrypted drive: settings (API v5)")
+    al = status().get("autolock")
+    ok = check("status.autolock = {minutes: 0..1440, on_detach: bool}",
+               isinstance(al, dict) and is_int(al.get("minutes")) and 0 <= al["minutes"] <= 1440
+               and isinstance(al.get("on_detach"), bool), al)
+    if not ok:
+        return
+    m, d = al["minutes"], al["on_detach"]
+    print(f"       automatic lock: {m} min ({'off' if not m else 'on'}), on detach {d}")
+    expect("401 without login: POST settings/autolock",
+           call("POST", "/api/settings/autolock", params={"minutes": str(m)}, tok=None), 401, "UNAUTHORIZED")
+    expect("403 FORBIDDEN without X-PrintDrive header: POST settings/autolock",
+           call("POST", "/api/settings/autolock", params={"minutes": str(m)}, csrf=False), 403, "FORBIDDEN")
+    u = role_token()
+    if u:
+        expect("FORBIDDEN_ROLE for user: POST settings/autolock",
+               call("POST", "/api/settings/autolock", params={"minutes": str(m)}, tok=u), 403, "FORBIDDEN_ROLE")
+    for label, params in (("no parameter", None), ("minutes=1441", {"minutes": "1441"}), ("minutes=-1", {"minutes": "-1"}),
+                          ("minutes=abc", {"minutes": "abc"}), ("on_detach=2", {"on_detach": "2"})):
+        expect(f"settings/autolock with {label} -> BAD_REQUEST", call("POST", "/api/settings/autolock", params=params),
+               400, "BAD_REQUEST")
+    check("... nothing changed", status().get("autolock") == al, status().get("autolock"))
+
+    S.autolock_orig = (m, d)
+    m2 = 30 if m != 30 else 45
+    r = call("POST", "/api/settings/autolock", params={"minutes": str(m2), "on_detach": "0" if d else "1"})
+    check(f"set minutes={m2}, on_detach={not d}: 200, status shows it",
+          okr(r) and status().get("autolock") == {"minutes": m2, "on_detach": not d}, r.text[:120])
+    r = call("POST", "/api/settings/autolock", params={"on_detach": "true" if d else "false"})
+    check("on_detach accepts true/false too", okr(r) and status().get("autolock", {}).get("on_detach") is d,
+          r.text[:120])
+    r = call("POST", "/api/settings/autolock", params={"on_detach": "0" if d else "1"})
+    r = call("POST", "/api/settings/autolock", params={"minutes": str(m)})
+    check("only minutes given: on_detach keeps its value", okr(r)
+          and status().get("autolock") == {"minutes": m, "on_detach": not d}, status().get("autolock"))
+    r = call("POST", "/api/settings/autolock", params={"on_detach": "1" if d else "0"})
+    check("only on_detach given: back to the original settings", okr(r) and status().get("autolock") == al,
+          status().get("autolock"))
+    if status().get("autolock") == al:
+        S.autolock_orig = None
+    skip("the automatic lock itself", "takes minutes; on the mock: /mock/set?idle_s=N and usb_connected=0")
+
+
+def sec_lang(a):
+    head("13. Display language (API v5)")
+    lang = status().get("lang")
+    if not check("status.lang is de or en", lang in ("de", "en"), lang):
+        return
+    expect("401 without login: POST settings/lang", call("POST", "/api/settings/lang", params={"value": lang}, tok=None),
+           401, "UNAUTHORIZED")
+    expect("403 FORBIDDEN without X-PrintDrive header: POST settings/lang",
+           call("POST", "/api/settings/lang", params={"value": lang}, csrf=False), 403, "FORBIDDEN")
+    for label, params in (("no value", None), ("value=fr", {"value": "fr"}), ("value=DE", {"value": "DE"})):
+        expect(f"settings/lang with {label} -> BAD_REQUEST", call("POST", "/api/settings/lang", params=params),
+               400, "BAD_REQUEST")
+    check("... language unchanged", status().get("lang") == lang)
+    other = "en" if lang == "de" else "de"
+    S.lang_orig = lang
+    u = role_token()
+    r = call("POST", "/api/settings/lang", params={"value": other}, tok=u or DEF)
+    check(f"set value={other}" + (" as role user" if u else "") + ": 200, status shows it",
+          okr(r) and status().get("lang") == other, r.text[:120])
+    r = call("POST", "/api/settings/lang", params={"value": lang})
+    check(f"back to {lang}", okr(r) and status().get("lang") == lang)
+    if status().get("lang") == lang:
+        S.lang_orig = None
+
+
+def raw_partial_upload(path, size, part, extra=""):
+    """Starts POST /api/upload?path&size&offset=0 over a raw socket, sends `part` and closes (Wi-Fi drop)."""
+    sock = socket.create_connection((S.host, S.port), timeout=10)
+    q = f"path={quote(path, safe='')}&size={size}&offset=0{extra}"
+    sock.sendall((f"POST /api/upload?{q} HTTP/1.1\r\nHost: {S.host}\r\nX-PrintDrive: 1\r\n"
+                  f"Cookie: dd_session={S.main}\r\nContent-Length: {size}\r\n"
+                  f"Content-Type: application/octet-stream\r\n\r\n").encode())
+    sock.sendall(part)
+    time.sleep(1.5)
+    sock.close()          # the server handles one request at a time: the next one waits until it noticed
+
+
+def sec_resume(a):
+    head("14. Resumable upload (API v5)")
+    T = v5_folder()
+    if not T:
+        skip("resumable upload", "the file manager does not own the drive (--skip-destructive)")
+        return
+    D = f"{T}/Fortsetzen"
+    expect("mkdir for the resume test", call("POST", "/api/mkdir", params={"path": D}), 200)
+    data = make_3mf(max(a.size_kb, 256))
+    n = len(data)
+    P = f"{D}/Groß äöü.3mf"
+
+    def resume(path, size, tok=DEF):
+        return call("GET", "/api/upload/resume", params={"path": path, "size": str(size)}, tok=tok)
+
+    def part(path, size, off, body, **extra):
+        return call("POST", "/api/upload", params={"path": path, "size": str(size), "offset": str(off), **extra},
+                    body=body, timeout=up_timeout(len(body)))
+
+    def resumable():
+        return jr(call("GET", "/api/status", timeout=60)).get("upload", {})
+
+    expect("401 without login: GET upload/resume", resume(P, n, tok=None), 401, "UNAUTHORIZED")
+    expect("upload/resume without size -> BAD_REQUEST", call("GET", "/api/upload/resume", params={"path": P}),
+           400, "BAD_REQUEST")
+    r = resume(P, n)
+    check("upload/resume for a new file: 200, offset 0", okr(r) and jr(r).get("offset") == 0, r.text[:120])
+    up = resumable()
+    check("status.upload.resumable exists (null or object)", "resumable" in up, up)
+
+    half = n // 2
+    raw_partial_upload(P, n, data[:half])
+    up = resumable()
+    res = up.get("resumable") or {}
+    off = res.get("offset", 0)
+    ok = check("after the broken upload: not active, status.upload.resumable = {path, size, offset}, 0 < offset <= sent",
+               up.get("active") is False and res.get("path") == P and res.get("size") == n and is_int(off)
+               and 0 < off <= half, f"{up} (sent {half})")
+    if not ok:
+        return
+    note(f"server kept {off} of {half} sent bytes")
+    r = resume(P, n)
+    check("upload/resume reports the same offset", okr(r) and jr(r).get("offset") == off, r.text[:120])
+    check("upload/resume with another size -> offset 0", jr(resume(P, n + 1)).get("offset") == 0)
+    check("upload/resume with another path -> offset 0", jr(resume(f"{D}/anders.3mf", n)).get("offset") == 0)
+    check("the partial file is not in the listing", P.rsplit("/", 1)[1] not in ls(D)[1])
+
+    if off + 1 < n:
+        r = part(P, n, off + 1, data[off + 1:])
+        expect("resume at the wrong offset -> 409 RESUME_MISMATCH", r, 409, "RESUME_MISMATCH")
+        check("... the answer carries the server's offset", jr(r).get("offset") == off, r.text[:120])
+    r = part(P, n + 1, off, data[off:] + b"\0")
+    expect("resume with another size (no partial for it) -> 409 RESUME_MISMATCH", r, 409, "RESUME_MISMATCH")
+    check("... offset 0 in the answer", jr(r).get("offset") == 0, r.text[:120])
+    r = part(P, n, 0, data)
+    expect("offset=0 while a part of this file is held -> 409 RESUME_MISMATCH", r, 409, "RESUME_MISMATCH")
+    check("... the answer carries the server's offset", jr(r).get("offset") == off, r.text[:120])
+    r = part(P, n, n + 1, b"")
+    expect("offset > size -> 409 RESUME_MISMATCH", r, 409, "RESUME_MISMATCH")
+    expect("Content-Length != size - offset -> BAD_REQUEST", part(P, n, off, data[off:-1]), 400, "BAD_REQUEST")
+    check("refused requests kept the partial upload", jr(resume(P, n)).get("offset") == off)
+
+    r = part(P, n, off, data[off:])
+    check("resume at the server's offset: 200", okr(r), r.text[:120])
+    check("... file complete and identical (SHA-256)", sha(download(P).content) == sha(data))
+    check("... listing shows the full size", ls(D)[1].get(P.rsplit("/", 1)[1], {}).get("size") == n)
+    check("... status.upload.resumable is null, upload/resume says 0",
+          resumable().get("resumable") is None and jr(resume(P, n)).get("offset") == 0)
+
+    # a partial upload is discarded by another upload
+    data2 = make_3mf(max(a.size_kb, 256) // 2)
+    n2 = len(data2)
+    P2 = f"{D}/Zweiter Versuch.3mf"
+    raw_partial_upload(P2, n2, data2[:n2 // 2])
+    res = resumable().get("resumable") or {}
+    check("second broken upload is resumable", res.get("path") == P2 and res.get("offset", 0) > 0, res)
+    r = upload(f"{D}/anderes.3mf", make_3mf(1))
+    check("another (plain) upload: 200", okr(r), r.text[:120])
+    check("... discarded the partial upload (status null, upload/resume 0, not listed)",
+          resumable().get("resumable") is None and jr(resume(P2, n2)).get("offset") == 0
+          and P2.rsplit("/", 1)[1] not in ls(D)[1])
+    r = part(P2, n2, 8192, data2[8192:])
+    expect("resume without a partial upload -> 409 RESUME_MISMATCH", r, 409, "RESUME_MISMATCH")
+    check("... offset 0 in the answer", jr(r).get("offset") == 0, r.text[:120])
+    r = part(P2, n2, 0, data2)
+    check("offset=0 with the whole file: 200, identical", okr(r) and sha(download(P2).content) == sha(data2),
+          r.text[:120])
+
+
+def sec_zip(a):
+    head("15. Folder as ZIP (API v5)")
+    T = v5_folder()
+    if not T:
+        skip("folder ZIP", "the file manager does not own the drive (--skip-destructive)")
+        return
+    top = "ZIP Test äöü"
+    Z = f"{T}/{top}"
+    exts = allowed_exts()
+    dirs = ["Unterordner Ö", "Unterordner Ö/Tiefer €", "Leer"]
+    files = {f"Würfel ä{exts[0]}": sample_for(exts[0], 8),
+             f"Unterordner Ö/Datei ß{exts[1 % len(exts)]}": sample_for(exts[1 % len(exts)], 3),
+             f"Unterordner Ö/Tiefer €/Notiz{exts[2 % len(exts)]}": sample_for(exts[2 % len(exts)], 1),
+             f"Unterordner Ö/Tiefer €/Leer.3mf" if ".3mf" in exts else f"Unterordner Ö/Zweite{exts[0]}":
+                 sample_for(".3mf" if ".3mf" in exts else exts[0], 1)}
+    made = okr(call("POST", "/api/mkdir", params={"path": Z}))
+    for d in dirs:
+        made = okr(call("POST", "/api/mkdir", params={"path": f"{Z}/{d}"})) and made
+    for p, body in files.items():
+        made = okr(upload(f"{Z}/{p}", body)) and made
+    if not check("tree with umlauts, nested and empty folders created", made):
+        return
+    r = call("GET", "/api/zip", params={"path": Z}, timeout=120)
+    cd = r.headers.get("Content-Disposition", "")
+    check("GET zip: 200, Content-Type application/zip", r.status_code == 200
+          and r.headers.get("Content-Type", "").split(";")[0].strip() == "application/zip",
+          f"{r.status_code} {r.headers.get('Content-Type')}")
+    check("Content-Disposition: attachment with a .zip file name", cd.startswith("attachment") and ".zip" in cd, cd)
+    check("sent chunked (Transfer-Encoding: chunked)", r.headers.get("Transfer-Encoding", "").lower() == "chunked",
+          r.headers.get("Transfer-Encoding"))
+    try:
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+    except zipfile.BadZipFile as e:
+        check("the answer is a readable ZIP", False, repr(e))
+        return
+    check("ZIP readable, every CRC right (testzip)", z.testzip() is None)
+    names = set(z.namelist())
+    want = {f"{top}/"} | {f"{top}/{d}/" for d in dirs} | {f"{top}/{p}" for p in files}
+    check("entries: folder name on top, every file and folder (also the empty one), nothing else",
+          names == want, f"missing {sorted(want - names)}, extra {sorted(names - want)}")
+    infos = {i.filename: i for i in z.infolist()}
+    same = all(p_full in infos and z.read(p_full) == body and infos[p_full].CRC == (zlib.crc32(body) & 0xFFFFFFFF)
+               for p_full, body in ((f"{top}/{p}", b) for p, b in files.items()))
+    check("file contents and CRC-32 identical to the uploads", same)
+    check("stored, not compressed (method 0)", all(i.compress_type == zipfile.ZIP_STORED for i in infos.values()))
+    check("non-ASCII names carry the UTF-8 flag (bit 11)",
+          all(i.flag_bits & 0x800 for n_, i in infos.items() if not n_.isascii()))
+    u = role_token()
+    if u:
+        r = call("GET", "/api/zip", params={"path": Z}, tok=u, timeout=120)
+        check("role user may download a ZIP", r.status_code == 200 and r.content[:2] == b"PK", r.status_code)
+    expect("401 without login: GET zip", call("GET", "/api/zip", params={"path": Z}, tok=None), 401, "UNAUTHORIZED")
+    expect("zip of a missing folder -> NOT_FOUND", call("GET", "/api/zip", params={"path": f"{Z}/gibtsnicht"}),
+           404, "NOT_FOUND")
+    expect("zip of a file -> NOT_FOUND", call("GET", "/api/zip", params={"path": f"{Z}/{next(iter(files))}"}),
+           404, "NOT_FOUND")
+    expect("zip with '..' -> BAD_NAME", call("GET", "/api/zip", params={"path": f"{T}/../x"}), 400, "BAD_NAME")
+
+
+DAV_NS = "{DAV:}"
+
+
+def dav(method, path, headers=None, body=None, auth=DEF, timeout=60):
+    """WebDAV request: HTTP Basic, no cookie, no X-PrintDrive header."""
+    if auth is DEF:
+        auth = (S.user, S.password)
+    return requests.request(method, S.base + path, headers=headers or {}, data=body, auth=auth, timeout=timeout)
+
+
+def dav_entries(r):
+    """207 body -> {href (decoded, without trailing slash): {"dir": bool, "size": int|None}}"""
+    from urllib.parse import unquote
+    from xml.etree import ElementTree
+    out = {}
+    try:
+        root = ElementTree.fromstring(r.content)
+    except ElementTree.ParseError:
+        return None
+    for resp in root.iter(DAV_NS + "response"):
+        href = unquote(resp.findtext(DAV_NS + "href") or "")
+        href = re.sub(r"^https?://[^/]+", "", href).rstrip("/")
+        rt = resp.find(f".//{DAV_NS}resourcetype")
+        size = resp.findtext(f".//{DAV_NS}getcontentlength")
+        out[href] = {"dir": rt is not None and rt.find(DAV_NS + "collection") is not None,
+                     "size": int(size) if size and size.isdigit() else None}
+    return out
+
+
+def sec_webdav(a):
+    head("16. WebDAV network drive (API v5, smoke test)")
+    st = status()
+    if "webdav" in st:
+        expect("401 without login: POST settings/webdav", call("POST", "/api/settings/webdav",
+               params={"value": "1" if st["webdav"] else "0"}, tok=None), 401, "UNAUTHORIZED")
+        u = role_token()
+        if u:
+            expect("FORBIDDEN_ROLE for user: POST settings/webdav", call("POST", "/api/settings/webdav",
+                   params={"value": "1" if st["webdav"] else "0"}, tok=u), 403, "FORBIDDEN_ROLE")
+        expect("settings/webdav with value=2 -> BAD_REQUEST",
+               call("POST", "/api/settings/webdav", params={"value": "2"}), 400, "BAD_REQUEST")
+        check("... switch unchanged", status().get("webdav") == st["webdav"])
+        if st["webdav"] is False:
+            skip("WebDAV smoke test", "switched off (status webdav:false); this test does not change the setting")
+            return
+    r = dav("OPTIONS", "/dav/", auth=None)
+    if r.status_code == 404:
+        skip("WebDAV smoke test", "/dav/ answers 404: no WebDAV in this firmware")
+        return
+    check("401 without credentials, WWW-Authenticate: Basic", r.status_code == 401
+          and r.headers.get("WWW-Authenticate", "").lower().startswith("basic"), f"{r.status_code} "
+          f"{r.headers.get('WWW-Authenticate')}")
+    r = dav("OPTIONS", "/dav/")
+    check("OPTIONS with Basic: 200, DAV header with class 1", r.status_code == 200
+          and "1" in r.headers.get("DAV", ""), f"{r.status_code} DAV={r.headers.get('DAV')}")
+    r = dav("PROPFIND", "/dav/", headers={"Depth": "0", "Cookie": f"dd_session={S.main}"}, auth=None)
+    check("session cookie alone is not accepted (401)", r.status_code == 401, r.status_code)
+    r = dav("PROPFIND", "/dav/", headers={"Depth": "0"}, auth=(S.user, "wrong-" + os.urandom(3).hex()))
+    check("wrong password -> 401", r.status_code == 401, r.status_code)
+    T = v5_folder()          # the correct password above (in v5_folder's status call) resets the failure counter
+    if not T:
+        skip("WebDAV file operations", "the file manager does not own the drive (--skip-destructive)")
+        return
+    base = "/dav/" + quote(T) + "/"
+    r = dav("PROPFIND", "/dav/", headers={"Depth": "0"})
+    e = dav_entries(r) if r.status_code == 207 else None
+    check("PROPFIND Depth 0 on /dav/: 207, exactly one response, a collection",
+          e is not None and len(e) == 1 and list(e.values())[0]["dir"], f"{r.status_code} {r.text[:120]!r}")
+    r = dav("PROPFIND", "/dav/", headers={"Depth": "1"})
+    e = dav_entries(r) or {}
+    check("PROPFIND Depth 1 on /dav/ lists the test folder", f"/dav/{T}" in e, sorted(e)[:8])
+    expect_st = lambda name, r, codes: check(name, r.status_code in codes, f"-> {r.status_code}" if r.status_code in codes
+                                             else f"expected {codes}, got {r.status_code} {r.text[:100]!r}")
+    expect_st("PROPFIND Depth infinity -> 403", dav("PROPFIND", base, headers={"Depth": "infinity"}), (403,))
+    F = base + quote("DAV Ordner ä") + "/"
+    expect_st("MKCOL folder with umlaut -> 201", dav("MKCOL", F), (201,))
+    expect_st("MKCOL again -> 405", dav("MKCOL", F), (405,))
+    expect_st("MKCOL with missing parent -> 409", dav("MKCOL", base + "fehlt/neu/"), (409,))
+    ext = allowed_exts()[0]
+    body = sample_for(ext, 16)
+    f1 = F + quote(f"Datei ü{ext}")
+    expect_st("PUT new file -> 201", dav("PUT", f1, body=body), (201,))
+    e = ls(f"{T}/DAV Ordner ä")[1].get(f"Datei ü{ext}", {})
+    check("... visible in /api/files with the right size", e.get("size") == len(body), e)
+    body2 = sample_for(ext, 8)
+    expect_st("PUT onto the existing file -> 204 (or 200)", dav("PUT", f1, body=body2), (200, 204))
+    r = dav("GET", f1)
+    check("GET returns the new content", r.status_code == 200 and sha(r.content) == sha(body2), r.status_code)
+    r = dav("HEAD", f1)
+    check("HEAD: 200 with Content-Length", r.status_code == 200 and r.headers.get("Content-Length") == str(len(body2)),
+          f"{r.status_code} {r.headers.get('Content-Length')}")
+    r = dav("PROPFIND", F, headers={"Depth": "1"})
+    e = dav_entries(r) or {}
+    me = e.get(f"/dav/{T}/DAV Ordner ä/Datei ü{ext}", {})
+    check("PROPFIND Depth 1 on the folder: the file with getcontentlength", r.status_code == 207
+          and me.get("size") == len(body2) and me.get("dir") is False, sorted(e))
+    f2 = F + quote(f"Umbenannt{ext}")
+    expect_st("MOVE (rename) -> 201", dav("MOVE", f1, headers={"Destination": S.base + f2}), (201,))
+    expect_st("... old name: GET 404", dav("GET", f1), (404,))
+    r = dav("GET", f2)
+    check("... new name: content intact", r.status_code == 200 and sha(r.content) == sha(body2), r.status_code)
+    f3 = F + quote(f"Kopie{ext}")
+    expect_st("COPY -> 201", dav("COPY", f2, headers={"Destination": S.base + f3}), (201,))
+    r = dav("GET", f3)
+    check("... copy identical", r.status_code == 200 and sha(r.content) == sha(body2), r.status_code)
+    expect_st("MOVE onto an existing file with Overwrite: F -> 412",
+              dav("MOVE", f3, headers={"Destination": S.base + f2, "Overwrite": "F"}), (412,))
+    r = dav("LOCK", f2, headers={"Timeout": "Second-60"}, body=(
+        '<?xml version="1.0" encoding="utf-8"?><D:lockinfo xmlns:D="DAV:"><D:lockscope><D:exclusive/></D:lockscope>'
+        '<D:locktype><D:write/></D:locktype><D:owner>apitest</D:owner></D:lockinfo>').encode())
+    tok = r.headers.get("Lock-Token", "")
+    check("LOCK: 200 with a Lock-Token", r.status_code == 200 and tok != "", f"{r.status_code} {tok}")
+    if tok:
+        expect_st("UNLOCK -> 204", dav("UNLOCK", f2, headers={"Lock-Token": tok}), (204,))
+    r = dav("PROPPATCH", f2, body=(
+        '<?xml version="1.0" encoding="utf-8"?><D:propertyupdate xmlns:D="DAV:" xmlns:Z="urn:schemas-microsoft-com:">'
+        '<D:set><D:prop><Z:Win32LastModifiedTime>Wed, 11 Nov 2026 10:00:00 GMT</Z:Win32LastModifiedTime></D:prop></D:set>'
+        '</D:propertyupdate>').encode())
+    expect_st("PROPPATCH (Windows time stamps) -> 207", r, (207,))
+    expect_st("DELETE file -> 204", dav("DELETE", f3), (204,))
+    expect_st("... GET 404", dav("GET", f3), (404,))
+    expect_st("DELETE the non-empty folder -> 204", dav("DELETE", F), (204,))
+    expect_st("... PROPFIND 404", dav("PROPFIND", F, headers={"Depth": "0"}), (404,))
+    check("... gone from /api/files too", "DAV Ordner ä" not in ls(T)[1])
 
 
 # ------------------------------------------------------------------ cleanup
@@ -1428,8 +1916,19 @@ def cleanup(a):
             note("main session no longer valid, cannot clean up through the API")
             return
         crypt_cleanup(a)
+        if S.autolock_orig is not None:
+            m, d = S.autolock_orig
+            r = call("POST", "/api/settings/autolock", params={"minutes": str(m), "on_detach": "1" if d else "0"})
+            check("automatic lock settings restored", okr(r), r.text[:100])
+        if S.lang_orig is not None:
+            r = call("POST", "/api/settings/lang", params={"value": S.lang_orig})
+            check("display language restored", okr(r), r.text[:100])
         if S.T_made or S.extra_paths:
             if ensure_app():
+                res = (status().get("upload") or {}).get("resumable") or {}
+                if S.T_made and str(res.get("path", "")).startswith(S.T + "/"):
+                    upload(f"{S.T}/_discard.3mf", make_3mf(1))      # another upload discards the partial one
+                    check("partial upload of the test discarded", not (status().get("upload") or {}).get("resumable"))
                 if S.T_made:
                     r = call("POST", "/api/delete", params={"path": S.T, "recursive": "1"}, timeout=60)
                     check("test folder removed", okr(r) or r.status_code == 404, r.text[:100])
@@ -1479,8 +1978,15 @@ def cleanup(a):
         pass
 
 
+SECTIONS = {"users": sec_users, "devices": sec_devices, "files": sec_files, "wifi": sec_wifi, "status": sec_status,
+            "drive": sec_drive, "scan": sec_scan, "crypt": sec_crypt, "https": sec_https,
+            "crypt_test": sec_crypt_destructive, "time": sec_time, "autolock": sec_autolock, "lang": sec_lang,
+            "resume": sec_resume, "zip": sec_zip, "webdav": sec_webdav}
+V5_SECTIONS = ["time", "autolock", "lang", "resume", "zip", "webdav"]
+
+
 def main():
-    ap = argparse.ArgumentParser(description="End-to-end test of the WiFi DataDrive API v3 + v4")
+    ap = argparse.ArgumentParser(description="End-to-end test of the WiFi DataDrive API v3 + v4 + v5")
     ap.add_argument("host", help="HOST or HOST:PORT")
     ap.add_argument("--user", default="admin")
     ap.add_argument("--password", required=True)
@@ -1495,7 +2001,21 @@ def main():
                     help="DESTRUCTIVE: set up / lock / unlock / change / disable drive encryption (erases the drive)")
     ap.add_argument("--i-know-this-erases-the-drive", action="store_true", help="confirmation for --crypt-test")
     ap.add_argument("--keep-encrypted", action="store_true", help="with --crypt-test: stop before disable")
+    ap.add_argument("--only", help="comma-separated sections to run after the login, e.g. v5 or time,zip "
+                                   f"(names: {', '.join(SECTIONS)}, v5)")
     a = ap.parse_args()
+    only = None
+    if a.only:
+        only = []
+        for name in (x.strip().lower() for x in a.only.split(",") if x.strip()):
+            names = V5_SECTIONS if name == "v5" else [name]
+            for n in names:
+                if n not in SECTIONS:
+                    ap.error(f"--only: unknown section '{n}' (known: {', '.join(SECTIONS)}, v5)")
+                if n not in only:
+                    only.append(n)
+        if "crypt_test" in only and not a.crypt_test:
+            ap.error("--only crypt_test needs --crypt-test")
     if a.crypt_test:
         if not a.i_know_this_erases_the_drive or not a.drive_password:
             ap.error("--crypt-test erases the drive: it needs BOTH --i-know-this-erases-the-drive and --drive-password PW")
@@ -1538,8 +2058,11 @@ def main():
                 break
             if S.damaged:       # nothing but the crypt endpoints works on a damaged drive
                 fns = [sec_auth, sec_crypt_damaged] + ([sec_crypt_destructive] if a.crypt_test else [])
+            elif only:
+                fns = [sec_auth] + [SECTIONS[n] for n in only]
             else:
-                fns = [sec_auth, sec_users, sec_devices, sec_files, sec_wifi, sec_status, sec_drive, sec_scan, sec_crypt, sec_https]
+                fns = [sec_auth, sec_users, sec_devices, sec_files, sec_wifi, sec_status, sec_drive, sec_scan, sec_crypt,
+                       sec_https, sec_time, sec_autolock, sec_lang, sec_resume, sec_zip, sec_webdav]
                 if a.crypt_test:
                     fns.append(sec_crypt_destructive)
     except Abort as e:

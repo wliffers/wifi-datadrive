@@ -1,8 +1,10 @@
 idf_component_register(SRCS "app_main.c" "drive.c" "usb_dev.c" "ui.c" "anim.c"
                                 "auth.c" "ota.c" "web_server.c" "web_static.c" "web_files.c" "web_system.c" "web_wifi.c" "web_crypt.c"
                                 "web_auth.c" "web_ota.c" "tls.c"
+                                "web_zip.c"
+                                "web_dav.c"
                        INCLUDE_DIRS "."
-                       PRIV_REQUIRES board display pd_wifi applog pd_crypt
+                       PRIV_REQUIRES board display pd_wifi applog pd_crypt pd_time
                                      esp_tinyusb fatfs wear_levelling vfs esp_partition sdmmc esp_driver_sdmmc
                                      nvs_flash esp_http_server esp_https_server esp_timer esp_system app_update mbedtls
                        EMBED_FILES "web/manifest.webmanifest" "web/icons/icon-180.png"

@@ -55,6 +55,7 @@
 #include "freertos/task.h"
 #include "nvs.h"
 #include "pd_crypt.h"
+#include "pd_time.h"
 #include "sdkconfig.h"
 #include "tinyusb.h"
 #include "tinyusb_msc.h"
@@ -139,6 +140,18 @@ static char s_up_path[DRIVE_PATH_MAX + 1];  // target path relative to the root
 static uint8_t s_up_head[4];
 static uint8_t s_up_tail[TAIL_SIZE];
 
+// Interrupted upload kept for resuming (RAM only, at most one; guarded by s_lock). Its data is
+// TMP_PATH, closed (= flushed) when the connection broke. Discarded by a fresh upload, by handing
+// the drive to the USB host, by releasing the medium (lock, encrypted format/setup/disable) and by
+// a restart (TMP_PATH is removed whenever the app mounts the file system, see cleanup_temp_file()).
+static struct {
+    bool valid;
+    uint32_t size;                          // announced total size
+    uint32_t offset;                        // bytes held in TMP_PATH
+    uint32_t since_ms;                      // now_ms() when the connection broke
+    char path[DRIVE_PATH_MAX + 1];          // target path relative to the root
+} s_resume;
+
 // Host I/O gate - read from the TinyUSB task, written under s_lock.
 static volatile bool s_host_io_enabled;
 static volatile bool s_host_write_enabled;
@@ -189,7 +202,12 @@ static drive_crypt_state_t crypt_state_public(void)
     }
 }
 
-static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
+// Auto-lock (drive_autolock_*): every lock() is a local file operation (list, upload, download,
+// mkdir, ...) and counts as activity. drive_get_status() does not use lock(), so status polls
+// do not keep the drive unlocked.
+static volatile uint32_t s_app_activity_ms;
+
+static void lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); s_app_activity_ms = now_ms(); }
 static void unlock(void) { xSemaphoreGive(s_lock); }
 
 /** Like lock(), but gives up (false) as soon as a long folder operation (copy, recursive
@@ -371,6 +389,11 @@ static void refresh_fs_info(void)
 static void cleanup_temp_file(void)
 {
     struct stat st;
+    if (s_resume.valid) {
+        ESP_LOGW(TAG, "discarding interrupted upload '%s' (%lu of %lu bytes)", s_resume.path,
+                 (unsigned long)s_resume.offset, (unsigned long)s_resume.size);
+        s_resume.valid = false;
+    }
     if (stat(TMP_PATH, &st) == 0) {
         ESP_LOGW(TAG, "removing stale upload temp file (%ld bytes)", (long)st.st_size);
         unlink(TMP_PATH);
@@ -379,6 +402,24 @@ static void cleanup_temp_file(void)
         // Only left behind by a power loss in the middle of an overwrite.
         ESP_LOGW(TAG, "removing stale previous-version file (%ld bytes)", (long)st.st_size);
         unlink(OLD_PATH);
+    }
+}
+
+/**
+ * Drop a kept interrupted upload (caller holds s_lock) before the app loses the file system:
+ * the USB host must not find a half file on the volume (TMP_PATH has no hidden attribute and is
+ * visible on Windows), and it could change or delete it, so the record could not be trusted later.
+ */
+static void resume_discard_locked(const char *why)
+{
+    if (!s_resume.valid) {
+        return;
+    }
+    ESP_LOGW(TAG, "%s: discarding interrupted upload '%s' (%lu of %lu bytes)", why, s_resume.path,
+             (unsigned long)s_resume.offset, (unsigned long)s_resume.size);
+    s_resume.valid = false;
+    if (s_st.owner == DRIVE_OWNER_APP && s_st.fs_ok && crypt_blocked() == DRIVE_OK) {
+        unlink(TMP_PATH);
     }
 }
 
@@ -443,6 +484,7 @@ static drive_result_t do_mount_app(void)
 /** Switch to USB. Caller holds s_lock and has checked the preconditions. */
 static void do_mount_usb(bool replug)
 {
+    resume_discard_locked("drive handed to the USB host");   // while the app still has the FS
     tinyusb_msc_set_storage_mount_point(s_storage, TINYUSB_MSC_STORAGE_MOUNT_USB);
     s_st.owner = DRIVE_OWNER_USB;
     s_host_ejected = false;
@@ -566,6 +608,7 @@ static drive_result_t release_medium(void)
         }
         return DRIVE_ERR_IO;
     }
+    resume_discard_locked("drive released");   // lock, encrypted format, setup, disable
     tinyusb_msc_set_storage_mount_point(s_storage, TINYUSB_MSC_STORAGE_MOUNT_USB);   // unmount (no-op if not mounted)
     s_st.owner = DRIVE_OWNER_APP;
     s_st.fs_ok = false;
@@ -636,8 +679,13 @@ static void on_usb_event(bool attached)
     xQueueSend(s_events, &ev, 0);
 }
 
+static void autolock_load(void);
+static void autolock_poll(void);
+#define AUTOLOCK_POLL_MS   5000             // drive_task wakes up at least this often for the auto-lock
+
 static void drive_task(void *arg)
 {
+    autolock_load();
     // Boot policy: if a host enumerates within a few seconds, provide the drive to it.
     for (int i = 0; i < CONFIG_PD_BOOT_WAIT_HOST_MS / 100 && !usb_dev_connected(); i++) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -654,7 +702,9 @@ static void drive_task(void *arg)
 
     drive_event_t ev;
     while (true) {
-        if (xQueueReceive(s_events, &ev, portMAX_DELAY) != pdTRUE) {
+        const bool got = xQueueReceive(s_events, &ev, pdMS_TO_TICKS(AUTOLOCK_POLL_MS)) == pdTRUE;
+        autolock_poll();                         // rate-limited inside; s_lock not held here
+        if (!got) {
             continue;
         }
         lock();
@@ -1146,21 +1196,7 @@ static drive_result_t fr_result(FRESULT fr)
     }
 }
 
-/** FAT date/time -> seconds since 1970 (local time), exactly like the VFS stat(); 0 = unknown. */
-static uint32_t fat_mtime(WORD fdate, WORD ftime)
-{
-    struct tm tm = {
-        .tm_mday = fdate & 0x1F,
-        .tm_mon = ((fdate >> 5) & 0x0F) - 1,
-        .tm_year = (fdate >> 9) + 80,
-        .tm_hour = ftime >> 11,
-        .tm_min = (ftime >> 5) & 0x3F,
-        .tm_sec = (ftime & 0x1F) * 2,
-        .tm_isdst = -1,
-    };
-    const time_t t = mktime(&tm);
-    return t >= MTIME_MIN ? (uint32_t)t : 0;
-}
+// FAT date/time -> unix seconds: pd_time_from_fat() (pd_time.h); the listing uses it.
 
 /** Name the listing hides (leading dot, "System Volume Information"). */
 static bool name_hidden(const char *n)
@@ -1538,9 +1574,8 @@ static drive_result_t check_src_dst(const char *from, const char *to)
 
 // ---- file operations
 
-drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list_info_t *info)
+drive_result_t drive_list_each(const char *dir, drive_list_cb_t cb, void *ctx)
 {
-    memset(info, 0, sizeof(*info));
     drive_result_t r = drive_check_path(dir, false);
     if (r != DRIVE_OK) {
         return r;
@@ -1565,30 +1600,23 @@ drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list
         r = fr_result(f_opendir(&c->dir, c->path));   // a file instead of a folder: NOT_FOUND
     }
     if (r == DRIVE_OK) {
+        // cb may block on the network while we hold the lock: like a folder copy, give the
+        // display/button a status snapshot and BUSY instead of freezing them.
+        long_op_begin();
         FRESULT fr;
         while ((fr = f_readdir(&c->dir, &c->fno)) == FR_OK && c->fno.fname[0] != '\0') {
-            const char *name = c->fno.fname;
-            if (name[0] == '.' || strcasecmp(name, "System Volume Information") == 0) {
+            if (name_hidden(c->fno.fname)) {
                 continue;
-            }
-            const size_t name_len = strlen(name) + 1;
-            if (info->used + DRIVE_LIST_HDR + name_len > buf_len) {
-                info->truncated = true;
-                continue;   // a shorter name may still fit
             }
             const bool is_dir = (c->fno.fattrib & AM_DIR) != 0;
             const uint32_t size = is_dir ? 0 : (uint32_t)c->fno.fsize;
-            const uint32_t mtime = is_dir ? 0 : fat_mtime(c->fno.fdate, c->fno.ftime);
-            const uint8_t type = is_dir ? DRIVE_ENTRY_DIR : DRIVE_ENTRY_FILE;
-            char *e = buf + info->used;
-            memcpy(e, &size, sizeof(size));
-            memcpy(e + 4, &mtime, sizeof(mtime));
-            e[8] = (char)type;
-            memcpy(e + DRIVE_LIST_HDR, name, name_len);
-            info->used += DRIVE_LIST_HDR + name_len;
-            info->count++;
+            const uint32_t mtime = is_dir ? 0 : pd_time_from_fat(c->fno.fdate, c->fno.ftime);
+            if (!cb(ctx, c->fno.fname, is_dir, size, mtime)) {
+                break;   // fr stays FR_OK
+            }
         }
         f_closedir(&c->dir);
+        long_op_end();
         if (fr != FR_OK) {
             r = DRIVE_ERR_IO;
         }
@@ -1596,6 +1624,38 @@ drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list
     unlock();
     free(c);
     return r;
+}
+
+typedef struct {
+    char *buf;
+    size_t buf_len;
+    drive_list_info_t *info;
+} list_pack_t;
+
+static bool list_pack(void *ctx, const char *name, bool is_dir, uint32_t size, uint32_t mtime)
+{
+    list_pack_t *p = ctx;
+    drive_list_info_t *info = p->info;
+    const size_t name_len = strlen(name) + 1;
+    if (info->used + DRIVE_LIST_HDR + name_len > p->buf_len) {
+        info->truncated = true;
+        return true;   // a shorter name may still fit
+    }
+    char *e = p->buf + info->used;
+    memcpy(e, &size, sizeof(size));
+    memcpy(e + 4, &mtime, sizeof(mtime));
+    e[8] = (char)(is_dir ? DRIVE_ENTRY_DIR : DRIVE_ENTRY_FILE);
+    memcpy(e + DRIVE_LIST_HDR, name, name_len);
+    info->used += DRIVE_LIST_HDR + name_len;
+    info->count++;
+    return true;
+}
+
+drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list_info_t *info)
+{
+    memset(info, 0, sizeof(*info));
+    list_pack_t p = {.buf = buf, .buf_len = buf_len, .info = info};
+    return drive_list_each(dir, list_pack, &p);
 }
 
 drive_result_t drive_mkdir(const char *path)
@@ -1861,6 +1921,234 @@ void drive_download_close(int fd)
     unlock();
 }
 
+// ---- ZIP download walk (web_zip.c)
+//
+// FatFs directly (paths beyond the VFS limit, real names of folders). All state is on the heap,
+// s_lock is taken per call. A walk counts as an open download (like drive_download_open()), so
+// owner changes, format, lock and folder operations are refused with BUSY until it is closed:
+// together with the single HTTP server task this keeps the tree unchanged between the passes
+// of web_zip.c.
+
+#define ZIP_DEPTH_MAX  TREE_DEPTH_MAX     // open folder levels below the zipped folder
+#define ZIP_PATH_SIZE  1536               // FatFs path of an entry ("N:/" + path from the root)
+
+struct drive_zip {
+    char path[ZIP_PATH_SIZE];             // FatFs path of the current entry
+    size_t base_len;                      // length of the zipped folder's FatFs path
+    size_t name_off;                      // archive names start here in path
+    size_t lens[ZIP_DEPTH_MAX];           // path length of the folder open at each level
+    FF_DIR dirs[ZIP_DEPTH_MAX];
+    int depth;                            // open levels
+    bool root;                            // zipping the root folder (no entry for it)
+    bool base_pending;                    // the zipped folder itself is the next entry
+    bool descend;                         // open path as a new level before reading on
+    bool is_file;                         // the current entry is a file
+    bool file_open;
+    WORD base_date, base_time;
+    FILINFO fno;
+    FIL *fil;                             // separate block (embeds a sector buffer)
+};
+_Static_assert(sizeof(struct drive_zip) <= 4096, "ZIP walk context must stay a small heap block");
+
+static void zip_close_handles(drive_zip_t *z)
+{
+    if (z->file_open) {
+        f_close(z->fil);
+        z->file_open = false;
+    }
+    while (z->depth > 0) {
+        f_closedir(&z->dirs[--z->depth]);
+    }
+}
+
+drive_result_t drive_zip_open(const char *dir, drive_zip_t **out, char *base_out, size_t base_len)
+{
+    *out = NULL;
+    if (base_len > 0) {
+        base_out[0] = '\0';
+    }
+    if (drive_check_path(dir, false) != DRIVE_OK) {
+        return DRIVE_ERR_BAD_NAME;
+    }
+    drive_zip_t *z = calloc(1, sizeof(*z));
+    FIL *fil = malloc(sizeof(FIL));
+    if (!z || !fil) {
+        ESP_LOGE(TAG, "no memory for a ZIP walk (%u + %u bytes)", (unsigned)sizeof(*z), (unsigned)sizeof(FIL));
+        free(z);
+        free(fil);
+        return DRIVE_ERR_IO;
+    }
+    z->fil = fil;
+    z->root = dir[0] == '\0';
+    lock();
+    drive_result_t r = require_app_fs();
+    if (r == DRIVE_OK && !fat_path(z->path, sizeof(z->path), dir)) {
+        r = DRIVE_ERR_IO;
+    }
+    if (r == DRIVE_OK) {
+        r = check_visible(z->path, &z->fno);          // hidden folders (also via alias): NOT_FOUND
+    }
+    if (r == DRIVE_OK && z->root) {
+        z->base_len = z->name_off = strlen(z->path);  // "N:/"
+    } else if (r == DRIVE_OK && !(z->fno.fattrib & AM_DIR)) {
+        r = DRIVE_ERR_NOT_FOUND;                      // a file is no folder (as drive_list())
+    } else if (r == DRIVE_OK) {
+        // The archive uses the real name (spelling on disk, long name instead of an 8.3 alias).
+        char *slash = strrchr(z->path, '/');          // always present ("N:/...")
+        const size_t pre = (size_t)(slash + 1 - z->path), n = strlen(z->fno.fname);
+        if (pre + n + 1 > sizeof(z->path)) {
+            r = DRIVE_ERR_BAD_NAME;
+        } else {
+            memcpy(slash + 1, z->fno.fname, n + 1);
+            z->name_off = pre;
+            z->base_len = pre + n;
+            z->base_date = z->fno.fdate;
+            z->base_time = z->fno.ftime;
+            if (base_len > 0) {
+                strlcpy(base_out, z->fno.fname, base_len);
+            }
+        }
+    }
+    if (r == DRIVE_OK) {
+        s_open_downloads++;
+    }
+    unlock();
+    if (r != DRIVE_OK) {
+        free(fil);
+        free(z);
+        return r;
+    }
+    *out = z;
+    drive_zip_rewind(z);
+    return DRIVE_OK;
+}
+
+void drive_zip_rewind(drive_zip_t *z)
+{
+    lock();
+    zip_close_handles(z);
+    unlock();
+    z->path[z->base_len] = '\0';
+    z->base_pending = !z->root;
+    z->descend = z->root;
+    z->is_file = false;
+}
+
+drive_result_t drive_zip_next(drive_zip_t *z, drive_zip_entry_t *e, bool *end)
+{
+    *end = false;
+    lock();
+    drive_result_t r = require_app_fs();
+    if (z->file_open) {
+        f_close(z->fil);
+        z->file_open = false;
+    }
+    z->is_file = false;
+    if (r == DRIVE_OK && z->base_pending) {
+        z->base_pending = false;
+        z->descend = true;
+        e->name = z->path + z->name_off;
+        e->is_dir = true;
+        e->size = 0;
+        e->dos_date = z->base_date;
+        e->dos_time = z->base_time;
+        unlock();
+        return DRIVE_OK;
+    }
+    while (r == DRIVE_OK) {
+        if (z->descend) {
+            z->descend = false;
+            if (z->depth >= ZIP_DEPTH_MAX) {
+                ESP_LOGW(TAG, "zip: folders nested too deep");
+                r = DRIVE_ERR_BAD_NAME;
+                break;
+            }
+            if (f_opendir(&z->dirs[z->depth], z->path) != FR_OK) {
+                r = DRIVE_ERR_IO;
+                break;
+            }
+            z->lens[z->depth++] = strlen(z->path);
+        }
+        if (z->depth == 0) {
+            *end = true;
+            break;
+        }
+        const size_t len = z->lens[z->depth - 1];
+        z->path[len] = '\0';
+        if (f_readdir(&z->dirs[z->depth - 1], &z->fno) != FR_OK) {
+            r = DRIVE_ERR_IO;
+            break;
+        }
+        if (z->fno.fname[0] == '\0') {                // end of this folder
+            f_closedir(&z->dirs[--z->depth]);
+            continue;
+        }
+        if (name_hidden(z->fno.fname)) {              // as the listing (also our temp files)
+            continue;
+        }
+        const size_t sep = z->path[len - 1] != '/', n = strlen(z->fno.fname);
+        if (len + sep + n + 1 > sizeof(z->path)) {
+            ESP_LOGW(TAG, "zip: path too long below '%s'", z->path);
+            r = DRIVE_ERR_BAD_NAME;
+            break;
+        }
+        if (sep) {
+            z->path[len] = '/';
+        }
+        memcpy(z->path + len + sep, z->fno.fname, n + 1);
+        const bool is_dir = (z->fno.fattrib & AM_DIR) != 0;
+        z->descend = is_dir;
+        z->is_file = !is_dir;
+        e->name = z->path + z->name_off;
+        e->is_dir = is_dir;
+        e->size = is_dir ? 0 : (uint32_t)z->fno.fsize;
+        e->dos_date = z->fno.fdate;
+        e->dos_time = z->fno.ftime;
+        break;
+    }
+    unlock();
+    return r;
+}
+
+drive_result_t drive_zip_read(drive_zip_t *z, void *buf, size_t len, size_t *got)
+{
+    *got = 0;
+    lock();
+    drive_result_t r = require_app_fs();
+    if (r == DRIVE_OK && !z->file_open) {
+        if (!z->is_file || f_open(z->fil, z->path, FA_READ) != FR_OK) {
+            r = DRIVE_ERR_IO;
+        } else {
+            z->file_open = true;
+        }
+    }
+    if (r == DRIVE_OK) {
+        UINT br = 0;
+        if (f_read(z->fil, buf, (UINT)len, &br) != FR_OK) {
+            r = DRIVE_ERR_IO;
+        } else {
+            *got = br;
+        }
+    }
+    unlock();
+    return r;
+}
+
+void drive_zip_close(drive_zip_t *z)
+{
+    if (!z) {
+        return;
+    }
+    lock();
+    zip_close_handles(z);
+    if (s_open_downloads > 0) {
+        s_open_downloads--;
+    }
+    unlock();
+    free(z->fil);
+    free(z);
+}
+
 // ---- upload
 
 drive_result_t drive_upload_validate(const char *path, uint64_t size)
@@ -1878,20 +2166,13 @@ drive_result_t drive_upload_validate(const char *path, uint64_t size)
     return size == 0 ? DRIVE_ERR_INVALID_FILE : DRIVE_OK;
 }
 
-drive_result_t drive_upload_begin(const char *path, uint32_t size, bool overwrite)
+/**
+ * Target checks shared by check, begin and resume (caller holds s_lock, path validated): the
+ * folder exists and is visible (NOT_FOUND), the target is no folder (IS_DIR), EXISTS unless
+ * overwrite.
+ */
+static drive_result_t upload_target_locked(const char *path, bool overwrite)
 {
-    drive_result_t r = drive_upload_validate(path, size);
-    if (r != DRIVE_OK) {
-        return r;
-    }
-    lock();
-    if ((r = require_app_fs()) != DRIVE_OK) {
-        goto out;
-    }
-    if (s_st.upload_active) {
-        r = DRIVE_ERR_BUSY;
-        goto out;
-    }
     // New paths are at most DRIVE_PATH_MAX (< VFS_REL_MAX) bytes: safe for the VFS.
     char full[sizeof(DRIVE_BASE_PATH) + 1 + DRIVE_PATH_MAX + 1];
     make_path(full, sizeof(full), path);
@@ -1907,8 +2188,7 @@ drive_result_t drive_upload_begin(const char *path, uint32_t size, bool overwrit
             } *v = malloc(sizeof(*v));
             if (!v) {
                 *slash = '/';
-                r = DRIVE_ERR_IO;
-                goto out;
+                return DRIVE_ERR_IO;
             }
             folder = fat_path(v->path, sizeof(v->path), full + sizeof(DRIVE_BASE_PATH)) &&
                      check_visible(v->path, &v->fno) == DRIVE_OK;
@@ -1916,44 +2196,221 @@ drive_result_t drive_upload_begin(const char *path, uint32_t size, bool overwrit
         }
         *slash = '/';
         if (!folder) {
-            r = DRIVE_ERR_NOT_FOUND;
-            goto out;
+            return DRIVE_ERR_NOT_FOUND;
         }
     }
     if (stat(full, &st) == 0) {
         if (S_ISDIR(st.st_mode)) {
-            r = DRIVE_ERR_IS_DIR;
-            goto out;
+            return DRIVE_ERR_IS_DIR;
         }
         if (!overwrite) {
-            r = DRIVE_ERR_EXISTS;
-            goto out;
+            return DRIVE_ERR_EXISTS;
         }
+    }
+    return DRIVE_OK;
+}
+
+/** Start the session state after TMP_PATH was opened as s_up_fd (caller holds s_lock). */
+static void upload_start_locked(const char *path, uint32_t size, bool overwrite, uint32_t received)
+{
+    s_up_overwrite = overwrite;
+    strlcpy(s_up_path, path, sizeof(s_up_path));
+    s_st.upload_active = true;
+    strlcpy(s_st.upload_name, last_segment(path), sizeof(s_st.upload_name));
+    s_st.upload_received = received;
+    s_st.upload_total = size;
+}
+
+/** Fresh upload (caller holds s_lock, checked owner and BUSY): drops any kept partial upload. */
+static drive_result_t upload_begin_locked(const char *path, uint32_t size, bool overwrite)
+{
+    drive_result_t r = upload_target_locked(path, overwrite);
+    if (r != DRIVE_OK) {
+        return r;
     }
     cleanup_temp_file();
     refresh_fs_info();
     // Old file is only removed after success, so the new one needs its full size.
     if ((uint64_t)size + FREE_RESERVE_BYTES > s_st.free_bytes) {
-        r = DRIVE_ERR_NO_SPACE;
-        goto out;
+        return DRIVE_ERR_NO_SPACE;
     }
     s_up_fd = open(TMP_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (s_up_fd < 0) {
+        return DRIVE_ERR_IO;
+    }
+    memset(s_up_head, 0, sizeof(s_up_head));
+    memset(s_up_tail, 0, sizeof(s_up_tail));
+    upload_start_locked(path, size, overwrite, 0);
+    ESP_LOGI(TAG, "upload start '%s' (%lu bytes)", path, (unsigned long)size);
+    return DRIVE_OK;
+}
+
+/**
+ * Bytes held for exactly this path and size (caller holds s_lock), else 0. A record whose temp
+ * file is missing or has another size is dropped.
+ */
+static uint32_t resume_offset_locked(const char *path, uint32_t size)
+{
+    if (!s_resume.valid || require_app_fs() != DRIVE_OK) {
+        return 0;
+    }
+    struct stat st;
+    // st_size is a 32-bit signed off_t: the cast gives the real size of files below 4 GiB back.
+    if (stat(TMP_PATH, &st) != 0 || (uint32_t)st.st_size != s_resume.offset) {
+        resume_discard_locked("temp file does not match the record");
+        return 0;
+    }
+    return (s_resume.size == size && strcmp(s_resume.path, path) == 0) ? s_resume.offset : 0;
+}
+
+/**
+ * Reload the content-check state (first 4 bytes, last TAIL_SIZE bytes) from the first `held`
+ * bytes of TMP_PATH. FatFs directly: the VFS lseek() takes a 32-bit off_t (files up to 4 GiB).
+ */
+static bool resume_load_check_state(uint32_t held)
+{
+    struct {
+        FIL fil;
+        char path[FAT_REL_OFF + sizeof(TMP_PATH)];
+    } *v = malloc(sizeof(*v));
+    if (!v) {
+        return false;
+    }
+    bool ok = fat_path(v->path, sizeof(v->path), TMP_PATH + sizeof(DRIVE_BASE_PATH)) &&
+              f_open(&v->fil, v->path, FA_READ) == FR_OK;
+    if (ok) {
+        memset(s_up_head, 0, sizeof(s_up_head));
+        memset(s_up_tail, 0, sizeof(s_up_tail));
+        const UINT head_n = held < sizeof(s_up_head) ? held : sizeof(s_up_head);
+        const UINT tail_n = held < TAIL_SIZE ? held : TAIL_SIZE;
+        UINT br = 0;
+        ok = f_size(&v->fil) == held && f_read(&v->fil, s_up_head, head_n, &br) == FR_OK && br == head_n &&
+             f_lseek(&v->fil, held - tail_n) == FR_OK &&
+             f_read(&v->fil, s_up_tail + TAIL_SIZE - tail_n, tail_n, &br) == FR_OK && br == tail_n;
+        f_close(&v->fil);
+    }
+    free(v);
+    return ok;
+}
+
+drive_result_t drive_upload_begin(const char *path, uint32_t size, bool overwrite)
+{
+    drive_result_t r = drive_upload_validate(path, size);
+    if (r != DRIVE_OK) {
+        return r;
+    }
+    lock();
+    if ((r = require_app_fs()) == DRIVE_OK) {
+        r = s_st.upload_active ? DRIVE_ERR_BUSY : upload_begin_locked(path, size, overwrite);
+    }
+    unlock();
+    return r;
+}
+
+drive_result_t drive_upload_check(const char *path, uint64_t size, bool overwrite)
+{
+    drive_result_t r = drive_upload_validate(path, size);
+    if (r != DRIVE_OK) {
+        return r;
+    }
+    lock();
+    if ((r = require_app_fs()) == DRIVE_OK && s_st.upload_active) {
+        r = DRIVE_ERR_BUSY;
+    }
+    if (r == DRIVE_OK) {
+        r = upload_target_locked(path, overwrite);
+    }
+    if (r == DRIVE_OK) {
+        refresh_fs_info();
+        // A kept partial upload is either continued (needs size - offset) or dropped by the
+        // fresh upload (frees offset): both come down to size <= free + offset.
+        const uint64_t kept = s_resume.valid ? s_resume.offset : 0;
+        if (size + FREE_RESERVE_BYTES > s_st.free_bytes + kept) {
+            r = DRIVE_ERR_NO_SPACE;
+        }
+    }
+    unlock();
+    return r;
+}
+
+drive_result_t drive_upload_resume(const char *path, uint32_t size, bool overwrite, uint32_t offset,
+                                   uint32_t *held, bool *mismatch)
+{
+    *held = 0;
+    *mismatch = false;
+    drive_result_t r = drive_upload_validate(path, size);
+    if (r != DRIVE_OK) {
+        return r;
+    }
+    lock();
+    if ((r = require_app_fs()) != DRIVE_OK) {
+        goto out;
+    }
+    if (s_st.upload_active) {
+        r = DRIVE_ERR_BUSY;
+        goto out;
+    }
+    *held = resume_offset_locked(path, size);
+    if (offset != *held) {
+        *mismatch = true;
+        r = DRIVE_ERR_INCOMPLETE;
+        goto out;
+    }
+    if (offset == 0) {
+        r = upload_begin_locked(path, size, overwrite);   // nothing held: a fresh upload
+        goto out;
+    }
+    if ((r = upload_target_locked(path, overwrite)) != DRIVE_OK) {
+        goto out;                                          // the partial upload stays
+    }
+    refresh_fs_info();
+    if ((uint64_t)(size - offset) + FREE_RESERVE_BYTES > s_st.free_bytes) {
+        r = DRIVE_ERR_NO_SPACE;
+        goto out;
+    }
+    if (!resume_load_check_state(offset) ||
+        (s_up_fd = open(TMP_PATH, O_WRONLY | O_APPEND)) < 0) {   // O_APPEND: VFS seeks to the end
+        resume_discard_locked("temp file not readable");
         r = DRIVE_ERR_IO;
         goto out;
     }
-    s_up_overwrite = overwrite;
-    memset(s_up_head, 0, sizeof(s_up_head));
-    memset(s_up_tail, 0, sizeof(s_up_tail));
-    strlcpy(s_up_path, path, sizeof(s_up_path));
-    s_st.upload_active = true;
-    strlcpy(s_st.upload_name, last_segment(path), sizeof(s_st.upload_name));
-    s_st.upload_received = 0;
-    s_st.upload_total = size;
-    ESP_LOGI(TAG, "upload start '%s' (%lu bytes)", path, (unsigned long)size);
+    s_resume.valid = false;                                // the active session owns TMP_PATH now
+    upload_start_locked(path, size, overwrite, offset);
+    ESP_LOGI(TAG, "upload resumed '%s' at %lu of %lu bytes (interrupted %lu s ago)", path,
+             (unsigned long)offset, (unsigned long)size, (unsigned long)((now_ms() - s_resume.since_ms) / 1000));
 out:
     unlock();
     return r;
+}
+
+drive_result_t drive_upload_resume_query(const char *path, uint64_t size, uint32_t *offset)
+{
+    *offset = 0;
+    if (drive_check_path(path, true) != DRIVE_OK) {
+        return DRIVE_ERR_BAD_NAME;
+    }
+    if (size == 0 || size > UINT32_MAX) {
+        return DRIVE_OK;                                   // nothing can be held for it
+    }
+    lock();
+    *offset = resume_offset_locked(path, (uint32_t)size);
+    unlock();
+    return DRIVE_OK;
+}
+
+bool drive_upload_resumable(char *path, size_t path_len, uint32_t *size, uint32_t *offset)
+{
+    if (!lock_unless_long_op()) {
+        return false;
+    }
+    const bool valid = s_resume.valid && !s_st.upload_active;
+    if (valid) {
+        strlcpy(path, s_resume.path, path_len);
+        *size = s_resume.size;
+        *offset = s_resume.offset;
+    }
+    unlock();
+    return valid;
 }
 
 drive_result_t drive_upload_write(const void *data, size_t len)
@@ -2091,6 +2548,32 @@ void drive_upload_abort(void)
     unlock();
 }
 
+void drive_upload_suspend(void)
+{
+    lock();
+    if (s_st.upload_active) {
+        // close() flushes FatFs' buffers and the directory entry: every received byte is on the medium.
+        const bool closed = s_up_fd >= 0 && close(s_up_fd) == 0;
+        s_up_fd = -1;
+        if (closed && s_st.upload_received > 0) {
+            s_resume.valid = true;
+            s_resume.size = s_st.upload_total;
+            s_resume.offset = s_st.upload_received;
+            s_resume.since_ms = now_ms();
+            strlcpy(s_resume.path, s_up_path, sizeof(s_resume.path));
+            s_st.upload_active = false;
+            refresh_fs_info();
+            ESP_LOGW(TAG, "upload interrupted '%s' after %lu of %lu bytes - kept for resuming", s_up_path,
+                     (unsigned long)s_resume.offset, (unsigned long)s_resume.size);
+        } else {
+            ESP_LOGW(TAG, "upload aborted '%s' after %lu bytes", s_st.upload_name,
+                     (unsigned long)s_st.upload_received);
+            upload_reset_locked();
+        }
+    }
+    unlock();
+}
+
 drive_result_t drive_prepare_restart(bool force)
 {
     if (force) {
@@ -2114,6 +2597,7 @@ drive_result_t drive_prepare_restart(bool force)
         ESP_LOGW(TAG, "restart: dropping upload '%s'", s_st.upload_name);
         upload_reset_locked();
     }
+    resume_discard_locked("restart");   // RAM record is lost anyway; boot would remove the file
     unlock();
     ESP_LOGI(TAG, "ready for restart");
     return DRIVE_OK;
@@ -2284,6 +2768,139 @@ drive_result_t drive_crypt_lock(bool force)
 out:
     unlock();
     return r;
+}
+
+// ---- auto-lock ------------------------------------------------------------------------------
+// Locks an unlocked encrypted drive (1) after `minutes` without activity and/or (2) with
+// `on_detach` when the USB host goes away while the stick stays powered: host no longer
+// configured (detached / port reset) for AUTOLOCK_DETACH_MS, or suspended for AUTOLOCK_SUSPEND_MS
+// (PC asleep, printer in standby). Pulling the stick out cuts its power, and an encrypted drive is
+// locked after every power-up anyway - on_detach covers hosts that keep VBUS on.
+// Activity = host READ/WRITE, any local file operation (lock(), see s_app_activity_ms), a running
+// upload/download/long operation, the unlock itself and a change of these settings.
+// The poll runs in drive_task (AUTOLOCK_POLL_MS). It calls drive_crypt_lock(AUTOLOCK_FORCE): its
+// safety rules always hold - DRIVE_ERR_BUSY (upload/download/long operation) and
+// DRIVE_ERR_HOST_WRITING (host wrote within CONFIG_PD_HOST_WRITE_GUARD_MS) are never overridden,
+// the next poll simply tries again. force only takes the drive from a host that holds it without
+// I/O for the whole period (otherwise a printer that never ejects would keep it unlocked forever).
+
+#define AUTOLOCK_FORCE         true
+#define AUTOLOCK_DETACH_MS     10000        // host not configured this long (> our own re-plug)
+#define AUTOLOCK_SUSPEND_MS    60000        // host suspended this long
+
+static volatile uint16_t s_al_minutes;      // 0 = off
+static volatile bool s_al_on_detach;
+static volatile uint32_t s_al_touch_ms;     // activity noted by the poll / settings
+static uint32_t s_al_last_poll_ms;
+static bool s_al_unlocked;                  // state at the previous poll
+static bool s_al_host_seen;                 // host was present (configured, awake) since the unlock
+static uint32_t s_al_host_ms;               // last poll that saw the host present
+static drive_result_t s_al_last_result;     // logged only when it changes
+
+static void autolock_load(void)
+{
+    uint16_t m = 0;
+    uint8_t d = 0;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u16(h, "al_min", &m);
+        nvs_get_u8(h, "al_detach", &d);
+        nvs_close(h);
+    }
+    s_al_minutes = m <= DRIVE_AUTOLOCK_MINUTES_MAX ? m : 0;
+    s_al_on_detach = d != 0;
+}
+
+static uint32_t min_u32(uint32_t a, uint32_t b)
+{
+    return a < b ? a : b;
+}
+
+static void autolock_poll(void)
+{
+    const uint32_t now = now_ms();
+    if ((uint32_t)(now - s_al_last_poll_ms) < AUTOLOCK_POLL_MS - 500) {
+        return;
+    }
+    s_al_last_poll_ms = now;
+    if (crypt_state_public() != DRIVE_CRYPT_UNLOCKED) {
+        s_al_unlocked = false;
+        return;
+    }
+    if (!s_al_unlocked) {                   // just unlocked (or set up): all periods start now
+        s_al_unlocked = true;
+        s_al_touch_ms = now;
+        s_al_host_seen = false;
+        s_al_last_result = DRIVE_OK;
+        return;
+    }
+    const bool connected = usb_dev_connected(), suspended = usb_dev_suspended();
+    if (connected && !suspended) {
+        s_al_host_seen = true;
+        s_al_host_ms = now;
+    }
+    // Unlocked reads of these flags are fine here: drive_crypt_lock() checks them again under s_lock.
+    if (s_long_op || s_st.upload_active || s_open_downloads > 0) {
+        s_al_touch_ms = now;                // never now, and the idle period starts afterwards
+        return;
+    }
+    const char *why = NULL;
+    if (s_al_on_detach && s_al_host_seen && (int64_t)(esp_timer_get_time() / 1000) >= s_replug_until_ms &&
+        (uint32_t)(now - s_al_host_ms) >= (connected ? AUTOLOCK_SUSPEND_MS : AUTOLOCK_DETACH_MS)) {
+        why = connected ? "host suspended" : "host gone";
+    }
+    if (!why && s_al_minutes) {
+        uint32_t idle = min_u32((uint32_t)(now - s_al_touch_ms), (uint32_t)(now - s_app_activity_ms));
+        idle = min_u32(idle, idle_ms(s_host_read_seen, &s_last_host_read_ms));
+        idle = min_u32(idle, idle_ms(s_host_write_seen, &s_last_host_write_ms));
+        if (idle >= (uint32_t)s_al_minutes * 60000UL) {
+            why = "inactivity";
+        }
+    }
+    if (!why) {
+        return;
+    }
+    const drive_result_t r = drive_crypt_lock(AUTOLOCK_FORCE);
+    if (r == DRIVE_OK) {
+        ESP_LOGI(TAG, "auto-lock: drive locked (%s)", why);
+        s_al_unlocked = false;
+    } else if (r != s_al_last_result) {
+        ESP_LOGI(TAG, "auto-lock (%s) postponed: %s", why, drive_result_str(r));
+    }
+    s_al_last_result = r;
+}
+
+void drive_autolock_get(uint16_t *minutes, bool *on_detach)
+{
+    *minutes = s_al_minutes;
+    *on_detach = s_al_on_detach;
+}
+
+esp_err_t drive_autolock_set(uint16_t minutes, bool on_detach)
+{
+    if (minutes > DRIVE_AUTOLOCK_MINUTES_MAX) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        err = nvs_set_u16(h, "al_min", minutes);
+        if (err == ESP_OK) {
+            err = nvs_set_u8(h, "al_detach", on_detach ? 1 : 0);
+        }
+        if (err == ESP_OK) {
+            err = nvs_commit(h);
+        }
+        nvs_close(h);
+    }
+    if (err != ESP_OK) {
+        return err;
+    }
+    s_al_touch_ms = now_ms();               // a new period starts with the change
+    s_al_minutes = minutes;
+    s_al_on_detach = on_detach;
+    ESP_LOGI(TAG, "auto-lock: %u min, on detach %s", (unsigned)minutes, on_detach ? "on" : "off");
+    return ESP_OK;
 }
 
 drive_result_t drive_crypt_change_password(const char *old_secret, const char *new_password,

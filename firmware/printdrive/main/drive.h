@@ -175,10 +175,25 @@ drive_result_t drive_check_path(const char *path, bool for_new);
 /**
  * List the folder `dir` (existing path, "" = root; APP only) into a packed buffer, see
  * DRIVE_LIST_HDR. Names with a leading dot and "System Volume Information" are skipped.
- * Folders have size and mtime 0. mtime is seconds since 1970 in the writer's local time,
- * 0 = unknown. DRIVE_ERR_NOT_FOUND if the folder does not exist.
+ * Folders have size and mtime 0. mtime is unix seconds (pd_time_from_fat()), 0 = unknown.
+ * DRIVE_ERR_NOT_FOUND if the folder does not exist. Built on drive_list_each().
  */
 drive_result_t drive_list(const char *dir, char *buf, size_t buf_len, drive_list_info_t *info);
+
+/** Called by drive_list_each() for every visible entry (folders: size and mtime 0). name is only
+ *  valid during the call. Return false to stop the walk early. */
+typedef bool (*drive_list_cb_t)(void *ctx, const char *name, bool is_dir, uint32_t size, uint32_t mtime);
+
+/**
+ * Listing without a buffer: cb is called for every visible entry, in directory order, while the
+ * folder is read. Same checks and results as drive_list() (BAD_NAME, LOCKED, CRYPT_DAMAGED,
+ * WRONG_OWNER, NO_FS, NOT_FOUND, IO); DRIVE_OK also when cb stopped the walk.
+ * The drive lock is held for the whole walk, as during a folder copy: drive_get_status() returns
+ * the state from the start, owner changes / lock / format get DRIVE_ERR_BUSY meanwhile, the drive
+ * task waits. cb may block (e.g. send over the network) but must not call drive_* functions.
+ * Heap: about 1.1 KiB during the call.
+ */
+drive_result_t drive_list_each(const char *dir, drive_list_cb_t cb, void *ctx);
 
 /** Create exactly one folder (the parent must exist). NOT_FOUND, EXISTS. */
 drive_result_t drive_mkdir(const char *path);
@@ -215,6 +230,36 @@ drive_result_t drive_check_name(const char *name);
 drive_result_t drive_download_open(const char *path, int *fd, uint32_t *size);
 void drive_download_close(int fd);
 
+// ---- ZIP download: walk a folder tree in a fixed depth-first order (see web_zip.c) ----
+
+typedef struct drive_zip drive_zip_t;
+
+typedef struct {
+    const char *name;                 // path in the archive: "<folder>/sub/file" (no folder prefix
+                                      // for the root); valid until the next drive_zip_* call
+    bool is_dir;
+    uint32_t size;                    // files only
+    uint16_t dos_date, dos_time;      // FAT time stamp (local time), 0 = unknown
+} drive_zip_entry_t;
+
+/**
+ * Start a walk of the folder `dir` (existing path, "" = root; APP only). Until drive_zip_close()
+ * it counts as an open download: owner changes, format, lock and folder operations get BUSY.
+ * base_out receives the folder's real name ("" for the root). BAD_NAME, NOT_FOUND (also for a
+ * file), WRONG_OWNER, NO_FS, LOCKED, IO (no memory: about 3 KiB + one FatFs file object).
+ */
+drive_result_t drive_zip_open(const char *dir, drive_zip_t **out, char *base_out, size_t base_len);
+/** Restart the walk: the folder itself comes first (not for the root), then its contents. */
+void drive_zip_rewind(drive_zip_t *z);
+/**
+ * Next entry, a folder before its contents; hidden names are skipped as in drive_list(). *end is
+ * set after the last one. BAD_NAME: nested deeper than 16 levels or path longer than 1.5 KB; IO.
+ */
+drive_result_t drive_zip_next(drive_zip_t *z, drive_zip_entry_t *e, bool *end);
+/** Read the file returned last by drive_zip_next() (opened on the first call). *got = 0 at its end. */
+drive_result_t drive_zip_read(drive_zip_t *z, void *buf, size_t len, size_t *got);
+void drive_zip_close(drive_zip_t *z);
+
 // ---- Upload: written to a temp file in the root and renamed only after validation ----
 
 /**
@@ -223,12 +268,46 @@ void drive_download_close(int fd);
  */
 drive_result_t drive_upload_validate(const char *path, uint64_t size);
 
-/** path: complete target path including the file name. NOT_FOUND (folder missing), IS_DIR. */
+/**
+ * path: complete target path including the file name. NOT_FOUND (folder missing), IS_DIR.
+ * Always starts fresh: a kept interrupted upload (see drive_upload_suspend()) is dropped.
+ */
 drive_result_t drive_upload_begin(const char *path, uint32_t size, bool overwrite);
 drive_result_t drive_upload_write(const void *data, size_t len);
-/** mtime: modification time to store for the file (local time as seconds since 1970), 0 = now. */
+/** mtime: modification time to store for the file (unix seconds; utime() converts to local FAT
+ *  time with the time zone), 0 = now. */
 drive_result_t drive_upload_finish(uint32_t mtime);
+/** Drop the running upload and its temp file. */
 void drive_upload_abort(void);
+
+/**
+ * All checks of drive_upload_begin() without touching anything (for /api/upload/check): a kept
+ * interrupted upload stays. Free space counts the kept part as available (it is either
+ * continued or dropped by the next upload).
+ */
+drive_result_t drive_upload_check(const char *path, uint64_t size, bool overwrite);
+
+// Resuming (RAM only, at most one interrupted upload). Dropped by a fresh upload (any target),
+// by handing the drive to the USB host, lock / format / encryption changes, and by a restart.
+
+/** The connection broke: keep the received bytes (closed = on the medium) for resuming. Without
+ *  any bytes, or if closing fails, the same as drive_upload_abort(). */
+void drive_upload_suspend(void);
+
+/**
+ * Continue an interrupted upload of exactly path and size at offset. offset must equal the bytes
+ * held (*held, 0 if none); otherwise *mismatch is set (result DRIVE_ERR_INCOMPLETE, nothing
+ * changes). offset 0 with nothing held is a fresh drive_upload_begin(). Then write the remaining
+ * size - offset bytes and finish as usual; the content check covers the whole file.
+ */
+drive_result_t drive_upload_resume(const char *path, uint32_t size, bool overwrite, uint32_t offset,
+                                   uint32_t *held, bool *mismatch);
+
+/** *offset = bytes held for exactly path and size (0 if none). BAD_NAME for an invalid path. */
+drive_result_t drive_upload_resume_query(const char *path, uint64_t size, uint32_t *offset);
+
+/** The kept interrupted upload for the status (false if none). Does not block during long operations. */
+bool drive_upload_resumable(char *path, size_t path_len, uint32_t *size, uint32_t *offset);
 
 /**
  * Prepare a restart: refuse (unless force) while an upload runs or the host wrote
@@ -319,6 +398,21 @@ drive_result_t drive_crypt_disable(const char *secret, uint32_t *retry_after_s);
  * DRIVE_ERR_NOT_ENCRYPTED when not encrypted, DRIVE_ERR_IO if the medium cannot be written.
  */
 drive_result_t drive_crypt_force_format(void);
+
+// ---- Auto-lock of an unlocked encrypted drive (settings in NVS, timer in the drive task) ----
+
+#define DRIVE_AUTOLOCK_MINUTES_MAX  1440
+
+/** Current auto-lock settings: minutes of inactivity (0 = off), lock when the USB host goes away. */
+void drive_autolock_get(uint16_t *minutes, bool *on_detach);
+
+/**
+ * Store and apply the auto-lock settings; the inactivity period restarts. minutes 0 (off) ..
+ * DRIVE_AUTOLOCK_MINUTES_MAX, else ESP_ERR_INVALID_ARG. Inactivity = no host READ/WRITE, no local
+ * file operation, no upload/download. The lock is never forced past DRIVE_ERR_BUSY or
+ * DRIVE_ERR_HOST_WRITING (retried every few seconds instead).
+ */
+esp_err_t drive_autolock_set(uint16_t minutes, bool on_detach);
 
 #ifdef __cplusplus
 }

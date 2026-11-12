@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "ota.h"
+#include "pd_time.h"
 #include "pd_wifi.h"
 #include "ui.h"
 #include "web_server.h"
@@ -29,6 +30,7 @@ void app_main(void)
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+    pd_time_init();   // time zone: before anything writes files (FAT stamps use local time)
 
     ESP_ERROR_CHECK(board_init());
     if (ui_init() != ESP_OK) {
@@ -38,7 +40,7 @@ void app_main(void)
     err = drive_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "storage/USB init failed: %s", esp_err_to_name(err));
-        ui_show_fatal("Speicher/USB Init");
+        ui_show_fatal(ui_get_lang()[0] == 'e' ? "Storage/USB init" : "Speicher/USB Init");
         return;   // no USB, no web: do not risk anything
     }
 
@@ -46,6 +48,9 @@ void app_main(void)
         ESP_LOGE(TAG, "user database could not be loaded");
     }
     err = pd_wifi_start();
+    if (err == ESP_OK) {
+        pd_time_start();   // SNTP: asks the servers whenever the station gets an IP
+    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi start failed: %s", esp_err_to_name(err));
     } else if (web_server_start() != ESP_OK) {

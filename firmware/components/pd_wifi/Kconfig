@@ -16,4 +16,21 @@ menu "DataDrive Wi-Fi"
         default 120
         range 10 3600
 
+    config PD_WIFI_CAPTIVE_PORTAL
+        bool "Captive portal on the setup access point"
+        default y
+        help
+            While the setup access point is on, a small DNS responder answers every name with
+            the access point's address, so phones and laptops open the setup page by themselves
+            (the web server redirects their connectivity checks). Costs no task and no socket.
+
+    config PD_WIFI_CAPTIVE_DHCP_URI
+        bool "Announce the setup page via DHCP option 114 (RFC 8910)"
+        depends on PD_WIFI_CAPTIVE_PORTAL
+        default y
+        help
+            Sends http://<ap-ip>/ as captive portal URI. iOS and Android only use this option
+            with an https URL and otherwise fall back to their connectivity checks; switch it
+            off if a client misbehaves with it.
+
 endmenu

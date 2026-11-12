@@ -66,3 +66,22 @@ void pd_tls_get_info(pd_tls_info_t *out);
 
 /** Malloc'ed copy of the CA certificate (DER); caller frees. ESP_ERR_NOT_FOUND if none. */
 esp_err_t pd_tls_read_ca(uint8_t **der, size_t *len);
+
+/**
+ * Reserved TLS record buffers (HTTPS only). With CONFIG_MBEDTLS_DYNAMIC_BUFFER off, mbedTLS
+ * allocates one input buffer (IN_CONTENT_LEN + 333 bytes, ~16.3 KiB) and one output buffer
+ * (OUT_CONTENT_LEN + 333, ~4.3 KiB) per connection. This reserves both once, now (call at boot,
+ * before the HTTPS server starts, while the heap is not fragmented yet), and installs an mbedTLS
+ * allocator that hands them out for allocations of that size and takes everything else from the
+ * heap as before. With the HTTPS server limited to one connection, TLS never needs a large
+ * contiguous block after boot. Needs CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC (else ESP_ERR_NOT_SUPPORTED
+ * and mbedTLS allocates from the heap). ESP_ERR_NO_MEM if the buffers do not fit.
+ */
+esp_err_t pd_tls_reserve_buffers(void);
+
+/** Undo pd_tls_reserve_buffers() (HTTPS server did not start). Only while no TLS session exists. */
+void pd_tls_release_buffers(void);
+
+/** Number of TLS record buffers that had to come from the heap because the reserved one was in
+ *  use (or not reserved). Stays 0 with one connection at a time. */
+uint32_t pd_tls_buffer_misses(void);

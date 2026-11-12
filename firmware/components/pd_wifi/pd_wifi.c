@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "mdns.h"
 #include "nvs.h"
+#include "pd_dns.h"
 #include "sdkconfig.h"
 
 // Optional compile-time default credentials (file is git-ignored, see pd_secrets.h.example).
@@ -40,6 +41,11 @@ static SemaphoreHandle_t s_lock;
 static pd_wifi_status_t s_st;
 static esp_netif_t *s_sta_netif;
 static esp_netif_t *s_ap_netif;
+static esp_ip4_addr_t s_ap_ip = {.addr = ESP_IP4TOADDR(192, 168, 4, 1)};   // read from the netif at start
+static char s_ap_ip_str[16] = "192.168.4.1";
+#if CONFIG_PD_WIFI_CAPTIVE_DHCP_URI
+static char s_portal_uri[24];   // the DHCP server keeps this pointer (option 114): must stay valid
+#endif
 
 // Stored networks (NVS keys s0..s4 = SSID, p0..p4 = password). Guarded by s_lock; s_cfg_lock
 // serialises add/remove so that the NVS write and the RAM update stay consistent.
@@ -303,15 +309,25 @@ static void set_ap(bool on)
         esp_wifi_set_mode(WIFI_MODE_APSTA);
         esp_wifi_set_config(WIFI_IF_AP, &ap);
         // The password is only shown on the LCD (the log is readable via the web UI).
-        ESP_LOGW(TAG, "setup access point on: SSID '%s' (password on the LCD), http://192.168.4.1", s_st.ap_ssid);
+        ESP_LOGW(TAG, "setup access point on: SSID '%s' (password on the LCD), http://%s", s_st.ap_ssid, s_ap_ip_str);
+#if CONFIG_PD_WIFI_CAPTIVE_PORTAL
+        // Captive portal: every name resolves to the access point while it is on.
+        const esp_err_t dns_err = pd_dns_start(s_ap_ip.addr);
+        if (dns_err != ESP_OK) {
+            ESP_LOGW(TAG, "captive portal DNS not started: %s", esp_err_to_name(dns_err));
+        }
+#endif
     } else {
+#if CONFIG_PD_WIFI_CAPTIVE_PORTAL
+        pd_dns_stop();
+#endif
         esp_wifi_set_mode(WIFI_MODE_STA);
         ESP_LOGI(TAG, "setup access point off");
     }
     lock();
     s_st.ap_active = on;
     s_st.ap_clients = 0;
-    strlcpy(s_st.ap_ip, on ? "192.168.4.1" : "", sizeof(s_st.ap_ip));
+    strlcpy(s_st.ap_ip, on ? s_ap_ip_str : "", sizeof(s_st.ap_ip));
     unlock();
 }
 
@@ -481,6 +497,21 @@ esp_err_t pd_wifi_start(void)
     s_sta_netif = esp_netif_create_default_wifi_sta();
     s_ap_netif = esp_netif_create_default_wifi_ap();
     esp_netif_set_hostname(s_sta_netif, s_st.hostname);
+    esp_netif_ip_info_t ap_info;
+    if (esp_netif_get_ip_info(s_ap_netif, &ap_info) == ESP_OK && ap_info.ip.addr != 0) {
+        s_ap_ip = ap_info.ip;
+        snprintf(s_ap_ip_str, sizeof(s_ap_ip_str), IPSTR, IP2STR(&s_ap_ip));
+    }
+#if CONFIG_PD_WIFI_CAPTIVE_DHCP_URI
+    // DHCP option 114 (RFC 8910). Must be set while the DHCP server is not running (it starts
+    // with the access point). Clients that ignore it still find the portal via DNS + HTTP.
+    snprintf(s_portal_uri, sizeof(s_portal_uri), "http://%s/", s_ap_ip_str);
+    err = esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI, s_portal_uri,
+                                 strlen(s_portal_uri));
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "DHCP captive portal URI not set: %s", esp_err_to_name(err));
+    }
+#endif
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_RETURN_ON_ERROR(esp_wifi_init(&init), TAG, "wifi init");
