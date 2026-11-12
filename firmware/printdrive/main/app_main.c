@@ -1,10 +1,12 @@
 // WiFi DataDrive - main firmware for the LILYGO T-Dongle-S3 (LCD).
 #include "applog.h"
+#include "auth.h"
 #include "board.h"
 #include "drive.h"
 #include "esp_app_desc.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
+#include "ota.h"
 #include "pd_wifi.h"
 #include "ui.h"
 #include "web_server.h"
@@ -38,11 +40,16 @@ void app_main(void)
         return;   // no USB, no web: do not risk anything
     }
 
+    if (auth_init() != ESP_OK) {
+        ESP_LOGE(TAG, "user database could not be loaded");
+    }
     err = pd_wifi_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Wi-Fi start failed: %s", esp_err_to_name(err));
     } else if (web_server_start() != ESP_OK) {
         ESP_LOGE(TAG, "web server start failed");
+    } else {
+        ota_init();   // a freshly updated firmware is confirmed only once the web server runs
     }
 
     ui_start();

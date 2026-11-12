@@ -1,8 +1,12 @@
-idf_component_register(SRCS "app_main.c" "drive.c" "usb_dev.c" "web_server.c" "ui.c"
+idf_component_register(SRCS "app_main.c" "drive.c" "usb_dev.c" "ui.c"
+                                "auth.c" "ota.c" "web_server.c" "web_static.c" "web_files.c" "web_system.c" "web_wifi.c"
+                                "web_auth.c" "web_ota.c"
                        INCLUDE_DIRS "."
                        PRIV_REQUIRES board display pd_wifi applog
                                      esp_tinyusb fatfs wear_levelling vfs esp_partition sdmmc esp_driver_sdmmc
-                                     nvs_flash esp_http_server esp_timer esp_system app_update)
+                                     nvs_flash esp_http_server esp_timer esp_system app_update mbedtls
+                       EMBED_FILES "web/manifest.webmanifest" "web/icons/icon-180.png"
+                                   "web/icons/icon-192.png" "web/icons/icon-512.png")
 
 # Web UI: compressed at build time and served with "Content-Encoding: gzip".
 idf_build_get_property(python PYTHON)

@@ -1,44 +1,29 @@
 #include "web_server.h"
 
 #include <stdarg.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
-#include <time.h>
-#include <unistd.h>
-#include "applog.h"
-#include "drive.h"
-#include "esp_app_desc.h"
+#include "auth.h"
 #include "esp_check.h"
-#include "esp_http_server.h"
 #include "esp_log.h"
-#include "esp_system.h"
-#include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "pd_wifi.h"
 #include "sdkconfig.h"
+#include "web_common.h"
+#include "web_auth.h"
+#include "web_files.h"
+#include "web_ota.h"
+#include "web_static.h"
+#include "web_system.h"
+#include "web_wifi.h"
 
 static const char *TAG = "web";
 
-// index.html is gzip-compressed at build time (see CMakeLists.txt).
-extern const char index_html_gz_start[] asm("_binary_index_html_gz_start");
-extern const char index_html_gz_end[] asm("_binary_index_html_gz_end");
+static uint8_t *s_io_buf;
 
-#if CONFIG_PD_UPLOAD_ALL_TYPES
-#define UPLOAD_TYPES "all"
-#elif CONFIG_PD_ALLOW_GCODE
-#define UPLOAD_TYPES ".3mf,.gcode"
-#else
-#define UPLOAD_TYPES ".3mf"
-#endif
-
-#define UPLOAD_BUF_SIZE (16 * 1024)
-#define LIST_BUF_SIZE   (32 * 1024)   // packed file list, enough for ~1000 typical names
-
-static uint8_t *s_upload_buf;
+uint8_t *web_io_buf(void)
+{
+    return s_io_buf;
+}
 
 // ============================================================== helpers
 
@@ -50,8 +35,7 @@ static int hexval(char c)
     return -1;
 }
 
-/** In-place URL decoding (%XX and '+'). Returns false on malformed input. */
-static bool url_decode(char *s)
+bool web_url_decode(char *s)
 {
     char *o = s;
     for (char *p = s; *p; p++) {
@@ -72,14 +56,13 @@ static bool url_decode(char *s)
     return true;
 }
 
-/** Read a decoded query parameter. Returns false if missing. */
-static bool query_param(httpd_req_t *req, const char *key, char *out, size_t len)
+bool web_query_param(httpd_req_t *req, const char *key, char *out, size_t len)
 {
     // The raw value is percent-encoded and can be up to 3x longer than the decoded one.
     char query[CONFIG_HTTPD_MAX_URI_LEN + 1];
     char raw[3 * DRIVE_FILE_NAME_MAX + 1];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
-        httpd_query_key_value(query, key, raw, sizeof(raw)) != ESP_OK || !url_decode(raw) ||
+        httpd_query_key_value(query, key, raw, sizeof(raw)) != ESP_OK || !web_url_decode(raw) ||
         strlen(raw) >= len) {
         return false;
     }
@@ -87,14 +70,31 @@ static bool query_param(httpd_req_t *req, const char *key, char *out, size_t len
     return true;
 }
 
-static bool query_flag(httpd_req_t *req, const char *key)
+bool web_query_flag(httpd_req_t *req, const char *key)
 {
     char v[8];
-    return query_param(req, key, v, sizeof(v)) && (strcmp(v, "1") == 0 || strcmp(v, "true") == 0);
+    return web_query_param(req, key, v, sizeof(v)) && (strcmp(v, "1") == 0 || strcmp(v, "true") == 0);
 }
 
-/** Append s as a JSON string literal (with quotes) to buf. */
-static void json_str(char *buf, size_t len, const char *s)
+esp_err_t web_read_body(httpd_req_t *req, char *buf, size_t len)
+{
+    if (req->content_len >= len) {
+        web_send_error(req, "400 Bad Request", "BAD_REQUEST", "Anfrage zu groß");
+        return ESP_ERR_INVALID_SIZE;
+    }
+    int got = 0;
+    while (got < (int)req->content_len) {
+        const int n = httpd_req_recv(req, buf + got, req->content_len - got);
+        if (n <= 0) {
+            return ESP_FAIL;
+        }
+        got += n;
+    }
+    buf[got] = '\0';
+    return ESP_OK;
+}
+
+void web_json_str(char *buf, size_t len, const char *s)
 {
     size_t n = strlen(buf);
     if (n + 2 >= len) {
@@ -115,8 +115,7 @@ static void json_str(char *buf, size_t len, const char *s)
     buf[n] = '\0';
 }
 
-static void appendf(char *buf, size_t len, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
-static void appendf(char *buf, size_t len, const char *fmt, ...)
+void web_appendf(char *buf, size_t len, const char *fmt, ...)
 {
     const size_t n = strlen(buf);
     if (n >= len) {
@@ -128,7 +127,7 @@ static void appendf(char *buf, size_t len, const char *fmt, ...)
     va_end(ap);
 }
 
-static const char *result_code(drive_result_t r)
+const char *web_result_code(drive_result_t r)
 {
     switch (r) {
     case DRIVE_OK:               return "OK";
@@ -149,7 +148,7 @@ static const char *result_code(drive_result_t r)
     }
 }
 
-static const char *result_http_status(drive_result_t r)
+const char *web_result_http_status(drive_result_t r)
 {
     switch (r) {
     case DRIVE_OK:               return "200 OK";
@@ -165,7 +164,7 @@ static const char *result_http_status(drive_result_t r)
     }
 }
 
-static esp_err_t send_json(httpd_req_t *req, const char *status, const char *json)
+esp_err_t web_send_json(httpd_req_t *req, const char *status, const char *json)
 {
     httpd_resp_set_status(req, status);
     httpd_resp_set_type(req, "application/json");
@@ -173,24 +172,26 @@ static esp_err_t send_json(httpd_req_t *req, const char *status, const char *jso
     return httpd_resp_sendstr(req, json);
 }
 
-static esp_err_t send_result(httpd_req_t *req, drive_result_t r)
+esp_err_t web_send_result(httpd_req_t *req, drive_result_t r)
 {
     char buf[400] = "";
-    appendf(buf, sizeof(buf), "{\"ok\":%s,\"code\":\"%s\",\"error\":", r == DRIVE_OK ? "true" : "false",
-            result_code(r));
-    json_str(buf, sizeof(buf), r == DRIVE_OK ? "" : drive_result_str(r));
-    appendf(buf, sizeof(buf), "}");
-    return send_json(req, result_http_status(r), buf);
+    web_appendf(buf, sizeof(buf), "{\"ok\":%s,\"code\":\"%s\",\"error\":", r == DRIVE_OK ? "true" : "false",
+                web_result_code(r));
+    web_json_str(buf, sizeof(buf), r == DRIVE_OK ? "" : drive_result_str(r));
+    web_appendf(buf, sizeof(buf), "}");
+    return web_send_json(req, web_result_http_status(r), buf);
 }
 
-static esp_err_t send_error(httpd_req_t *req, const char *status, const char *code, const char *msg)
+esp_err_t web_send_error(httpd_req_t *req, const char *status, const char *code, const char *msg)
 {
     char buf[300] = "";
-    appendf(buf, sizeof(buf), "{\"ok\":false,\"code\":\"%s\",\"error\":", code);
-    json_str(buf, sizeof(buf), msg);
-    appendf(buf, sizeof(buf), "}");
-    return send_json(req, status, buf);
+    web_appendf(buf, sizeof(buf), "{\"ok\":false,\"code\":\"%s\",\"error\":", code);
+    web_json_str(buf, sizeof(buf), msg);
+    web_appendf(buf, sizeof(buf), "}");
+    return web_send_json(req, status, buf);
 }
+
+// ============================================================== dispatcher
 
 /** CSRF protection for state-changing requests. Returns true if the request may proceed. */
 static bool check_csrf(httpd_req_t *req)
@@ -199,414 +200,60 @@ static bool check_csrf(httpd_req_t *req)
     if (httpd_req_get_hdr_value_str(req, "X-PrintDrive", v, sizeof(v)) == ESP_OK && strcmp(v, "1") == 0) {
         return true;
     }
-    send_error(req, "403 Forbidden", "FORBIDDEN", "Anfrage nicht erlaubt.");
+    web_send_error(req, "403 Forbidden", "FORBIDDEN", "Anfrage nicht erlaubt.");
     return false;
 }
 
-static const char *owner_str(drive_owner_t o)
+/** Registered for every route (route in user_ctx): CSRF, then authorization, then the handler.
+ *  Both checks have already answered the client when they fail, so we return ESP_OK. */
+static esp_err_t dispatch(httpd_req_t *req)
 {
-    return o == DRIVE_OWNER_USB ? "usb" : (o == DRIVE_OWNER_APP ? "app" : "none");
-}
-
-static long idle_json(uint32_t ms)
-{
-    return ms == UINT32_MAX ? -1 : (long)ms;
-}
-
-// ============================================================== handlers
-
-static esp_err_t h_index(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
-    return httpd_resp_send(req, index_html_gz_start, index_html_gz_end - index_html_gz_start);
-}
-
-static esp_err_t h_status(httpd_req_t *req)
-{
-    drive_status_t d;
-    pd_wifi_status_t w;
-    drive_get_status(&d);
-    pd_wifi_get_status(&w);
-
-    char buf[1600] = "";
-    appendf(buf, sizeof(buf), "{\"version\":");
-    json_str(buf, sizeof(buf), esp_app_get_description()->version);
-    appendf(buf, sizeof(buf), ",\"uptime_s\":%lld,\"heap\":%lu,\"types\":\"%s\"",
-            esp_timer_get_time() / 1000000, (unsigned long)esp_get_free_heap_size(),
-            UPLOAD_TYPES);
-    appendf(buf, sizeof(buf),
-            ",\"drive\":{\"owner\":\"%s\",\"fs_ok\":%s,\"needs_format\":%s,\"usb_connected\":%s,"
-            "\"usb_suspended\":%s,\"host_ejected\":%s,\"host_writable\":%s,\"host_idle_ms\":%ld,"
-            "\"host_write_idle_ms\":%ld,\"write_guard_ms\":%d,\"total\":%llu,\"free\":%llu,\"files\":%lu,"
-            "\"sector\":%lu}",
-            owner_str(d.owner), d.fs_ok ? "true" : "false", d.needs_format ? "true" : "false",
-            d.usb_connected ? "true" : "false", d.usb_suspended ? "true" : "false",
-            d.host_ejected ? "true" : "false", d.host_writable ? "true" : "false",
-            idle_json(d.host_idle_ms), idle_json(d.host_write_idle_ms), CONFIG_PD_HOST_WRITE_GUARD_MS,
-            (unsigned long long)d.total_bytes, (unsigned long long)d.free_bytes,
-            (unsigned long)d.file_count, (unsigned long)d.sector_size);
-    appendf(buf, sizeof(buf), ",\"medium\":{\"sd\":%s,\"name\":", d.on_sd ? "true" : "false");
-    json_str(buf, sizeof(buf), d.medium_name);
-    appendf(buf, sizeof(buf), "}");
-    appendf(buf, sizeof(buf), ",\"upload\":{\"active\":%s,\"name\":", d.upload_active ? "true" : "false");
-    json_str(buf, sizeof(buf), d.upload_name);
-    appendf(buf, sizeof(buf), ",\"received\":%lu,\"total\":%lu}", (unsigned long)d.upload_received,
-            (unsigned long)d.upload_total);
-    appendf(buf, sizeof(buf), ",\"wifi\":{\"sta_configured\":%s,\"sta_connected\":%s,\"ssid\":",
-            w.sta_configured ? "true" : "false", w.sta_connected ? "true" : "false");
-    json_str(buf, sizeof(buf), w.sta_ssid);
-    appendf(buf, sizeof(buf), ",\"ip\":\"%s\",\"rssi\":%d,\"ap_active\":%s,\"ap_ssid\":", w.sta_ip, w.sta_rssi,
-            w.ap_active ? "true" : "false");
-    json_str(buf, sizeof(buf), w.ap_ssid);
-    appendf(buf, sizeof(buf), ",\"ap_ip\":\"%s\",\"hostname\":", w.ap_ip);
-    json_str(buf, sizeof(buf), w.hostname);
-    appendf(buf, sizeof(buf), "}}");
-    return send_json(req, "200 OK", buf);
-}
-
-static esp_err_t h_files(httpd_req_t *req)
-{
-    char *list = malloc(LIST_BUF_SIZE);
-    if (!list) {
-        return send_error(req, "500 Internal Server Error", "NO_MEM", "Zu wenig Arbeitsspeicher.");
-    }
-    drive_list_info_t info;
-    const drive_result_t r = drive_list(list, LIST_BUF_SIZE, &info);
-    if (r != DRIVE_OK) {
-        free(list);
-        return send_result(req, r);
-    }
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_sendstr_chunk(req, "{\"ok\":true,\"files\":[");
-    char item[DRIVE_FILE_NAME_MAX * 2 + 96];
-    size_t pos = 0;
-    for (uint32_t i = 0; i < info.count; i++) {
-        uint32_t size, mtime;
-        memcpy(&size, list + pos, sizeof(size));
-        memcpy(&mtime, list + pos + sizeof(size), sizeof(mtime));
-        const char *name = list + pos + 2 * sizeof(uint32_t);
-        pos += 2 * sizeof(uint32_t) + strlen(name) + 1;
-        item[0] = '\0';
-        appendf(item, sizeof(item), "%s{\"name\":", i ? "," : "");
-        json_str(item, sizeof(item), name);
-        appendf(item, sizeof(item), ",\"size\":%lu,\"mtime\":%lu}", (unsigned long)size, (unsigned long)mtime);
-        httpd_resp_sendstr_chunk(req, item);
-    }
-    snprintf(item, sizeof(item), "],\"dirs\":%lu,\"truncated\":%s}", (unsigned long)info.dirs,
-             info.truncated ? "true" : "false");
-    httpd_resp_sendstr_chunk(req, item);
-    free(list);
-    return httpd_resp_sendstr_chunk(req, NULL);
-}
-
-/** Validate an upload before sending data: name, type, existence, free space. */
-static esp_err_t h_upload_check(httpd_req_t *req)
-{
-    if (!check_csrf(req)) {
+    const web_route_t *route = req->user_ctx;
+    if (req->method == HTTP_POST && !check_csrf(req)) {
         return ESP_OK;
     }
-    char name[DRIVE_NAME_MAX + 1], size_s[16];
-    if (!query_param(req, "name", name, sizeof(name)) || !query_param(req, "size", size_s, sizeof(size_s))) {
-        return send_result(req, DRIVE_ERR_BAD_NAME);
-    }
-    drive_result_t r = drive_check_name(name);
-    if (r == DRIVE_OK) {
-        // Begin + abort performs exactly the checks the real upload will do.
-        const unsigned long long size = strtoull(size_s, NULL, 10);
-        r = size > UINT32_MAX ? DRIVE_ERR_TOO_LARGE
-                              : drive_upload_begin(name, (uint32_t)size, query_flag(req, "overwrite"));
-        if (r == DRIVE_OK) {
-            drive_upload_abort();
-        }
-    }
-    return send_result(req, r);
-}
-
-/** Read and discard the rest of the request body so an error answer reaches the client.
- *  Returns false if the client is gone. */
-static bool drain_body(httpd_req_t *req, size_t remaining)
-{
-    int timeouts = 0;
-    while (remaining > 0) {
-        const int n = httpd_req_recv(req, (char *)s_upload_buf,
-                                     remaining < UPLOAD_BUF_SIZE ? remaining : UPLOAD_BUF_SIZE);
-        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= 3) {
-            continue;
-        }
-        if (n <= 0) {
-            return false;
-        }
-        remaining -= (size_t)n;
-    }
-    return true;
-}
-
-static esp_err_t h_upload(httpd_req_t *req)
-{
-    if (!check_csrf(req)) {
+    if (!auth_authorize(req, route->role)) {
         return ESP_OK;
     }
-    char name[DRIVE_NAME_MAX + 1];
-    if (!query_param(req, "name", name, sizeof(name))) {
-        return send_result(req, DRIVE_ERR_BAD_NAME);
-    }
-    const size_t total = req->content_len;
-    drive_result_t r = drive_upload_begin(name, (uint32_t)total, query_flag(req, "overwrite"));
-    if (r != DRIVE_OK) {
-        return drain_body(req, total) ? send_result(req, r) : ESP_FAIL;
-    }
-
-    const int64_t t0 = esp_timer_get_time();
-    size_t remaining = total, fill = 0;
-    int timeouts = 0;
-    while (remaining > 0) {
-        const size_t want = remaining < UPLOAD_BUF_SIZE - fill ? remaining : UPLOAD_BUF_SIZE - fill;
-        const int n = httpd_req_recv(req, (char *)s_upload_buf + fill, want);
-        if (n == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= 3) {
-            continue;
-        }
-        if (n <= 0) {
-            ESP_LOGW(TAG, "upload connection lost (%d)", n);
-            drive_upload_abort();
-            return ESP_FAIL;   // client is gone, nothing to answer
-        }
-        timeouts = 0;
-        fill += (size_t)n;
-        remaining -= (size_t)n;
-        if (fill == UPLOAD_BUF_SIZE || remaining == 0) {
-            r = drive_upload_write(s_upload_buf, fill);
-            fill = 0;
-            if (r != DRIVE_OK) {
-                drive_upload_abort();
-                return drain_body(req, remaining) ? send_result(req, r) : ESP_FAIL;
-            }
-        }
-    }
-    // Optional: original modification time of the file, and the client's clock (both local
-    // time as seconds since 1970). The device has no clock of its own.
-    char num[16];
-    const uint32_t mtime = query_param(req, "mtime", num, sizeof(num)) ? (uint32_t)strtoul(num, NULL, 10) : 0;
-    if (query_param(req, "now", num, sizeof(num)) && time(NULL) < 1700000000) {
-        const struct timeval tv = {.tv_sec = (time_t)strtoul(num, NULL, 10)};
-        if (tv.tv_sec > 1700000000) {
-            settimeofday(&tv, NULL);
-        }
-    }
-    r = drive_upload_finish(mtime);
-    const int64_t dt_ms = (esp_timer_get_time() - t0) / 1000;
-    ESP_LOGI(TAG, "upload '%s' %u bytes in %lld ms (%.1f KB/s): %s", name, (unsigned)total, dt_ms,
-             dt_ms ? (double)total / dt_ms : 0.0, drive_result_str(r));
-    return send_result(req, r);
+    return route->handler(req);
 }
 
-static esp_err_t h_delete(httpd_req_t *req)
+esp_err_t web_register_routes(httpd_handle_t server, const web_route_t *routes, size_t count)
 {
-    if (!check_csrf(req)) {
-        return ESP_OK;
+    for (size_t i = 0; i < count; i++) {
+        const httpd_uri_t uri = {
+            .uri = routes[i].uri,
+            .method = routes[i].method,
+            .handler = dispatch,
+            .user_ctx = (void *)&routes[i],
+        };
+        ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uri), TAG, "register %s", routes[i].uri);
     }
-    char name[DRIVE_FILE_NAME_MAX + 1];
-    if (!query_param(req, "name", name, sizeof(name))) {
-        return send_result(req, DRIVE_ERR_BAD_NAME);
-    }
-    return send_result(req, drive_delete(name));
-}
-
-static esp_err_t h_rename(httpd_req_t *req)
-{
-    if (!check_csrf(req)) {
-        return ESP_OK;
-    }
-    char name[DRIVE_FILE_NAME_MAX + 1], to[DRIVE_NAME_MAX + 1];
-    if (!query_param(req, "name", name, sizeof(name)) || !query_param(req, "to", to, sizeof(to))) {
-        return send_result(req, DRIVE_ERR_BAD_NAME);
-    }
-    return send_result(req, drive_rename(name, to));
-}
-
-static esp_err_t h_download(httpd_req_t *req)
-{
-    char name[DRIVE_FILE_NAME_MAX + 1];
-    if (!query_param(req, "name", name, sizeof(name))) {
-        return send_result(req, DRIVE_ERR_BAD_NAME);
-    }
-    int fd = -1;
-    uint32_t size = 0;
-    const drive_result_t r = drive_download_open(name, &fd, &size);
-    if (r != DRIVE_OK) {
-        return send_result(req, r);
-    }
-    httpd_resp_set_type(req, "application/octet-stream");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment");
-    esp_err_t err = ESP_OK;
-    ssize_t n;
-    while ((n = read(fd, s_upload_buf, UPLOAD_BUF_SIZE)) > 0) {
-        if ((err = httpd_resp_send_chunk(req, (const char *)s_upload_buf, n)) != ESP_OK) {
-            break;
-        }
-    }
-    drive_download_close(fd);
-    if (err == ESP_OK) {
-        err = httpd_resp_send_chunk(req, NULL, 0);
-    }
-    return err;
-}
-
-static esp_err_t h_mode(httpd_req_t *req)
-{
-    if (!check_csrf(req)) {
-        return ESP_OK;
-    }
-    char target[8];
-    if (!query_param(req, "target", target, sizeof(target))) {
-        return send_error(req, "400 Bad Request", "BAD_REQUEST", "target fehlt");
-    }
-    drive_owner_t o;
-    if (strcmp(target, "usb") == 0) {
-        o = DRIVE_OWNER_USB;
-    } else if (strcmp(target, "app") == 0) {
-        o = DRIVE_OWNER_APP;
-    } else {
-        return send_error(req, "400 Bad Request", "BAD_REQUEST", "target muss usb oder app sein");
-    }
-    return send_result(req, drive_set_owner(o, query_flag(req, "force")));
-}
-
-static esp_err_t h_host_writable(httpd_req_t *req)
-{
-    if (!check_csrf(req)) {
-        return ESP_OK;
-    }
-    drive_set_host_writable(query_flag(req, "value"));
-    return send_result(req, DRIVE_OK);
-}
-
-static esp_err_t h_wifi(httpd_req_t *req)
-{
-    if (!check_csrf(req)) {
-        return ESP_OK;
-    }
-    char body[256] = "";
-    if (req->content_len >= sizeof(body)) {
-        return send_error(req, "400 Bad Request", "BAD_REQUEST", "Anfrage zu groß");
-    }
-    int got = 0;
-    while (got < (int)req->content_len) {
-        const int n = httpd_req_recv(req, body + got, req->content_len - got);
-        if (n <= 0) {
-            return ESP_FAIL;
-        }
-        got += n;
-    }
-    body[got] = '\0';
-    char ssid[64] = "", pass[128] = "";
-    if (httpd_query_key_value(body, "ssid", ssid, sizeof(ssid)) != ESP_OK || !url_decode(ssid)) {
-        return send_error(req, "400 Bad Request", "BAD_REQUEST", "Bitte den WLAN-Namen angeben.");
-    }
-    if (httpd_query_key_value(body, "pass", pass, sizeof(pass)) == ESP_OK) {
-        url_decode(pass);
-    }
-    if (pd_wifi_set_credentials(ssid, pass) != ESP_OK) {
-        return send_error(req, "400 Bad Request", "BAD_REQUEST",
-                          "Bitte einen WLAN-Namen (höchstens 32 Zeichen) und ein Passwort mit 8 bis 63 Zeichen angeben – oder das Passwort leer lassen.");
-    }
-    return send_json(req, "200 OK", "{\"ok\":true}");
-}
-
-static esp_err_t h_format(httpd_req_t *req)
-{
-    if (!check_csrf(req)) {
-        return ESP_OK;
-    }
-    char confirm[16];
-    if (!query_param(req, "confirm", confirm, sizeof(confirm)) || strcmp(confirm, "FORMAT") != 0) {
-        return send_error(req, "400 Bad Request", "BAD_REQUEST", "Bestätigung fehlt");
-    }
-    // drive_format() restarts the device on success; answer first.
-    drive_status_t d;
-    drive_get_status(&d);
-    if (d.owner != DRIVE_OWNER_APP) {
-        return send_result(req, DRIVE_ERR_WRONG_OWNER);
-    }
-    send_json(req, "200 OK", "{\"ok\":true,\"restart\":true}");
-    vTaskDelay(pdMS_TO_TICKS(200));
-    const drive_result_t r = drive_format();
-    ESP_LOGE(TAG, "format failed: %s", drive_result_str(r));
     return ESP_OK;
-}
-
-static esp_err_t h_reboot(httpd_req_t *req)
-{
-    if (!check_csrf(req)) {
-        return ESP_OK;
-    }
-    char mode[16] = "normal";
-    query_param(req, "mode", mode, sizeof(mode));
-    const drive_result_t r = drive_prepare_restart(query_flag(req, "force"));
-    if (r != DRIVE_OK) {
-        return send_result(req, r);
-    }
-    send_json(req, "200 OK", "{\"ok\":true}");
-    vTaskDelay(pdMS_TO_TICKS(300));
-    if (strcmp(mode, "download") == 0) {
-        drive_restart_to_download();
-    }
-    esp_restart();
-    return ESP_OK;
-}
-
-static esp_err_t h_log(httpd_req_t *req)
-{
-    char *buf = malloc(8193);
-    if (!buf) {
-        return send_error(req, "500 Internal Server Error", "NO_MEM", "Kein Speicher");
-    }
-    const size_t n = applog_read(buf, 8193);
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    const esp_err_t err = httpd_resp_send(req, buf, n);
-    free(buf);
-    return err;
 }
 
 // ============================================================== start
 
 esp_err_t web_server_start(void)
 {
-    s_upload_buf = malloc(UPLOAD_BUF_SIZE);
-    ESP_RETURN_ON_FALSE(s_upload_buf, ESP_ERR_NO_MEM, TAG, "upload buffer");
+    s_io_buf = malloc(WEB_IO_BUF_SIZE);
+    ESP_RETURN_ON_FALSE(s_io_buf, ESP_ERR_NO_MEM, TAG, "I/O buffer");
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.stack_size = 10240;   // FatFs + LFN + URL/query buffers
-    cfg.max_uri_handlers = 20;
+    cfg.max_uri_handlers = 48;
     cfg.lru_purge_enable = true;
     cfg.recv_wait_timeout = 10;
     cfg.send_wait_timeout = 10;
     httpd_handle_t server = NULL;
     ESP_RETURN_ON_ERROR(httpd_start(&server, &cfg), TAG, "httpd_start");
 
-    const httpd_uri_t uris[] = {
-        {.uri = "/", .method = HTTP_GET, .handler = h_index},
-        {.uri = "/index.html", .method = HTTP_GET, .handler = h_index},
-        {.uri = "/api/status", .method = HTTP_GET, .handler = h_status},
-        {.uri = "/api/files", .method = HTTP_GET, .handler = h_files},
-        {.uri = "/api/download", .method = HTTP_GET, .handler = h_download},
-        {.uri = "/api/log", .method = HTTP_GET, .handler = h_log},
-        {.uri = "/api/upload/check", .method = HTTP_POST, .handler = h_upload_check},
-        {.uri = "/api/upload", .method = HTTP_POST, .handler = h_upload},
-        {.uri = "/api/delete", .method = HTTP_POST, .handler = h_delete},
-        {.uri = "/api/rename", .method = HTTP_POST, .handler = h_rename},
-        {.uri = "/api/mode", .method = HTTP_POST, .handler = h_mode},
-        {.uri = "/api/settings/host_writable", .method = HTTP_POST, .handler = h_host_writable},
-        {.uri = "/api/wifi", .method = HTTP_POST, .handler = h_wifi},
-        {.uri = "/api/format", .method = HTTP_POST, .handler = h_format},
-        {.uri = "/api/reboot", .method = HTTP_POST, .handler = h_reboot},
-    };
-    for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
-        ESP_RETURN_ON_ERROR(httpd_register_uri_handler(server, &uris[i]), TAG, "register %s", uris[i].uri);
-    }
+    ESP_RETURN_ON_ERROR(web_static_register(server), TAG, "static routes");
+    ESP_RETURN_ON_ERROR(web_files_register(server), TAG, "file routes");
+    ESP_RETURN_ON_ERROR(web_system_register(server), TAG, "system routes");
+    ESP_RETURN_ON_ERROR(web_wifi_register(server), TAG, "wifi routes");
+    ESP_RETURN_ON_ERROR(web_auth_register(server), TAG, "auth routes");
+    ESP_RETURN_ON_ERROR(web_ota_register(server), TAG, "ota routes");
     ESP_LOGI(TAG, "web server started on port %d", cfg.server_port);
     return ESP_OK;
 }

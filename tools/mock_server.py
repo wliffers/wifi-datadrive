@@ -1,62 +1,111 @@
 #!/usr/bin/env python3
 """Mock server for the "WiFi DataDrive" web UI (MOCK ONLY - no real device involved).
 
-Serves the single-file web UI and implements the HTTP API of docs/07_api.md with an
-in-memory file store, so every state of the UI can be exercised on the PC without the
-dongle. Python 3.10+, standard library only.
+Serves the single-file web UI and implements the HTTP API version 3 of docs/09_api_v3.md
+(login with roles, folders, Wi-Fi list, update; everything it does not mention follows
+docs/07_api.md) with an in-memory file tree, so every state of the UI can be exercised on
+the PC without the dongle. Python 3.10+, standard library only.
 
 Usage
 -----
     python tools/mock_server.py [--port 8080] [--bind 127.0.0.1]
                                 [--html firmware/printdrive/main/web/index.html]
                                 [--scenario NAME] [--upload-kbps 400]
+                                [--next-version 0.3.1] [--no-auth]
 
 Then open http://127.0.0.1:8080/ . The HTML file is re-read from disk on every request
 (edit, save, reload). Relative paths are resolved against the repository root, the
 current directory does not matter. `--bind 0.0.0.0` makes the mock reachable from a
 phone in the same network. Stop with Ctrl+C.
 
+Start state: scenario usb_active, one account admin / admin (the session reports
+default_password: true). Every scenario starts with exactly that, `two_users` adds more.
+
 Examples
 --------
     python tools/mock_server.py
     python tools/mock_server.py --scenario files --upload-kbps 150
     python tools/mock_server.py --port 8099 --scenario ap_setup --bind 0.0.0.0
+    python tools/mock_server.py --scenario two_users --no-auth     # old tests without login
+
+    # scripts: HTTP Basic on every request (POST needs the X-PrintDrive header)
+    curl -u admin:admin "http://127.0.0.1:8080/api/status"
+    curl -u admin:admin "http://127.0.0.1:8080/api/files?dir=Projekte/Drachen"
+    curl -u admin:admin -H "X-PrintDrive: 1" -X POST "http://127.0.0.1:8080/api/mkdir?path=Neu"
+    curl -u admin:admin -H "X-PrintDrive: 1" -X POST --data-binary @Teil.3mf \\
+         "http://127.0.0.1:8080/api/push?path=Projekte/Teil.3mf"       # one step, takes over the drive
+    curl -u admin:admin -H "X-PrintDrive: 1" -X POST --data-binary @printdrive.bin \\
+         "http://127.0.0.1:8080/api/ota"                                # first byte must be 0xE9
+
+    # browser-like: session cookie
+    curl -c jar -H "X-PrintDrive: 1" -X POST -d "user=admin&pass=admin" http://127.0.0.1:8080/api/login
+    curl -b jar http://127.0.0.1:8080/api/session
+
+    # control endpoints (no login, no CSRF header)
     curl "http://127.0.0.1:8080/mock/set?host_writing=hold&delay_ms=300"
-    curl "http://127.0.0.1:8080/mock/scenario?name=full"
+    curl "http://127.0.0.1:8080/mock/scenario?name=two_users"
+    curl "http://127.0.0.1:8080/mock/set?fail_next=NO_SPACE@/api/copy&copy_kbps=2000"
 
 Behaviour mirrored from the firmware
 ------------------------------------
-* One request at a time: a running upload blocks every other request (also status polls).
+* One request at a time: a running upload (or copy) blocks every other request (also
+  status polls). `copy_kbps` makes a copy take as long as the data would on the device.
 * Every POST needs the header `X-PrintDrive: 1`, otherwise 403 FORBIDDEN.
+* Login is mandatory except for GET / /index.html /manifest.webmanifest /icon-180.png
+  /icon-192.png /icon-512.png /api/session and POST /api/login (otherwise 401 UNAUTHORIZED).
+  Session cookie `dd_session` (64 hex characters, HttpOnly, SameSite=Strict) or HTTP Basic
+  on any request. Max 8 sessions (the oldest is displaced), 12 h idle expiry, all gone
+  after a restart (format/reboot/update). 5 wrong passwords in a row lock every login for
+  30 s (429 LOCKED, also for Basic and for a wrong `old` password). Roles: `user` and
+  `admin` (403 FORBIDDEN_ROLE) exactly as in the table of section 2.3; max 8 users,
+  LAST_ADMIN, USER_LIMIT, BAD_USER, BAD_PASSWORD, EXISTS; changing a password ends the
+  user's other sessions. /mock/* is never authenticated.
+* Files and folders: tree with folders (depth <= 8, path <= 240 bytes, segment rules of
+  the contract, BAD_NAME), case-insensitive names like FAT. mkdir, delete (recursive=1),
+  move (also rename; case-only rename allowed), copy (recursive, NO_SPACE pre-check with
+  64 KiB reserve), upload/check, upload and the one-step push (take-over rules of
+  /api/mode?target=app, drive is provided to the USB host again afterwards).
 * Owner state machine app/usb with HOST_ACTIVE / HOST_WRITING / BUSY, file operations
   only while the owner is `app`, name/type/space/content checks of uploads, German
-  error texts, restart after format/reboot (the mock is unreachable for about 4 s; in
-  download mode until `/mock/set?online=1`).
-* Uploads are read at a limited rate (default 400 KB/s) so progress bars are visible.
-* Uploaded content is kept in memory (files above 64 MiB: only the first 64 KiB are
-  kept, the reported size stays). Scenario files report a fake `size`; a download
+  error texts, restart after format/reboot/update (the mock is unreachable for about 4 s;
+  in download mode until `/mock/set?online=1`).
+* Uploads and updates are read at a limited rate (default 400 KB/s) so progress bars are
+  visible. Uploaded content is kept in memory (files above 64 MiB: only the first 64 KiB
+  are kept, the reported size stays). Scenario files report a fake `size`; a download
   returns the few bytes that are really stored.
+* Update: POST /api/ota accepts any body whose first byte is 0xE9 (INVALID_FILE otherwise),
+  then restarts and reports the version of `--next-version` (default 0.3.1), the other
+  partition and `pending_verify: true` for the first 15 s.
+* Static files: manifest and icons are served from firmware/printdrive/main/web/
+  (manifest.webmanifest, icons/icon-180.png ...) if they exist, else generated placeholders.
 * Not mirrored: the reported IP is 192.0.2.152 and the hostname `datadrive-mock`, so
-  nobody ends up on a real dongle by following a link shown in the UI.
+  nobody ends up on a real dongle by following a link shown in the UI. Passwords are
+  kept in plain text in memory (no PBKDF2).
 
 Scenarios (`--scenario NAME` or `GET /mock/scenario?name=NAME`)
 ---------------------------------------------------------------
-    usb_active    default: drive provided to a connected USB host, a few files
+    usb_active    default: drive provided to a connected USB host, a few files, 2 folders
+    default_login same content as usb_active; the explicit name of the start state
+                  (only admin / admin, default password still set)
+    two_users     owner app, files + folders; accounts admin/admin and role user: gast/gast123
     usb_no_host   drive provided to USB, but no host connected (take-over needs no force)
-    files         owner app, 14 varied files (bytes to hundreds of MB), 2 hidden folders
+    files         owner app, 14 varied files, nested folders (3-4 levels, umlauts and spaces,
+                  an empty folder "Leerer Ordner"), 2 hidden folders
     empty         owner app, no files
     full          owner app, almost no free space (180 KiB)
     no_fs         no readable file system (needs_format), microSD
-    ap_setup      Wi-Fi not configured, setup access point active
+    ap_setup      Wi-Fi not configured, setup access point active, no stored network
     flash_medium  internal flash (10.8 MB) instead of the microSD card
-    many          owner app, 300 files, list not truncated
+    many          owner app, 300 files + folders (also an empty one), list not truncated
     truncated     owner app, 1200 files, list truncated (32 KiB list buffer like the firmware)
-A scenario switch resets all mock settings below (uptime keeps running).
+A scenario switch resets all mock settings below (uptime keeps running), including users
+(back to admin/admin), sessions (everybody is logged out) and the stored Wi-Fi networks.
 
-Control endpoints (GET, no CSRF header, exist only in the mock)
----------------------------------------------------------------
+Control endpoints (GET, no CSRF header, no login, exist only in the mock)
+-------------------------------------------------------------------------
     /mock                 short help (JSON)
-    /mock/state           internal state incl. the current /api/status answer
+    /mock/state           internal state incl. users (no passwords), session count, tree
+                          summary, Wi-Fi list, file list and the current /api/status answer
     /mock/scenario?name=  switch scenario (without name: list of scenarios)
     /mock/set?key=value&...   change state; several keys per call are allowed:
 
@@ -75,29 +124,43 @@ Control endpoints (GET, no CSRF header, exist only in the mock)
     total=<bytes>           size of the medium (suffix K/M/G allowed)
     fill=<bytes>            extra used space that belongs to no file (suffix K/M/G)
     types=all|.3mf|.3mf,.gcode   allowed upload types (BAD_TYPE for everything else)
-    dirs=<n>                number of hidden folders reported by /api/files
+    dirs=<n>                number of hidden folders in the main directory
     wifi=sta|ap|connecting
-    upload_kbps=<n>         upload rate limit in KiB/s (0 = unlimited)
+    wifi_count=<0..5>       number of stored Wi-Fi networks (first = the current one)
+    upload_kbps=<n>         upload/update rate limit in KiB/s (0 = unlimited)
+    copy_kbps=<n>           /api/copy takes size/rate seconds (0 = instant; blocks the server)
     delay_ms=<n>            artificial latency of every /api request
     online=0|1              0: connections are accepted and reset without an answer
+    auth=0|1                0: no authentication at all, everybody is admin (old tests);
+                            reset to 1 by a scenario switch unless started with --no-auth
+    login_locked=1|0        1: every login is refused with LOCKED for 30 s; 0 clears the lock
+    session_expire=1        all sessions end, the next request answers 401 UNAUTHORIZED
     fail_next=<CODE>        the next POST fails with that error code (proper HTTP status
-                            and German text). `CODE@/api/upload` limits it to one path,
-                            e.g. to let /api/upload/check pass first. `none` clears it.
-    upload_fail_at=<pct>    the next upload connection is reset at that percentage
+                            and German text; works for every POST of API v3). `CODE@/api/path`
+                            limits it to one path, e.g. NO_SPACE@/api/copy, and then also
+                            applies to a GET of that path (e.g. IO@/api/files). `none` clears.
+    upload_fail_at=<pct>    the next upload/push connection is reset at that percentage
     other_upload=0|1        status shows an upload by another client; mode, upload,
-                            rename, delete, format and reboot answer BUSY
+                            push, mkdir, delete, move, copy, format and reboot answer BUSY
+    ota_fail=<CODE>|none    every /api/ota fails with that code (after the body, except
+                            BUSY/HOST_WRITING/TOO_LARGE) until cleared
+    next_version=<x.y.z>    version reported after the next successful /api/ota
     reset=1                 back to the start of the current scenario
 """
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import calendar
 import collections
+import hmac
 import io
 import json
 import math
 import random
 import re
+import secrets
 import select
 import signal
 import socket
@@ -107,6 +170,7 @@ import sys
 import time
 import traceback
 import zipfile
+import zlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import unquote_to_bytes
@@ -114,7 +178,8 @@ from urllib.parse import unquote_to_bytes
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HTML = "firmware/printdrive/main/web/index.html"
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
+NEXT_VERSION = "0.3.1"           # reported after a successful POST /api/ota
 CSRF_HEADER = "X-PrintDrive"
 NAME_MAX = 120                      # DRIVE_NAME_MAX: bytes (UTF-8) of an uploaded/renamed name
 FILE_NAME_MAX = 255                 # DRIVE_FILE_NAME_MAX: existing (host-created) names
@@ -131,40 +196,72 @@ SD_TOTAL = 62_525_505_536
 FLASH_TOTAL = 11_288_576            # shown as 10.8 MB
 FAKE_IP = "192.0.2.152"             # TEST-NET-1: never a real device
 SOCKET_TIMEOUT_S = 20
+PATH_DEPTH_MAX = 8                  # levels of a path (contract 3.1)
+PATH_BYTES_MAX = 240                # total length of a path in bytes
+USERS_MAX = 8
+SESSIONS_MAX = 8
+SESSION_IDLE_S = 12 * 3600          # a session expires after 12 h without a request
+LOCK_FAILS = 5                      # wrong passwords in a row ...
+LOCK_S = 30                         # ... lock every login for this long
+WIFI_MAX = 5
+OTA_MAX = 0x1F0000                  # size of one firmware partition
+OTA_VERIFY_S = 15                   # a new firmware counts as good after this uptime
+SESSION_COOKIE = "dd_session"
+HIDDEN_DIR_NAMES = ["System Volume Information", ".Trash-1000", ".Spotlight-V100", ".fseventsd",
+                    ".TemporaryItems", ".Trashes", ".DS_Store_dir", ".git_tmp"]
+WIFI_POOL = ["Werkstatt", "Büro Gast", "Handy-Hotspot", "Keller 2.4G"]
 
 # code -> (HTTP status, German text). Texts are those of drive_result_str() in drive.c.
 ERRORS = {
     "BAD_NAME": (400, "Ungültiger Dateiname."),
     "BAD_REQUEST": (400, "Parameter fehlt oder ist ungültig"),
     "INCOMPLETE": (400, "Die Übertragung war unvollständig."),
+    "BAD_USER": (400, "Ungültiger Benutzername. Erlaubt sind 1 bis 24 Zeichen: Buchstaben, Ziffern, Punkt, Unterstrich und Bindestrich."),
+    "BAD_PASSWORD": (400, "Das Passwort muss zwischen 5 und 64 Zeichen lang sein."),
+    "IS_DIR": (400, "Das ist ein Ordner, keine Datei."),
+    "UNAUTHORIZED": (401, "Bitte zuerst anmelden."),
+    "BAD_LOGIN": (401, "Benutzername oder Passwort ist falsch."),
     "FORBIDDEN": (403, "Anfrage nicht erlaubt."),
-    "NOT_FOUND": (404, "Die Datei wurde nicht gefunden."),
+    "FORBIDDEN_ROLE": (403, "Dafür sind Administratorrechte nötig."),
+    "NOT_FOUND": (404, "Die Datei oder der Ordner wurde nicht gefunden."),
     "BUSY": (409, "Es läuft gerade eine Dateiübertragung. Bitte warten, bis sie abgeschlossen ist."),
     "HOST_ACTIVE": (409, "Das USB-Gerät verwendet das Laufwerk noch. Bitte dort zuerst auswerfen oder das Trennen bestätigen."),
     "HOST_WRITING": (409, "Das USB-Gerät schreibt gerade auf das Laufwerk. Bitte warten, bis es fertig ist."),
     "WRONG_OWNER": (409, "Das geht nur, solange die Dateiverwaltung aktiv ist."),
     "NO_FS": (409, "Der Speicher ist nicht lesbar und muss formatiert werden."),
-    "EXISTS": (409, "Eine Datei mit diesem Namen gibt es bereits."),
+    "EXISTS": (409, "Eine Datei oder ein Ordner mit diesem Namen gibt es bereits."),
+    "DIR_NOT_EMPTY": (409, "Der Ordner ist nicht leer."),
+    "LAST_ADMIN": (409, "Der letzte Administrator kann nicht entfernt werden."),
+    "USER_LIMIT": (409, "Es sind bereits 8 Benutzer angelegt. Bitte zuerst einen löschen."),
+    "WIFI_LIMIT": (409, "Es sind bereits 5 WLANs gespeichert. Bitte zuerst eines entfernen."),
     "TOO_LARGE": (413, "Die Datei ist zu groß – möglich sind höchstens 4 GB pro Datei."),
     "BAD_TYPE": (415, "Dieser Dateityp ist nicht erlaubt."),
     "INVALID_FILE": (422, "Die Datei ist unvollständig oder beschädigt (keine gültige 3MF-Datei)."),
     "IO": (500, "Lese- oder Schreibfehler auf dem Speicher."),
+    "LOCKED": (429, "Zu viele Fehlversuche. Bitte in 30 Sekunden erneut versuchen."),
     "NO_SPACE": (507, "Nicht genug freier Speicher."),
 }
-# With fail_next on /api/upload these are reported after the body was received (like a
+TEXT_NO_USER = "Diesen Benutzer gibt es nicht."
+TEXT_USER_EXISTS = "Diesen Benutzer gibt es schon."
+TEXT_NO_WIFI = "Dieses WLAN ist nicht gespeichert."
+TEXT_BAD_FIRMWARE = "Das ist keine gültige Firmware-Datei für diesen Chip."
+# With fail_next on /api/upload, /api/push and /api/ota these are reported after the body was received (like a
 # failed final check on the device), all others right away.
 LATE_UPLOAD_ERRORS = {"INVALID_FILE", "INCOMPLETE", "IO"}
+UPLOAD_PATHS = ("/api/upload", "/api/push", "/api/ota")
 
 SCENARIO_HELP = {
-    "usb_active": "default: drive provided to a connected USB host, a few files",
+    "usb_active": "default: drive provided to a connected USB host, a few files and folders",
+    "default_login": "like usb_active; explicit name for the start state: only admin/admin, default password",
+    "two_users": "owner app, files and folders; accounts admin/admin and user 'gast'/'gast123'",
     "usb_no_host": "drive provided to USB, but no host connected",
-    "files": "owner app, 14 varied files, 2 hidden folders",
+    "files": "owner app, 14 varied files + nested folders (umlauts, empty folder), 2 hidden folders",
     "empty": "owner app, no files",
     "full": "owner app, almost no free space",
     "no_fs": "no readable file system (needs_format)",
     "ap_setup": "Wi-Fi not configured, setup access point active",
     "flash_medium": "internal flash (10.8 MB) instead of microSD",
-    "many": "owner app, 300 files, not truncated",
+    "many": "owner app, 300 files + a few folders, not truncated",
     "truncated": "owner app, 1200 files, list truncated",
 }
 
@@ -182,14 +279,21 @@ SET_HELP = {
     "total": "bytes (suffix K/M/G allowed)",
     "fill": "bytes of extra used space (suffix K/M/G allowed)",
     "types": "all | .3mf | .3mf,.gcode",
-    "dirs": "number of hidden folders",
+    "dirs": "number of hidden folders in the main directory",
     "wifi": "sta|ap|connecting",
     "upload_kbps": "KiB/s, 0 = unlimited",
     "delay_ms": "latency per /api request",
     "online": "0|1",
-    "fail_next": "error CODE for the next POST, optional CODE@/api/path, 'none' clears",
+    "fail_next": "error CODE for the next POST, optional CODE@/api/path (then GET of that path too), 'none' clears",
     "upload_fail_at": "percent at which the next upload connection is reset, 'none' clears",
     "other_upload": "0|1",
+    "auth": "0|1 (0: no authentication at all, everybody is admin; reset by a scenario switch)",
+    "login_locked": "0|1 (1: logins are refused with LOCKED for 30 s)",
+    "session_expire": "1 (all sessions end, the next request gets 401)",
+    "wifi_count": "0..5 (number of stored networks)",
+    "copy_kbps": "KiB/s for /api/copy, 0 = unlimited (makes the blocking visible)",
+    "ota_fail": "error CODE for every /api/ota until 'none' (e.g. INVALID_FILE, IO)",
+    "next_version": "version reported after the next successful /api/ota (default 0.3.1)",
     "reset": "1",
 }
 
@@ -291,6 +395,75 @@ def check_existing_name(name):
     return None
 
 
+def parse_path(raw, existing: bool = False):
+    """Contract 3.1. Returns (segments, None) or (None, "BAD_NAME").
+    existing=False: path of something that is created (strict segment rules, 240 bytes).
+    existing=True: path of something that is read/deleted/used as source (host-created names up
+    to 255 bytes per segment; the 240-byte total only applies to new names)."""
+    if raw is None:
+        return None, "BAD_NAME"
+    if raw == "":
+        return [], None
+    if raw.startswith("/") or raw.endswith("/"):
+        return None, "BAD_NAME"
+    segs = raw.split("/")
+    if len(segs) > PATH_DEPTH_MAX:
+        return None, "BAD_NAME"
+    if not existing and len(raw.encode("utf-8", "surrogatepass")) > PATH_BYTES_MAX:
+        return None, "BAD_NAME"
+    for seg in segs:
+        if (check_existing_name(seg) if existing else check_name(seg)):
+            return None, "BAD_NAME"
+    return segs, None
+
+
+def make_png(size: int) -> bytes:
+    """Small placeholder icon: blue square with a light 'USB stick' shape."""
+    bg, fg, ink = bytes((0x1F, 0x6F, 0xEB)), bytes((0xF4, 0xF7, 0xFB)), bytes((0x1F, 0x6F, 0xEB))
+    x0, x1 = size * 36 // 100, size * 64 // 100
+    w = (x1 - x0) // 5
+    rows = []
+    for y in range(size):
+        if size * 14 // 100 <= y < size * 30 // 100:                     # plug
+            row = bg * (x0 + w) + fg * (x1 - x0 - 2 * w) + bg * (size - x1 + w)
+        elif size * 30 // 100 <= y < size * 86 // 100:                   # body
+            if size * 52 // 100 <= y < size * 58 // 100:                 # label strip
+                row = bg * x0 + fg * w + ink * (x1 - x0 - 2 * w) + fg * w + bg * (size - x1)
+            else:
+                row = bg * x0 + fg * (x1 - x0) + bg * (size - x1)
+        else:
+            row = bg * size
+        rows.append(bytes(1) + row)
+
+    def chunk(tag, data):
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+    return (bytes((137, 80, 78, 71, 13, 10, 26, 10)) + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b""))
+
+
+MANIFEST_FALLBACK = json.dumps({
+    "name": "WiFi DataDrive", "short_name": "DataDrive", "start_url": "/", "scope": "/",
+    "display": "standalone", "background_color": "#1f6feb", "theme_color": "#1f6feb",
+    "icons": [{"src": f"/icon-{n}.png", "sizes": f"{n}x{n}", "type": "image/png"} for n in (180, 192, 512)],
+}, ensure_ascii=False).encode("utf-8")
+_PNG_CACHE = {}
+
+
+def icon_png(size: int) -> bytes:
+    if size not in _PNG_CACHE:
+        _PNG_CACHE[size] = make_png(size)
+    return _PNG_CACHE[size]
+
+
+def valid_username(name) -> bool:
+    return bool(name) and re.fullmatch(r"[A-Za-z0-9._-]{1,24}", name) is not None
+
+
+def valid_password(pw) -> bool:
+    return pw is not None and 5 <= len(pw.encode("utf-8", "surrogatepass")) <= 64
+
+
 def parse_bool(v: str) -> bool:
     lv = (v or "").strip().lower()
     if lv in ("1", "true", "on", "yes"):
@@ -323,21 +496,65 @@ def is_cleared(v: str) -> bool:
 
 # ============================================================== simulated device
 
-class MockFile:
-    __slots__ = ("name", "data", "size", "mtime")
+class Node:
+    """A file or a folder of the in-memory tree. Children are keyed by name.lower() (FAT)."""
+    __slots__ = ("name", "is_dir", "data", "size", "mtime", "children")
 
-    def __init__(self, name: str, data: bytes, size: int, mtime: int):
+    def __init__(self, name: str, is_dir: bool = False, data: bytes = b"", size: int = 0, mtime: int = 0):
         self.name = name
-        self.data = data      # bytes really kept in memory
-        self.size = size      # size reported by the API (may be larger than len(data))
+        self.is_dir = is_dir
+        self.data = data          # bytes really kept in memory
+        self.size = size          # size reported by the API (may be larger than len(data))
         self.mtime = mtime
+        self.children = {} if is_dir else None
+
+
+def walk(node: Node, prefix: str = ""):
+    """Yields (path, node) for everything below `node` (depth first, directory order)."""
+    for child in list(node.children.values()):
+        path = prefix + child.name
+        yield path, child
+        if child.is_dir:
+            yield from walk(child, path + "/")
+
+
+def subtree_size(node: Node) -> int:
+    if not node.is_dir:
+        return node.size
+    return sum(subtree_size(c) for c in node.children.values())
+
+
+def subtree_depth(node: Node) -> int:
+    """Levels the node itself occupies (1 for a file or an empty folder)."""
+    if not node.is_dir or not node.children:
+        return 1
+    return 1 + max(subtree_depth(c) for c in node.children.values())
+
+
+def clone(node: Node, name: str) -> Node:
+    c = Node(name, node.is_dir, node.data, node.size, node.mtime)
+    if node.is_dir:
+        for child in node.children.values():
+            c.children[child.name.lower()] = clone(child, child.name)
+    return c
+
+
+def is_hidden(name: str) -> bool:
+    return name.startswith(".") or name.lower() == "system volume information"
 
 
 class Device:
-    def __init__(self, upload_kbps: int, scenario: str = "usb_active"):
+    def __init__(self, upload_kbps: int, scenario: str = "usb_active", next_version: str = NEXT_VERSION,
+                 default_auth: bool = True):
         self.default_upload_kbps = upload_kbps
+        self.default_auth = default_auth
+        self.next_version = next_version
         self.boot_t = time.monotonic()
         self.scenario = ""
+        self.version = VERSION
+        self.pending_version = None
+        self.ota_partition = "ota_0"
+        self.ota_verify_until = None      # monotonic time until which pending_verify is true
         self._log = collections.deque(maxlen=600)
         self._log_ms = 0
         self.apply_scenario(scenario)
@@ -363,13 +580,19 @@ class Device:
         self.total = SD_TOTAL
         self.sector = 512
         self.fill = 0
-        self.files = {}                   # name.lower() -> MockFile (FAT ignores case)
-        self.dirs = 0
+        self.root = Node("", True)        # main directory
         self.types = "all"
         self.wifi_mode = "sta"
         self.ssid = "MeinWLAN"
+        self.networks = ["MeinWLAN"]      # stored networks (passwords are never kept/reported)
         self.wifi_connect_at = None
         self.clock_offset = None          # set by the firmware's undocumented upload param `now`
+        # authentication
+        self.auth_enabled = self.default_auth
+        self.users = [{"name": "admin", "role": "admin", "pw": "admin"}]
+        self.sessions = collections.OrderedDict()    # token -> {"user": name, "last": monotonic}
+        self.fails = 0
+        self.lock_until = 0.0
         # mock controls
         self.online = True
         self.pending_boot = False
@@ -379,17 +602,64 @@ class Device:
         self.upload_fail_at = None        # percent
         self.other_upload = None          # monotonic start time
         self.upload_kbps = self.default_upload_kbps
+        self.copy_kbps = 0
+        self.ota_fail = None
 
-    def add_file(self, name: str, size=None, age_s: float = 3600, mtime=None, data=None):
-        data = sample_bytes(name) if data is None else data
+    # ---------------------------------------------------------- tree helpers
+
+    def resolve(self, segs):
+        """Node at the path (list of segments) or None."""
+        node = self.root
+        for seg in segs:
+            if not node.is_dir:
+                return None
+            node = node.children.get(seg.lower())
+            if node is None:
+                return None
+        return node
+
+    def mkdirs(self, path: str, age_s: float = 86400):
+        """Scenario helper: creates the folder and its parents."""
+        node = self.root
+        for seg in path.split("/"):
+            nxt = node.children.get(seg.lower())
+            if nxt is None:
+                nxt = Node(seg, True, mtime=local_now() - int(age_s))
+                node.children[seg.lower()] = nxt
+            node = nxt
+        return node
+
+    def add_file(self, path: str, size=None, age_s: float = 3600, mtime=None, data=None):
+        data = sample_bytes(path) if data is None else data
         if mtime is None:
             mtime = local_now() - int(age_s)
-        self.files[name.lower()] = MockFile(name, data, len(data) if size is None else size, mtime)
+        parent_path, _, name = path.rpartition("/")
+        parent = self.mkdirs(parent_path) if parent_path else self.root
+        parent.children[name.lower()] = Node(name, False, data, len(data) if size is None else size, mtime)
+
+    def set_hidden_dirs(self, n: int):
+        for key in [k for k, c in self.root.children.items() if c.is_dir and is_hidden(c.name)]:
+            del self.root.children[key]
+        for name in HIDDEN_DIR_NAMES[:n]:
+            self.root.children[name.lower()] = Node(name, True, mtime=local_now() - 90 * 86400)
+
+    def hidden_dir_count(self) -> int:
+        return sum(1 for c in self.root.children.values() if c.is_dir and is_hidden(c.name))
 
     def _few_files(self):
         self.add_file("Benchy.3mf", 4_312_876, 2 * 3600)
         self.add_file("Würfel.3mf", 524_288, 26 * 3600)
         self.add_file("Halterung Kabelkanal v2.3mf", 812_300, 9 * 86400)
+
+    def _few_folders(self):
+        self.add_file("Projekte/Drachen/Drachenkopf.3mf", 6_291_456, 3 * 86400)
+        self.add_file("Projekte/Drachen/Teile/Flügel links.3mf", 2_097_152, 3 * 86400)
+        self.add_file("Projekte/Drachen/Teile/Flügel rechts.3mf", 2_097_152, 3 * 86400 + 60)
+        self.add_file("Projekte/Drachen/Teile/Schwanz/Segment 01.gcode", 3_145_728, 4 * 86400)
+        self.add_file("Projekte/Halterungen/Wandhalter.3mf", 733_184, 12 * 86400)
+        self.add_file("Größen Prüfung äöü/Ölwanne für Küche.3mf", 1_048_576, 20 * 86400)
+        self.add_file("Größen Prüfung äöü/Zweiter Ordner/Notiz zum Drucken.txt", None, 6 * 86400)
+        self.mkdirs("Leerer Ordner")
 
     def _varied_files(self):
         self._few_files()
@@ -419,6 +689,19 @@ class Device:
 
     def _sc_usb_active(self):
         self._few_files()
+        self.add_file("Würfel Varianten/Würfel 20mm.3mf", 311_296, 30 * 3600)
+        self.add_file("Würfel Varianten/Klein/Würfel 10mm.3mf", 201_728, 30 * 3600)
+        self.mkdirs("Neu")
+
+    def _sc_default_login(self):
+        self._sc_usb_active()
+
+    def _sc_two_users(self):
+        self._as_app()
+        self._varied_files()
+        self._few_folders()
+        self.set_hidden_dirs(2)
+        self.users.append({"name": "gast", "role": "user", "pw": "gast123"})
 
     def _sc_usb_no_host(self):
         self._few_files()
@@ -428,7 +711,8 @@ class Device:
     def _sc_files(self):
         self._as_app()
         self._varied_files()
-        self.dirs = 2
+        self._few_folders()
+        self.set_hidden_dirs(2)
 
     def _sc_empty(self):
         self._as_app()
@@ -447,6 +731,7 @@ class Device:
         self._few_files()
         self.wifi_mode = "ap"
         self.ssid = ""
+        self.networks = []
 
     def _sc_flash_medium(self):
         self._as_app()
@@ -457,11 +742,15 @@ class Device:
     def _sc_many(self):
         self._as_app()
         self._numbered_files(300, "Teil_")
+        self._few_folders()
+        self.add_file("Archiv 2025/Q1/Teil_alt_0001.3mf", 1_200_000, 300 * 86400)
+        self.add_file("Archiv 2025/Q2/Teil_alt_0002.3mf", 1_300_000, 250 * 86400)
+        self.mkdirs("Archiv 2025/Leer")
 
     def _sc_truncated(self):
         self._as_app()
         self._numbered_files(1200, "Serie_A_Bauteil_")
-        self.dirs = 3
+        self.set_hidden_dirs(3)
 
     def apply_scenario(self, name: str):
         fn = getattr(self, "_sc_" + name, None)
@@ -488,7 +777,7 @@ class Device:
     def _boot_log(self):
         self._log.clear()
         boot = [
-            ("I", "main", f"WiFi DataDrive {VERSION}"),
+            ("I", "main", f"WiFi DataDrive {self.version}"),
             ("I", "board", "T-Dongle-S3, LCD 80x160, LED ok"),
         ]
         if self.sd:
@@ -557,6 +846,11 @@ class Device:
         self.clock_offset = None
         self.host_ejected = False
         self.last_read = self.last_write = None
+        self.sessions.clear()                   # sessions live in RAM only
+        self.fails, self.lock_until = 0, 0.0
+        if self.pending_version:
+            self.version, self.pending_version = self.pending_version, None
+            self.ota_verify_until = at + OTA_VERIFY_S
         if self.needs_format:
             self.owner, self.fs_ok = "app", False
         elif self.fs_ok and self.usb_connected:
@@ -568,13 +862,20 @@ class Device:
     # ---------------------------------------------------------- drive state
 
     def used_by_files(self) -> int:
-        return sum(f.size for f in self.files.values())
+        return sum(subtree_size(c) for c in self.root.children.values())
 
     def free(self) -> int:
         return max(0, self.total - self.fill - self.used_by_files())
 
-    def visible_files(self):
-        return [f for f in self.files.values() if not f.name.startswith(".")]
+    def visible_file_count(self) -> int:
+        def count(node):
+            n = 0
+            for c in node.children.values():
+                if is_hidden(c.name):
+                    continue
+                n += count(c) if c.is_dir else 1
+            return n
+        return count(self.root)
 
     def write_idle_ms(self) -> int:
         if self.write_hold:
@@ -637,86 +938,266 @@ class Device:
             return "WRONG_OWNER"
         return None if self.fs_ok else "NO_FS"
 
-    def upload_precheck(self, name, size: int, overwrite: bool):
-        """drive_check_name() + size limit + drive_upload_begin()"""
-        err = check_name(name, self.types)
+    def upload_static_check(self, path, size: int):
+        """drive_check_name() + size limit. Returns (segments, error code)."""
+        segs, err = parse_path(path)
         if err:
-            return err
+            return None, err
+        if not segs:
+            return None, "BAD_NAME"
+        err = check_name(segs[-1], self.types)       # BAD_TYPE
+        if err:
+            return None, err
         if size > 0xFFFFFFFF:
-            return "TOO_LARGE"
+            return None, "TOO_LARGE"
         if size == 0:
-            return "INVALID_FILE"
+            return None, "INVALID_FILE"
+        return segs, None
+
+    def upload_app_check(self, segs, size: int, overwrite: bool):
+        """drive_upload_begin(): everything that depends on the drive state."""
         err = self.require_app_fs()
         if err:
             return err
         if self.other_upload is not None:
             return "BUSY"
-        if name.lower() in self.files and not overwrite:
+        parent = self.resolve(segs[:-1])
+        if parent is None or not parent.is_dir:
+            return "NOT_FOUND"
+        old = parent.children.get(segs[-1].lower())
+        if old is not None and old.is_dir:
+            return "IS_DIR"
+        if old is not None and not overwrite:
             return "EXISTS"
         # The old file is only removed after success, so the new one needs its full size.
         if size + FREE_RESERVE > self.free():
             return "NO_SPACE"
         return None
 
-    def store_upload(self, name: str, data: bytes, size: int, mtime: int):
+    def upload_precheck(self, path, size: int, overwrite: bool):
+        segs, err = self.upload_static_check(path, size)
+        return err or self.upload_app_check(segs, size, overwrite)
+
+    def store_upload(self, segs, data: bytes, size: int, mtime: int):
         if mtime < MTIME_MIN:                    # not given: the device clock, if it was ever set
             mtime = local_now() + self.clock_offset if self.clock_offset is not None else 0
-        self.files.pop(name.lower(), None)       # overwrite replaces; new directory entry at the end
-        self.files[name.lower()] = MockFile(name, data, size, mtime)
-        self.log("I", "drive", f"upload ok '{name}'")
+        parent = self.resolve(segs[:-1])
+        name = segs[-1]
+        if parent is None or not parent.is_dir:  # folder vanished meanwhile (cannot happen: one request at a time)
+            return
+        parent.children.pop(name.lower(), None)  # overwrite replaces; new directory entry at the end
+        parent.children[name.lower()] = Node(name, False, data, size, mtime)
+        self.log("I", "drive", f"upload ok '{'/'.join(segs)}'")
 
-    def delete(self, name):
-        err = check_existing_name(name) or self.require_app_fs()
+    def _fs_ready(self):
+        err = self.require_app_fs()
         if err:
             return err
-        if self.other_upload is not None:
-            return "BUSY"
-        if name.lower() not in self.files:
-            return "NOT_FOUND"
-        del self.files[name.lower()]
-        self.log("I", "drive", f"deleted '{name}'")
-        return None
+        return "BUSY" if self.other_upload is not None else None
 
-    def rename(self, name, to):
-        """drive_rename()"""
-        err = check_existing_name(name) or check_name(to, self.types) or self.require_app_fs()
+    def list_dir(self, dir_path):
+        """Returns (listing dict, error code)."""
+        segs, err = parse_path(dir_path, existing=True)
+        err = err or self.require_app_fs()
         if err:
-            return err
-        if self.other_upload is not None:
-            return "BUSY"
-        if name == to:
-            return None
-        src = self.files.get(name.lower())
-        if src is None:
-            return "NOT_FOUND"
-        dst = self.files.get(to.lower())
-        if dst is not None and dst is not src:
-            return "EXISTS"
-        src.name = to                            # same object: only the case changes
-        if dst is None:                          # keep the position in the directory
-            self.files = {(to.lower() if f is src else key): f for key, f in self.files.items()}
-        self.log("I", "drive", f"renamed '{name}' -> '{to}'")
-        return None
-
-    def list_files(self) -> dict:
-        """drive_list(): the firmware packs the list into a 32 KiB buffer."""
+            return None, err
+        node = self.resolve(segs)
+        if node is None or not node.is_dir:
+            return None, "NOT_FOUND"
         out, used, truncated = [], 0, False
-        for f in self.visible_files():
-            need = 8 + len(f.name.encode("utf-8", "surrogatepass")) + 1
+        for c in node.children.values():
+            if is_hidden(c.name):
+                continue
+            need = 8 + len(c.name.encode("utf-8", "surrogatepass")) + 1   # packed list buffer of the firmware
             if used + need > LIST_BUF_SIZE:
                 truncated = True
                 continue
             used += need
-            out.append({"name": f.name, "size": f.size, "mtime": f.mtime})
-        return {"ok": True, "files": out, "dirs": self.dirs, "truncated": truncated}
+            out.append({"name": c.name, "type": "dir" if c.is_dir else "file",
+                        "size": 0 if c.is_dir else c.size, "mtime": 0 if c.is_dir else c.mtime})
+        return {"ok": True, "dir": "/".join(segs), "entries": out, "truncated": truncated}, None
+
+    def get_file(self, path):
+        segs, err = parse_path(path, existing=True)
+        err = err or self.require_app_fs()
+        if not err and not segs:
+            err = "IS_DIR"
+        if err:
+            return None, err
+        node = self.resolve(segs)
+        if node is None:
+            return None, "NOT_FOUND"
+        if node.is_dir:
+            return None, "IS_DIR"
+        return node, None
+
+    def mkdir(self, path):
+        segs, err = parse_path(path)
+        if not err and not segs:
+            err = "BAD_NAME"
+        err = err or self._fs_ready()
+        if err:
+            return err
+        parent = self.resolve(segs[:-1])
+        if parent is None or not parent.is_dir:
+            return "NOT_FOUND"
+        if segs[-1].lower() in parent.children:
+            return "EXISTS"
+        parent.children[segs[-1].lower()] = Node(segs[-1], True, mtime=local_now() + (self.clock_offset or 0))
+        self.log("I", "drive", f"mkdir '{'/'.join(segs)}'")
+        return None
+
+    def delete(self, path, recursive: bool):
+        segs, err = parse_path(path, existing=True)
+        if not err and not segs:
+            err = "BAD_NAME"
+        err = err or self._fs_ready()
+        if err:
+            return err
+        node = self.resolve(segs)
+        if node is None:
+            return "NOT_FOUND"
+        if node.is_dir and node.children and not recursive:
+            return "DIR_NOT_EMPTY"
+        del self.resolve(segs[:-1]).children[segs[-1].lower()]
+        self.log("I", "drive", f"deleted '{'/'.join(segs)}'")
+        return None
+
+    def _move_copy_prepare(self, src_path, dst_path, copy: bool):
+        """Common checks of move and copy. Returns (error, src_segs, dst_segs, src_node, dst_parent, dst_old)."""
+        src, err = parse_path(src_path, existing=True)
+        if not err and not src:
+            err = "BAD_NAME"
+        dst = None
+        if not err:
+            dst, err = parse_path(dst_path)
+            if not err and not dst:
+                err = "BAD_NAME"
+        err = err or self._fs_ready()
+        if err:
+            return err, None, None, None, None, None
+        node = self.resolve(src)
+        if node is None:
+            return "NOT_FOUND", None, None, None, None, None
+        dst_parent = self.resolve(dst[:-1])
+        if dst_parent is None or not dst_parent.is_dir:
+            return "NOT_FOUND", None, None, None, None, None
+        lsrc, ldst = [s.lower() for s in src], [s.lower() for s in dst]
+        if node.is_dir and len(ldst) > len(lsrc) and ldst[:len(lsrc)] == lsrc:
+            return "BAD_NAME", None, None, None, None, None       # folder into itself
+        if len(dst) - 1 + subtree_depth(node) > PATH_DEPTH_MAX:
+            return "BAD_NAME", None, None, None, None, None       # would exceed 8 levels
+        old = dst_parent.children.get(dst[-1].lower())
+        return None, src, dst, node, dst_parent, old
+
+    def move(self, src_path, dst_path):
+        """Rename and/or move (drive_move())."""
+        err, src, dst, node, dst_parent, old = self._move_copy_prepare(src_path, dst_path, False)
+        if err:
+            return err
+        if self.types != "all" and not node.is_dir and check_name(dst[-1], self.types):
+            return "BAD_TYPE"
+        if old is not None and old is not node:
+            return "EXISTS"
+        src_parent = self.resolve(src[:-1])
+        if src_parent is dst_parent:
+            # same folder: keep the position in the directory (only the name changes)
+            old_key, new_key = src[-1].lower(), dst[-1].lower()
+            node.name = dst[-1]
+            dst_parent.children = {(new_key if k == old_key else k): c for k, c in dst_parent.children.items()}
+        else:
+            del src_parent.children[src[-1].lower()]
+            node.name = dst[-1]
+            dst_parent.children[dst[-1].lower()] = node
+        self.log("I", "drive", f"moved '{'/'.join(src)}' -> '{'/'.join(dst)}'")
+        return None
+
+    def copy(self, src_path, dst_path):
+        """Recursive copy (drive_copy()). Blocks like the real device while it works."""
+        err, src, dst, node, dst_parent, old = self._move_copy_prepare(src_path, dst_path, True)
+        if err:
+            return err
+        if old is not None:
+            return "EXISTS"
+        total = subtree_size(node)
+        if total + FREE_RESERVE > self.free():
+            return "NO_SPACE"
+        if self.copy_kbps > 0:
+            end = time.monotonic() + total / (self.copy_kbps * 1024)
+            while True:
+                left = end - time.monotonic()
+                if left <= 0:
+                    break
+                time.sleep(min(left, 0.25))
+        dst_parent.children[dst[-1].lower()] = clone(node, dst[-1])
+        self.log("I", "drive", f"copied '{'/'.join(src)}' -> '{'/'.join(dst)}' ({total} bytes)")
+        return None
 
     def format(self):
-        self.files.clear()
-        self.dirs = 0
+        self.root = Node("", True)
         self.fill = 0
         self.needs_format = False
         self.fs_ok = True
         self.log("W", "drive", "format requested - restarting")
+
+    # ---------------------------------------------------------- authentication
+
+    def find_user(self, name):
+        lname = (name or "").lower()
+        for u in self.users:
+            if u["name"].lower() == lname:
+                return u
+        return None
+
+    def is_default_password(self, u) -> bool:
+        return u["name"].lower() == "admin" and u["pw"] == "admin"
+
+    def locked(self) -> bool:
+        return time.monotonic() < self.lock_until
+
+    def note_failure(self):
+        self.fails += 1
+        if self.fails >= LOCK_FAILS:
+            self.fails = 0
+            self.lock_until = time.monotonic() + LOCK_S
+            self.log("W", "auth", f"too many failed logins - locked for {LOCK_S} s")
+
+    def check_credentials(self, name, pw):
+        """Returns the user, or None (and counts the failure)."""
+        u = self.find_user(name)
+        ok = u is not None and hmac.compare_digest(u["pw"].encode("utf-8", "surrogatepass"),
+                                                   (pw or "").encode("utf-8", "surrogatepass"))
+        if ok:
+            self.fails = 0
+            return u
+        self.note_failure()
+        return None
+
+    def new_session(self, u) -> str:
+        while len(self.sessions) >= SESSIONS_MAX:
+            self.sessions.popitem(last=False)         # the oldest one is displaced
+        token = secrets.token_hex(32)
+        self.sessions[token] = {"user": u["name"], "last": time.monotonic()}
+        return token
+
+    def session_user(self, token):
+        s = self.sessions.get(token) if token else None
+        if s is None:
+            return None
+        now = time.monotonic()
+        u = self.find_user(s["user"])
+        if u is None or now - s["last"] > SESSION_IDLE_S:
+            del self.sessions[token]
+            return None
+        s["last"] = now
+        return u
+
+    def end_sessions(self, name, keep=None):
+        for tok in [t for t, s in self.sessions.items() if s["user"].lower() == name.lower() and t != keep]:
+            del self.sessions[tok]
+
+    def admin_count(self) -> int:
+        return sum(1 for u in self.users if u["role"] == "admin")
 
     # ---------------------------------------------------------- JSON views
 
@@ -733,7 +1214,7 @@ class Device:
         sta = self.wifi_mode == "sta"
         ap = self.wifi_mode in ("ap", "connecting")
         return {
-            "version": VERSION,
+            "version": self.version,
             "uptime_s": max(0, int(time.monotonic() - self.boot_t)),
             "heap": 140000 + random.randrange(-6, 7) * 512,
             "types": self.types,
@@ -744,7 +1225,7 @@ class Device:
                 "host_idle_ms": min(idles) if idles else -1, "host_write_idle_ms": write_idle,
                 "write_guard_ms": WRITE_GUARD_MS,
                 "total": self.total if known else 0, "free": self.free() if known else 0,
-                "files": len(self.visible_files()) if known else 0, "sector": self.sector,
+                "files": self.visible_file_count() if known else 0, "sector": self.sector,
             },
             "medium": {"sd": self.sd, "name": self.medium_name},
             "upload": upload,
@@ -755,7 +1236,26 @@ class Device:
                 "ap_active": ap, "ap_ssid": "DataDrive-54D5", "ap_ip": "192.168.4.1" if ap else "",
                 "hostname": "datadrive-mock",
             },
+            "ota": {"partition": self.ota_partition,
+                    "pending_verify": self.ota_verify_until is not None and time.monotonic() < self.ota_verify_until},
         }
+
+    def tree_summary(self) -> dict:
+        dirs = files = 0
+        depth = 0
+        for path, n in walk(self.root):
+            depth = max(depth, path.count("/") + 1)
+            if n.is_dir:
+                dirs += 1
+            else:
+                files += 1
+        return {"dirs": dirs, "files": files, "max_depth": depth, "used": self.used_by_files(),
+                "root": [c.name + ("/" if c.is_dir else "") for c in list(self.root.children.values())[:40]]}
+
+    def flat_files(self) -> list:
+        return [{"path": p, "type": "dir"} if n.is_dir else
+                {"path": p, "type": "file", "size": n.size, "stored": len(n.data), "mtime": n.mtime}
+                for p, n in walk(self.root)]
 
     def dump(self) -> dict:
         offline_for = None
@@ -774,15 +1274,24 @@ class Device:
             "host_write_applied": self.host_write_applied,
             "host_writing": "hold" if self.write_hold else self.host_wrote_recently(),
             "sd": self.sd, "total": self.total, "fill": self.fill, "free": self.free(),
-            "types": self.types, "dirs": self.dirs, "wifi": self.wifi_mode,
+            "types": self.types, "dirs": self.hidden_dir_count(), "wifi": self.wifi_mode,
             "upload_kbps": self.upload_kbps, "delay_ms": self.delay_ms,
             "fail_next": None if self.fail_next is None else
             self.fail_next[0] + ("@" + self.fail_next[1] if self.fail_next[1] else ""),
             "upload_fail_at": self.upload_fail_at,
             "other_upload": self.other_upload is not None,
-            "file_count": len(self.files),
-            "files": [{"name": f.name, "size": f.size, "stored": len(f.data), "mtime": f.mtime}
-                      for f in self.files.values()],
+            "auth": self.auth_enabled,
+            "users": [{"name": u["name"], "role": u["role"], "default_password": self.is_default_password(u)}
+                      for u in self.users],
+            "sessions": len(self.sessions),
+            "login_locked": round(self.lock_until - time.monotonic(), 1) if self.locked() else False,
+            "failed_logins": self.fails,
+            "wifi_networks": [{"ssid": n, "active": self.wifi_mode == "sta" and n == self.ssid}
+                              for n in self.networks],
+            "copy_kbps": self.copy_kbps, "ota_fail": self.ota_fail,
+            "next_version": self.next_version, "version": self.version,
+            "tree": self.tree_summary(),
+            "files": self.flat_files(),
             "status": self.status(),
         }
 
@@ -798,7 +1307,7 @@ class Device:
             raise ValueError("a value could not be URL-decoded")
         v = {}
         for key in ("usb_connected", "usb_suspended", "host_ejected", "host_writable", "fs_ok", "needs_format",
-                    "online", "other_upload", "reset", "host_reading"):
+                    "online", "other_upload", "reset", "host_reading", "auth", "login_locked", "session_expire"):
             if key in q:
                 v[key] = parse_bool(q[key])
         if "sd" in q:
@@ -807,9 +1316,26 @@ class Device:
         for key in ("total", "fill"):
             if key in q:
                 v[key] = parse_size(q[key])
-        for key in ("dirs", "upload_kbps", "delay_ms"):
+        for key in ("dirs", "upload_kbps", "delay_ms", "copy_kbps"):
             if key in q:
                 v[key] = int(parse_nonneg(q[key]))
+        if "wifi_count" in q:
+            n = int(parse_nonneg(q["wifi_count"]))
+            if n > WIFI_MAX:
+                raise ValueError(f"wifi_count must be 0..{WIFI_MAX}")
+            v["wifi_count"] = n
+        if "ota_fail" in q:
+            if is_cleared(q["ota_fail"]) or q["ota_fail"] == "0":
+                v["ota_fail"] = None
+            else:
+                code = q["ota_fail"].strip().upper()
+                if code not in ERRORS:
+                    raise ValueError(f"ota_fail: unknown code '{code}', known: " + ", ".join(ERRORS))
+                v["ota_fail"] = code
+        if "next_version" in q:
+            if not re.fullmatch(r"[0-9A-Za-z.+-]{1,32}", q["next_version"]):
+                raise ValueError("next_version must look like 0.3.1")
+            v["next_version"] = q["next_version"]
         if "owner" in q:
             if q["owner"] not in ("app", "usb", "none"):
                 raise ValueError("owner must be app, usb or none")
@@ -858,7 +1384,7 @@ class Device:
         if "types" in v:
             self.types = v["types"]
         if "dirs" in v:
-            self.dirs = v["dirs"]
+            self.set_hidden_dirs(min(v["dirs"], len(HIDDEN_DIR_NAMES)))
         if "needs_format" in v:
             self.needs_format = v["needs_format"]
             self.fs_ok = not v["needs_format"]
@@ -920,6 +1446,30 @@ class Device:
             self.wifi_connect_at = None
             if v["wifi"] != "ap" and not self.ssid:
                 self.ssid = "MeinWLAN"
+            if v["wifi"] != "ap" and self.ssid not in self.networks and len(self.networks) < WIFI_MAX:
+                self.networks.insert(0, self.ssid)
+        if "wifi_count" in v:
+            n = v["wifi_count"]
+            first = self.ssid or "MeinWLAN"
+            self.networks = ([first] + [x for x in WIFI_POOL if x != first])[:n]
+            if n and self.wifi_mode != "ap":
+                self.ssid = self.networks[0]
+        if "copy_kbps" in v:
+            self.copy_kbps = v["copy_kbps"]
+        if "ota_fail" in v:
+            self.ota_fail = v["ota_fail"]
+        if "next_version" in v:
+            self.next_version = v["next_version"]
+        if "auth" in v:
+            self.auth_enabled = v["auth"]
+        if "login_locked" in v:
+            self.fails = 0
+            self.lock_until = time.monotonic() + LOCK_S if v["login_locked"] else 0.0
+            if v["login_locked"]:
+                notes.append(f"logins are refused with LOCKED for {LOCK_S} s")
+        if v.get("session_expire"):
+            self.sessions.clear()
+            notes.append("all sessions ended: the next request gets 401")
         if "other_upload" in v:
             self.other_upload = time.monotonic() if v["other_upload"] else None
         if "upload_kbps" in v:
@@ -937,8 +1487,11 @@ class Device:
                 notes.append("restart finished")
         return notes
 
-    def take_fail_next(self, path: str):
+    def take_fail_next(self, path: str, is_post: bool = True):
+        """POST: any pending fail_next, or one limited to this path. GET: only one limited to this path."""
         if self.fail_next is None or (self.fail_next[1] and self.fail_next[1] != path):
+            return None
+        if not is_post and not self.fail_next[1]:
             return None
         code = self.fail_next[0]
         self.fail_next = None
@@ -976,6 +1529,7 @@ class Handler(BaseHTTPRequestHandler):
     def _route(self, method: str):
         self._status = None
         self._info = ""
+        self._user, self._token, self._locked = None, None, False
         self.close_connection = True
         t0 = time.monotonic()
         path, _, query = self.path.partition("#")[0].partition("?")
@@ -995,6 +1549,8 @@ class Handler(BaseHTTPRequestHandler):
             ms = (time.monotonic() - t0) * 1000
             status = "---" if self._status is None else str(self._status)
             line = f"{time.strftime('%H:%M:%S')} {method:<4} {self.path} -> {status}"
+            if self._user is not None:
+                line += f" [{self._user['name']}]"
             if self._info:
                 line += " " + self._info
             print(f"{line} ({ms:.0f} ms)", flush=True)
@@ -1008,41 +1564,123 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/") and dev.delay_ms > 0:
             time.sleep(dev.delay_ms / 1000)
 
-        get = {
-            "/": self._index, "/index.html": self._index,
-            "/api/status": self._api_status, "/api/files": self._api_files,
-            "/api/download": self._api_download, "/api/log": self._api_log,
-            "/mock": self._mock_help, "/mock/": self._mock_help, "/mock/state": self._mock_state,
-            "/mock/set": self._mock_set, "/mock/scenario": self._mock_scenario,
-        }
-        post = {
-            "/api/mode": self._api_mode, "/api/upload/check": self._api_upload_check,
-            "/api/upload": self._api_upload, "/api/delete": self._api_delete,
-            "/api/rename": self._api_rename, "/api/settings/host_writable": self._api_host_writable,
-            "/api/wifi": self._api_wifi, "/api/format": self._api_format, "/api/reboot": self._api_reboot,
-        }
         clen = self._content_length()
-        if method == "GET" and path in get:
-            get[path](q)
-        elif method == "POST" and path in post:
-            # CSRF protection first, like check_csrf() in every POST handler.
+        if is_mock:                                   # control endpoints: never authenticated
+            mock = {"/mock": self._mock_help, "/mock/": self._mock_help, "/mock/state": self._mock_state,
+                    "/mock/set": self._mock_set, "/mock/scenario": self._mock_scenario}
+            if method == "GET" and path in mock:
+                mock[path](q)
+            elif path in mock:
+                self._drain(clen)
+                self._send(405, b"Specified method is invalid for this resource", "text/plain")
+            else:
+                self._drain(clen)
+                self._send(404, b"Nothing matches the given URI", "text/plain")
+            return
+
+        # (method, path) -> (handler, minimum role: None = no login, "user", "admin")
+        routes = {
+            ("GET", "/"): (self._index, None), ("GET", "/index.html"): (self._index, None),
+            ("GET", "/manifest.webmanifest"): (self._manifest, None),
+            ("GET", "/icon-180.png"): (lambda q: self._icon(180), None),
+            ("GET", "/icon-192.png"): (lambda q: self._icon(192), None),
+            ("GET", "/icon-512.png"): (lambda q: self._icon(512), None),
+            ("GET", "/api/session"): (self._api_session, None),
+            ("POST", "/api/login"): (self._api_login, None),
+            ("POST", "/api/logout"): (self._api_logout, "user"),
+            ("GET", "/api/users"): (self._api_users, "admin"),
+            ("POST", "/api/users/add"): (self._api_users_add, "admin"),
+            ("POST", "/api/users/delete"): (self._api_users_delete, "admin"),
+            ("POST", "/api/users/role"): (self._api_users_role, "admin"),
+            ("POST", "/api/users/password"): (self._api_users_password, "user"),
+            ("GET", "/api/status"): (self._api_status, "user"),
+            ("GET", "/api/files"): (self._api_files, "user"),
+            ("GET", "/api/download"): (self._api_download, "user"),
+            ("GET", "/api/log"): (self._api_log, "admin"),
+            ("GET", "/api/wifi/list"): (self._api_wifi_list, "admin"),
+            ("POST", "/api/mode"): (self._api_mode, "user"),
+            ("POST", "/api/mkdir"): (self._api_mkdir, "user"),
+            ("POST", "/api/delete"): (self._api_delete, "user"),
+            ("POST", "/api/move"): (self._api_move, "user"),
+            ("POST", "/api/copy"): (self._api_copy, "user"),
+            ("POST", "/api/upload/check"): (self._api_upload_check, "user"),
+            ("POST", "/api/upload"): (self._api_upload, "user"),
+            ("POST", "/api/push"): (self._api_push, "user"),
+            ("POST", "/api/settings/host_writable"): (self._api_host_writable, "admin"),
+            ("POST", "/api/wifi"): (self._api_wifi_add, "admin"),
+            ("POST", "/api/wifi/add"): (self._api_wifi_add, "admin"),
+            ("POST", "/api/wifi/delete"): (self._api_wifi_delete, "admin"),
+            ("POST", "/api/format"): (self._api_format, "admin"),
+            ("POST", "/api/reboot"): (self._api_reboot, "admin"),
+            ("POST", "/api/ota"): (self._api_ota, "admin"),
+        }
+        entry = routes.get((method, path))
+        if entry is None:
+            self._drain(clen)
+            if any(p == path for _, p in routes):
+                self._send(405, b"Specified method is invalid for this resource", "text/plain")
+            else:
+                self._send(404, b"Nothing matches the given URI", "text/plain")
+            return
+        handler, role = entry
+        if role is not None or path == "/api/session":
+            self._authenticate()
+        if role is not None:
+            if self._user is None:
+                self._drain(clen)
+                self._error("LOCKED" if self._locked else "UNAUTHORIZED")
+                return
+            if role == "admin" and self._user["role"] != "admin":
+                self._drain(clen)
+                self._error("FORBIDDEN_ROLE")
+                return
+        if method == "POST":
+            # CSRF protection, like check_csrf() in every POST handler.
             if self.headers.get(CSRF_HEADER) != "1":
                 self._drain(clen)
                 self._error("FORBIDDEN")
                 return
             code = dev.take_fail_next(path)
-            if code:
-                late = path == "/api/upload" and code in LATE_UPLOAD_ERRORS
-                self._read_body(clen or 0, throttled=late)
-                self._error(code, info="(fail_next)")
-                return
-            post[path](q, clen)
-        elif path in get or path in post:
-            self._drain(clen)
-            self._send(405, b"Specified method is invalid for this resource", "text/plain")
         else:
-            self._drain(clen)
-            self._send(404, b"Nothing matches the given URI", "text/plain")
+            code = dev.take_fail_next(path, is_post=False) if path.startswith("/api/") else None
+        if code:
+            late = path in UPLOAD_PATHS and code in LATE_UPLOAD_ERRORS
+            self._read_body(clen or 0, throttled=late)
+            text = TEXT_BAD_FIRMWARE if (path == "/api/ota" and code == "INVALID_FILE") else ""
+            self._error(code, text, info="(fail_next)")
+            return
+        if method == "POST":
+            handler(q, clen)
+        else:
+            handler(q)
+
+    def _authenticate(self):
+        """Sets self._user (dict or None), self._token (session in use) and self._locked."""
+        dev = self.dev
+        user, self._token = None, None
+        cookie = self.headers.get("Cookie") or ""
+        for part in cookie.split(";"):
+            key, _, val = part.strip().partition("=")
+            if key == SESSION_COOKIE:
+                user = dev.session_user(val)
+                if user is not None:
+                    self._token = val
+                break
+        if user is None:
+            auth = self.headers.get("Authorization") or ""
+            if auth[:6].lower() == "basic ":
+                if dev.locked():
+                    self._locked = True
+                else:
+                    try:
+                        raw = base64.b64decode(auth[6:].strip(), validate=True).decode("utf-8")
+                    except (binascii.Error, UnicodeDecodeError, ValueError):
+                        raw = ""
+                    name, _, pw = raw.partition(":")
+                    user = dev.check_credentials(name, pw) if raw else None
+        if user is None and not dev.auth_enabled:
+            user = next((u for u in dev.users if u["role"] == "admin"), dev.users[0] if dev.users else None)
+        self._user = user
 
     def _content_length(self):
         try:
@@ -1070,23 +1708,24 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _json(self, status: int, obj, info: str = ""):
+    def _json(self, status: int, obj, info: str = "", headers=()):
         if info:
             self._info = (self._info + " " + info).strip()
         self._send(status, json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-                   "application/json")
+                   "application/json", headers=headers)
 
-    def _error(self, code: str, text: str = "", info: str = ""):
+    def _error(self, code: str, text: str = "", info: str = "", extra=None):
         status, default_text = ERRORS[code]
-        self._json(status, {"ok": False, "code": code, "error": text or default_text},
-                   (code + " " + info).strip())
+        body = {"ok": False, "code": code, "error": text or default_text}
+        body.update(extra or {})
+        self._json(status, body, (code + " " + info).strip())
 
-    def _result(self, code, info: str = ""):
+    def _result(self, code, info: str = "", extra=None):
         """send_result(): None = success."""
         if code:
-            self._error(code, info=info)
+            self._error(code, info=info, extra=extra)
         else:
-            self._json(200, {"ok": True, "code": "OK", "error": ""}, info)
+            self._json(200, {"ok": True, "code": "OK", "error": "", **(extra or {})}, info)
 
     def _read_body(self, total: int, throttled: bool = False, on_data=None, stop_at=None) -> int:
         """Read `total` body bytes (optionally at the simulated upload rate). Returns the
@@ -1119,6 +1758,33 @@ class Handler(BaseHTTPRequestHandler):
         if clen:
             self._read_body(clen)
 
+    # ---------------------------------------------------------- helpers for handlers
+
+    def _form(self, clen, limit: int = 512):
+        """Reads a small URL-encoded body. Returns a dict, or None after an error was sent."""
+        if clen is None:
+            self._error("BAD_REQUEST", "Content-Length fehlt")
+            return None
+        if clen > limit:
+            self._drain(clen)
+            self._error("BAD_REQUEST", "Anfrage zu groß")
+            return None
+        body = bytearray()
+        self._read_body(clen, on_data=body.extend)
+        return parse_query(body.decode("latin-1"))
+
+    def _need(self, q: dict, *keys) -> bool:
+        """True if all keys are present; otherwise sends BAD_REQUEST."""
+        for key in keys:
+            if key not in q or q[key] is None:
+                self._error("BAD_REQUEST", f"{key} fehlt oder ist ungültig")
+                return False
+        return True
+
+    def _session_json(self, u) -> dict:
+        return {"ok": True, "user": u["name"], "role": u["role"],
+                "default_password": self.dev.is_default_password(u)}
+
     # ---------------------------------------------------------- GET
 
     def _index(self, q):
@@ -1132,37 +1798,173 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send(200, body, "text/html; charset=utf-8", "no-cache")
 
+    def _manifest(self, q):
+        real = self.server.html_path.parent / "manifest.webmanifest"
+        try:
+            body, info = real.read_bytes(), ""
+        except OSError:
+            body, info = MANIFEST_FALLBACK, "(generated placeholder)"
+        self._info = info
+        self._send(200, body, "application/manifest+json", "no-cache")
+
+    def _icon(self, size: int):
+        real = self.server.html_path.parent / "icons" / f"icon-{size}.png"
+        try:
+            body = real.read_bytes()
+        except OSError:
+            body = icon_png(size)
+            self._info = "(generated placeholder)"
+        self._send(200, body, "image/png", "max-age=86400")
+
+    def _api_session(self, q):
+        if self._user is None:
+            self._error("LOCKED" if self._locked else "UNAUTHORIZED")
+        else:
+            self._json(200, self._session_json(self._user))
+
     def _api_status(self, q):
         self._json(200, self.dev.status())
 
+    def _api_users(self, q):
+        self._json(200, {"ok": True, "users": [{"name": u["name"], "role": u["role"]} for u in self.dev.users],
+                         "max": USERS_MAX})
+
     def _api_files(self, q):
-        err = self.dev.require_app_fs()
+        listing, err = self.dev.list_dir(q.get("dir", ""))
         if err:
             self._error(err)
             return
-        listing = self.dev.list_files()
-        self._json(200, listing, f"{len(listing['files'])} files" + (" truncated" if listing["truncated"] else ""))
+        self._json(200, listing, f"{len(listing['entries'])} entries" + (" truncated" if listing["truncated"] else ""))
 
     def _api_download(self, q):
-        dev = self.dev
-        if "name" not in q:
-            self._error("BAD_REQUEST", "name fehlt")
+        if not self._need(q, "path"):
             return
-        name = q["name"]
-        err = check_existing_name(name) or dev.require_app_fs()
-        if not err and name.lower() not in dev.files:
-            err = "NOT_FOUND"
+        f, err = self.dev.get_file(q["path"])
         if err:
             self._error(err)
             return
-        f = dev.files[name.lower()]
         self._info = f"{len(f.data)} B" + (f" (reported size {f.size})" if f.size != len(f.data) else "")
         self._send(200, f.data, "application/octet-stream", headers=[("Content-Disposition", "attachment")])
 
     def _api_log(self, q):
         self._send(200, self.dev.log_text(), "text/plain; charset=utf-8")
 
-    # ---------------------------------------------------------- POST
+    def _api_wifi_list(self, q):
+        dev = self.dev
+        self._json(200, {"ok": True, "max": WIFI_MAX,
+                         "networks": [{"ssid": n, "active": dev.wifi_mode == "sta" and n == dev.ssid}
+                                      for n in dev.networks]})
+
+    # ---------------------------------------------------------- POST: authentication
+
+    def _api_login(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None:
+            return
+        if not self._need(form, "user", "pass"):
+            return
+        if dev.locked():
+            self._error("LOCKED")
+            return
+        u = dev.check_credentials(form["user"], form["pass"])
+        if u is None:
+            self._error("BAD_LOGIN", info=f"({dev.fails} failed)" if dev.fails else "(now locked)")
+            return
+        token = dev.new_session(u)
+        self._user = u
+        self._json(200, self._session_json(u), f"session {token[:6]}... ({len(dev.sessions)} of {SESSIONS_MAX})",
+                   headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Strict")])
+
+    def _api_logout(self, q, clen):
+        self._drain(clen)
+        if self._token:
+            self.dev.sessions.pop(self._token, None)
+        self._json(200, {"ok": True}, headers=[
+            ("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")])
+
+    def _api_users_add(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None or not self._need(form, "user", "pass", "role"):
+            return
+        if form["role"] not in ("admin", "user"):
+            self._error("BAD_REQUEST", "role muss admin oder user sein")
+        elif not valid_username(form["user"]):
+            self._error("BAD_USER")
+        elif not valid_password(form["pass"]):
+            self._error("BAD_PASSWORD")
+        elif dev.find_user(form["user"]) is not None:
+            self._error("EXISTS", TEXT_USER_EXISTS)
+        elif len(dev.users) >= USERS_MAX:
+            self._error("USER_LIMIT")
+        else:
+            dev.users.append({"name": form["user"], "role": form["role"], "pw": form["pass"]})
+            self._json(200, {"ok": True}, f"user '{form['user']}' ({form['role']})")
+
+    def _api_users_delete(self, q, clen):
+        self._drain(clen)
+        dev = self.dev
+        if not self._need(q, "user"):
+            return
+        u = dev.find_user(q["user"])
+        if u is None:
+            self._error("NOT_FOUND", TEXT_NO_USER)
+        elif u["role"] == "admin" and dev.admin_count() <= 1:
+            self._error("LAST_ADMIN")
+        else:
+            dev.users.remove(u)
+            dev.end_sessions(u["name"])
+            self._json(200, {"ok": True})
+
+    def _api_users_role(self, q, clen):
+        self._drain(clen)
+        dev = self.dev
+        if not self._need(q, "user", "role"):
+            return
+        if q["role"] not in ("admin", "user"):
+            self._error("BAD_REQUEST", "role muss admin oder user sein")
+            return
+        u = dev.find_user(q["user"])
+        if u is None:
+            self._error("NOT_FOUND", TEXT_NO_USER)
+        elif u["role"] == "admin" and q["role"] == "user" and dev.admin_count() <= 1:
+            self._error("LAST_ADMIN")
+        else:
+            u["role"] = q["role"]
+            self._json(200, {"ok": True})
+
+    def _api_users_password(self, q, clen):
+        dev = self.dev
+        form = self._form(clen)
+        if form is None or not self._need(form, "user", "pass"):
+            return
+        me = self._user
+        own = form["user"].lower() == me["name"].lower()
+        if own:
+            if dev.locked():
+                self._error("LOCKED")
+                return
+            if dev.check_credentials(me["name"], form.get("old") or "") is None:
+                self._error("BAD_LOGIN")
+                return
+            target = me
+        else:
+            if me["role"] != "admin":
+                self._error("FORBIDDEN_ROLE")
+                return
+            target = dev.find_user(form["user"])
+            if target is None:
+                self._error("NOT_FOUND", TEXT_NO_USER)
+                return
+        if not valid_password(form["pass"]):
+            self._error("BAD_PASSWORD")
+            return
+        target["pw"] = form["pass"]
+        dev.end_sessions(target["name"], keep=self._token if own else None)
+        self._json(200, {"ok": True}, f"password of '{target['name']}' changed")
+
+    # ---------------------------------------------------------- POST: drive
 
     def _api_mode(self, q, clen):
         self._drain(clen)
@@ -1174,34 +1976,79 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._result(self.dev.set_owner(target, flag(q, "force")), f"owner={self.dev.owner}")
 
+    def _api_mkdir(self, q, clen):
+        self._drain(clen)
+        if self._need(q, "path"):
+            self._result(self.dev.mkdir(q["path"]))
+
+    def _api_delete(self, q, clen):
+        self._drain(clen)
+        if self._need(q, "path"):
+            self._result(self.dev.delete(q["path"], flag(q, "recursive")))
+
+    def _api_move(self, q, clen):
+        self._drain(clen)
+        if self._need(q, "from", "to"):
+            self._result(self.dev.move(q["from"], q["to"]))
+
+    def _api_copy(self, q, clen):
+        self._drain(clen)
+        if self._need(q, "from", "to"):
+            t0 = time.monotonic()
+            err = self.dev.copy(q["from"], q["to"])
+            self._result(err, f"{time.monotonic() - t0:.2f} s")
+
     def _api_upload_check(self, q, clen):
         self._drain(clen)
-        if "name" not in q:
-            self._error("BAD_REQUEST", "name fehlt")
+        if not self._need(q, "path"):
             return
         if not re.fullmatch(r"\d{1,20}", q.get("size") or ""):
             self._error("BAD_REQUEST", "size fehlt oder ist ungültig")
             return
-        self._result(self.dev.upload_precheck(q["name"], int(q["size"]), flag(q, "overwrite")))
+        self._result(self.dev.upload_precheck(q["path"], int(q["size"]), flag(q, "overwrite")))
 
     def _api_upload(self, q, clen):
+        self._receive_file(q, clen, push=False)
+
+    def _api_push(self, q, clen):
+        self._receive_file(q, clen, push=True)
+
+    def _receive_file(self, q, clen, push: bool):
+        """POST /api/upload and the one-step POST /api/push."""
         dev = self.dev
         if clen is None:
             self._error("BAD_REQUEST", "Content-Length fehlt")
             return
-        if "name" not in q:
+        if "path" not in q or q["path"] is None:
             self._drain(clen)
-            self._error("BAD_REQUEST", "name fehlt")
+            self._error("BAD_REQUEST", "path fehlt")
             return
-        name = q["name"]
-        overwrite = flag(q, "overwrite")
-        err = dev.upload_precheck(name, clen, overwrite)
+        path = q["path"]
+        overwrite = (q.get("overwrite") not in ("0", "false")) if push else flag(q, "overwrite")
+        force = push and flag(q, "force")
+        segs, err = dev.upload_static_check(path, clen)
+        took = False
+        if not err and push and dev.owner == "usb":
+            err = dev.set_owner("app", force)           # same rules as /api/mode?target=app
+            took = err is None
+        if not err:
+            err = dev.upload_app_check(segs, clen, overwrite)
+
+        def extra() -> dict:
+            return {"took_over": took, "provided": took} if push else {}
+
+        def give_back():
+            if took:
+                dev._provide()
+                dev.log("I", "drive", "push: drive provided to the USB host again")
+
         if err:
             self._drain(clen)
-            self._error(err)
+            give_back()
+            self._error(err, extra=extra())
             return
 
-        dev.log("I", "drive", f"upload start '{name}' ({clen} bytes)")
+        dev.log("I", "drive", f"{'push' if push else 'upload'} start '{path}' ({clen} bytes)")
         stop_at = None
         if dev.upload_fail_at is not None:
             stop_at = int(clen * dev.upload_fail_at / 100)
@@ -1222,17 +2069,20 @@ class Handler(BaseHTTPRequestHandler):
             received = self._read_body(clen, throttled=True, on_data=on_data, stop_at=stop_at)
         except (ClientGone, ConnectionError, TimeoutError, socket.timeout):
             dev.log("W", "web", "upload connection lost (-1)")
-            dev.log("W", "drive", f"upload aborted '{name}'")
+            dev.log("W", "drive", f"upload aborted '{path}'")
             self._info = "upload aborted, nothing stored:"
+            give_back()
             raise
         if received < clen:
             dev.log("W", "web", "upload connection lost (-1)")
-            dev.log("W", "drive", f"upload aborted '{name}' after {received} bytes")
+            dev.log("W", "drive", f"upload aborted '{path}' after {received} bytes")
+            give_back()
             self._abort(f"upload_fail_at: connection reset after {received} of {clen} B")
             return
 
         dt = max(time.monotonic() - t0, 1e-6)
         err = None
+        name = segs[-1]
         if has_suffix_ci(name, ".3mf"):
             # "PK\5\6" must start at least 22 bytes (size of the record) before the end.
             zip_ok = bytes(head) == b"PK\x03\x04" and tail.find(b"PK\x05\x06", 0, max(0, len(tail) - 18)) >= 0
@@ -1243,26 +2093,16 @@ class Handler(BaseHTTPRequestHandler):
             client_now = leading_uint(q.get("now"))      # firmware extra: sets the device clock once
             if client_now > 1_700_000_000 and dev.clock_offset is None:
                 dev.clock_offset = client_now - local_now()
-            dev.store_upload(name, bytes(keep), clen, mtime)
+            dev.store_upload(segs, bytes(keep), clen, mtime)
         else:
-            dev.log("W", "drive", f"upload failed '{name}': {ERRORS[err][1]}")
-        dev.log("I", "web", f"upload '{name}' {clen} bytes in {dt * 1000:.0f} ms ({clen / 1024 / dt:.1f} KB/s): "
+            dev.log("W", "drive", f"upload failed '{path}': {ERRORS[err][1]}")
+        dev.log("I", "web", f"upload '{path}' {clen} bytes in {dt * 1000:.0f} ms ({clen / 1024 / dt:.1f} KB/s): "
                             f"{ERRORS[err][1] if err else 'OK'}")
-        self._result(err, f"{clen} B in {dt:.2f} s" + (f" = {clen / 1024 / dt:.0f} KB/s" if dt >= 0.05 else ""))
-
-    def _api_delete(self, q, clen):
-        self._drain(clen)
-        if "name" not in q:
-            self._error("BAD_REQUEST", "name fehlt")
-            return
-        self._result(self.dev.delete(q["name"]))
-
-    def _api_rename(self, q, clen):
-        self._drain(clen)
-        if "name" not in q or "to" not in q:
-            self._error("BAD_REQUEST", "name oder to fehlt")
-            return
-        self._result(self.dev.rename(q["name"], q["to"]))
+        give_back()
+        info = f"{clen} B in {dt:.2f} s" + (f" = {clen / 1024 / dt:.0f} KB/s" if dt >= 0.05 else "")
+        if push and not err:
+            info += f" took_over={took}"
+        self._result(err, info, extra=extra() if push else None)
 
     def _api_host_writable(self, q, clen):
         self._drain(clen)
@@ -1274,15 +2114,11 @@ class Handler(BaseHTTPRequestHandler):
         self.dev.host_writable = value in ("1", "true")
         self._result(None, f"host_writable={int(self.dev.host_writable)}")
 
-    def _api_wifi(self, q, clen):
+    def _api_wifi_add(self, q, clen):
         dev = self.dev
-        if clen is None or clen >= 256:
-            self._drain(clen)
-            self._error("BAD_REQUEST", "Anfrage zu groß" if clen else "SSID fehlt")
+        form = self._form(clen, 255)
+        if form is None:
             return
-        body = bytearray()
-        self._read_body(clen, on_data=body.extend)
-        form = parse_query(body.decode("latin-1"))
         ssid = form.get("ssid")
         if ssid is None:
             self._error("BAD_REQUEST", "SSID fehlt")
@@ -1292,12 +2128,35 @@ class Handler(BaseHTTPRequestHandler):
         if not (1 <= ssid_len <= 32) or not (pass_len == 0 or 8 <= pass_len <= 63):
             self._error("BAD_REQUEST", "Ungültig: SSID 1-32 Zeichen, Passwort leer oder 8-63 Zeichen")
             return
+        if ssid not in dev.networks:
+            if len(dev.networks) >= WIFI_MAX:
+                self._error("WIFI_LIMIT")
+                return
+            dev.networks.append(ssid)
         dev.ssid = ssid
         dev.wifi_mode = "connecting"
         dev.wifi_connect_at = time.monotonic() + 3.0
-        dev.log("I", "wifi", f"new credentials stored for '{ssid}'")
+        dev.log("I", "wifi", f"credentials stored for '{ssid}'")
         dev.log("I", "wifi", f"connecting to '{ssid}' ...")
         self._json(200, {"ok": True}, f"ssid='{ssid}' (connected in 3 s)")
+
+    def _api_wifi_delete(self, q, clen):
+        self._drain(clen)
+        dev = self.dev
+        if not self._need(q, "ssid"):
+            return
+        ssid = q["ssid"]
+        if ssid not in dev.networks:
+            self._error("NOT_FOUND", TEXT_NO_WIFI)
+            return
+        dev.networks.remove(ssid)
+        if ssid == dev.ssid and dev.wifi_mode != "ap":
+            if dev.networks:
+                dev.ssid, dev.wifi_mode = dev.networks[0], "connecting"
+                dev.wifi_connect_at = time.monotonic() + 3.0
+            else:
+                dev.ssid, dev.wifi_mode, dev.wifi_connect_at = "", "ap", None
+        self._json(200, {"ok": True})
 
     def _api_format(self, q, clen):
         self._drain(clen)
@@ -1329,6 +2188,47 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {"ok": True}, "download mode: offline until /mock/set?online=1" if download
                        else f"restarting ({RESTART_S:.0f} s offline)")
             dev.restart(download)
+
+    def _api_ota(self, q, clen):
+        dev = self.dev
+        if clen is None:
+            self._error("BAD_REQUEST", "Content-Length fehlt")
+            return
+        err = None
+        if dev.other_upload is not None:
+            err = "BUSY"
+        elif dev.host_wrote_recently():
+            err = "HOST_WRITING"
+        elif clen > OTA_MAX:
+            err = "TOO_LARGE"
+        elif dev.ota_fail in ("BUSY", "HOST_WRITING", "TOO_LARGE"):
+            err = dev.ota_fail
+        if err:
+            self._drain(clen)
+            self._error(err)
+            return
+        first = bytearray()
+
+        def on_data(data: bytes):
+            if not first:
+                first.append(data[0])
+
+        t0 = time.monotonic()
+        self._read_body(clen, throttled=True, on_data=on_data)      # throttled like an upload
+        if dev.ota_fail:
+            err = dev.ota_fail
+        elif clen == 0 or first[0] != 0xE9:
+            err = "INVALID_FILE"
+        if err:
+            dev.log("W", "ota", f"update rejected: {err}")
+            self._error(err, TEXT_BAD_FIRMWARE if err == "INVALID_FILE" else "", f"{clen} B")
+            return
+        dev.ota_partition = "ota_1" if dev.ota_partition == "ota_0" else "ota_0"
+        dev.pending_version = dev.next_version
+        dev.log("I", "ota", f"image ok ({clen} bytes), next boot: {dev.ota_partition} ({dev.next_version})")
+        self._json(200, {"ok": True, "restart": True},
+                   f"{clen} B in {time.monotonic() - t0:.2f} s, restarting as {dev.next_version}")
+        dev.restart()
 
     # ---------------------------------------------------------- /mock
 
@@ -1477,6 +2377,10 @@ def main(argv=None) -> int:
     ap.add_argument("--scenario", default="usb_active", choices=list(SCENARIO_HELP), help="start scenario")
     ap.add_argument("--upload-kbps", type=int, default=400, help="upload rate limit in KiB/s, 0 = unlimited "
                                                                  "(default 400)")
+    ap.add_argument("--next-version", default=NEXT_VERSION, help="version reported after a successful "
+                                                                 f"POST /api/ota (default {NEXT_VERSION})")
+    ap.add_argument("--no-auth", action="store_true", help="start with authentication disabled "
+                                                           "(same as /mock/set?auth=0; kept by scenario switches)")
     a = ap.parse_args(argv)
 
     for stream in (sys.stdout, sys.stderr):
@@ -1488,7 +2392,7 @@ def main(argv=None) -> int:
         if hasattr(signal, sig):
             signal.signal(getattr(signal, sig), _raise_interrupt)
 
-    dev = Device(max(0, a.upload_kbps), a.scenario)
+    dev = Device(max(0, a.upload_kbps), a.scenario, a.next_version, not a.no_auth)
     html_path = resolve_path(a.html)
     try:
         server = MockServer((a.bind, a.port), dev, html_path)
@@ -1501,7 +2405,8 @@ def main(argv=None) -> int:
           f"  UI:        {base}/\n"
           f"  HTML file: {html_path}{'' if html_path.is_file() else '   <-- NOT FOUND'}\n"
           f"  scenario:  {a.scenario}   upload limit: {dev.upload_kbps or 'none'} KiB/s\n"
-          f"  control:   {base}/mock   {base}/mock/state\n"
+          f"  login:     {'DISABLED (--no-auth)' if a.no_auth else 'admin / admin'}   next OTA version: {a.next_version}\n"
+          f"  control:  {base}/mock   {base}/mock/state\n"
           f"Ctrl+C stops the server.", flush=True)
     try:
         server.run()
