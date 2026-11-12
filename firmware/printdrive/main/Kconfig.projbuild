@@ -65,16 +65,12 @@ menu "DataDrive"
 
     config PD_HTTPS_OPTION
         bool "Offer HTTPS as a switchable option (experimental)"
-        default n
+        default y
         help
-            Off: the device serves plain HTTP only and the web UI shows no HTTPS section.
-            0.4.0 (dynamic mbedTLS buffers): with HTTPS on, uploads failed because the 16 KiB
-            TLS record buffer could not be allocated (about 50 KiB free heap, fragmented).
-            0.5.0: static record buffers (CONFIG_MBEDTLS_DYNAMIC_BUFFER off) reserved once at
-            boot (needs CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC, see sdkconfig.defaults), one TLS
-            connection at a time, port-80 redirect as a small task. HTTPS mode then costs about
-            35 KiB heap more than plain HTTP, but needs no large block after boot.
-            Recommendation: y, once the measurements (30 MB upload with the drive encryption
-            unlocked, file list with 300 files) pass on the device.
+            The web UI then offers HTTPS as a switch (off until the user turns it on).
+            Measured on the T-Dongle-S3 (no PSRAM) with 0.5.0, encrypted drive unlocked:
+            30 MB upload 864 kB/s, download 389 kB/s, 66 KiB heap free when idle, lowest
+            22 KiB during the upload, no TLS buffer misses. The record buffers are reserved
+            once at start (tls.c) and only one TLS connection is served at a time.
 
 endmenu
