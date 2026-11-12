@@ -50,6 +50,11 @@ Erwartetes Bild und Log: [05_testprotokoll.md](05_testprotokoll.md) Phase 0 (bes
 
 ## 4. Hauptfirmware bauen und flashen
 
+**Regel: immer nur einen Build gleichzeitig.** Bei 0.5.0 liefen mehrere Builds parallel; das
+hat den PC überlastet. Builds deshalb nacheinander starten, auch wenn
+mehrere Leute am Projekt arbeiten. Das gilt auch für `smoke_test` und den
+Diagnose-Build (Abschnitt 9).
+
 ```powershell
 .\tools\idf.ps1 printdrive build
 .\tools\flash.ps1 -Project printdrive            # oder in einem Schritt: -Build -Monitor
@@ -213,6 +218,8 @@ Menü „DataDrive Wi-Fi“ (`firmware/components/pd_wifi/Kconfig`):
 | `CONFIG_PD_WIFI_HOSTNAME` | `datadrive` | DHCP- und mDNS-Name (`http://datadrive.local`) |
 | `CONFIG_PD_WIFI_AP_FALLBACK_S` | 20 (5–600) | Setup-AP nach so vielen Sekunden ohne Verbindung |
 | `CONFIG_PD_WIFI_AP_LINGER_S` | 120 (10–3600) | Setup-AP bleibt nach STA-Verbindung so lange an |
+| `CONFIG_PD_WIFI_CAPTIVE_PORTAL` | y | seit 0.5.0: Solange der Setup-AP läuft, beantwortet ein kleiner DNS-Dienst jeden Namen mit der Adresse des Sticks, damit Handys die Einrichtungsseite von selbst öffnen. Mit einem echten Handy **noch nicht geprüft** |
+| `CONFIG_PD_WIFI_CAPTIVE_DHCP_URI` | y | seit 0.5.0: meldet die Einrichtungsseite zusätzlich per DHCP-Option 114. Laut Hilfetext nutzen iOS und Android diese Option nur mit einer `https`-Adresse; abschalten, falls ein Gerät damit Probleme hat |
 
 Menü „DataDrive encryption“ (`firmware/components/pd_crypt/Kconfig`, seit 0.4.0):
 
@@ -228,11 +235,23 @@ Menü „PrintDrive“, zusätzlich seit 0.4.0:
 
 | Option | Default | Wirkung |
 |---|---|---|
-| `CONFIG_PD_HTTPS_OPTION` | n | HTTPS als Schalter anbieten (experimentell). **Aus** lassen: Auf diesem Board scheitern Uploads mit TLS (16-KiB-Puffer nicht frei). Siehe [14](14_vormerkliste.md) |
+| `CONFIG_PD_HTTPS_OPTION` | y (seit 0.5.0; in 0.4.0 n) | HTTPS als Schalter in der Weboberfläche anbieten (experimentell). Der Schalter selbst steht auf aus, bis der Benutzer ihn einschaltet. In 0.4.0 scheiterten Uploads mit TLS (16-KiB-Puffer nicht frei); seit 0.5.0 werden die TLS-Puffer einmal beim Start reserviert (`tls.c`), und es gibt nur eine TLS-Verbindung gleichzeitig. Messwerte: [05](05_testprotokoll.md) T9.11 |
 
 Weitere relevante Optionen in `firmware/printdrive/sdkconfig.defaults`: TinyUSB
 (`CONFIG_TINYUSB_CDC_ENABLED`, USB-Strings „WiFi DataDrive“/„DataDrive“, MSC-Puffer), Wear Levelling
 (`CONFIG_WL_SECTOR_SIZE_512`, `CONFIG_WL_SECTOR_MODE_SAFE`), FatFs, HTTP, lwIP.
+
+Neu oder geändert in 0.5.0 (`sdkconfig.defaults`):
+
+- `CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048` (vorher 1024).
+- Uhrzeit: `CONFIG_LWIP_SNTP_MAX_SERVERS=2`, `CONFIG_LWIP_DHCP_GET_NTP_SRV=y` (NTP-Server aus dem
+  DHCP des Routers, dazu `pool.ntp.org`).
+- HTTPS: `CONFIG_MBEDTLS_DYNAMIC_BUFFER` ist **aus** (in 0.4.0 an; die dynamischen Puffer brauchten
+  für jeden eingehenden Datensatz einen neuen 16,7-KB-Block und scheiterten am zerstückelten
+  Speicher), dazu `CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC=y` (gibt die beim Start reservierten Puffer aus).
+
+Ein vorhandenes `sdkconfig` übernimmt diese Werte nicht von selbst (siehe unten): vor dem ersten
+Build von 0.5.0 `firmware\printdrive\sdkconfig` löschen.
 
 Ändern:
 
@@ -277,12 +296,23 @@ daher kein sicheres Zeichen für einen Firmware-Fehler.
 
 ## 10. API-Test (`tools/api_test.py`)
 
-Aktuell (API Version 4, 0.4.0):
+Aktuell (API Version 3 bis 5, 0.5.0):
 
 ```powershell
 python tools\api_test.py 192.168.2.152 --user admin --password <Passwort> --drive E:
+python tools\api_test.py 192.168.2.152 --user admin --password <Passwort> --only v5
 python tools\api_test.py 192.168.2.152 --user admin --password <Passwort> --drive E: --drive-password <Laufwerks-Passwort> --crypt-test --i-know-this-erases-the-drive
 ```
+
+- **0.5.0:** Ergebnis am Gerät **354/354**, 6 Prüfungen übersprungen (Einzelheiten:
+  [05](05_testprotokoll.md) T9.1). Die Abschnitte der Version 5 heißen `time`, `autolock`,
+  `lang`, `resume`, `zip`, `webdav`; einzeln mit `--only time,zip` usw., alle mit `--only v5`.
+  Der WebDAV-Abschnitt wird übersprungen, wenn `/dav/` mit `404` antwortet oder WebDAV
+  ausgeschaltet ist.
+- Der Test baut seine Adressen mit `http://`. Mit eingeschaltetem HTTPS: **noch nicht geprüft**;
+  für den Test HTTPS ausgeschaltet lassen.
+
+Die Angaben zu 0.4.0:
 
 - Ohne `--crypt-test` formatiert der Lauf nichts. Ergebnis am Gerät: **250/250**. Die
   Dateitests legen Testdateien an und löschen sie wieder.
@@ -380,7 +410,12 @@ Wie die Firmware bearbeitet der Testserver nur eine Anfrage gleichzeitig, verlan
 Der automatische Browser-Test `tools/ui_test.py` (Playwright, einmalig
 `pip install playwright`) läuft gegen diesen Testserver (`python tools/ui_test.py --base http://localhost:8090`).
 Stand 0.4.0: 548/548 Prüfungen für das PC-Profil und 561/561 für das Handy-Profil (Ergebnisse in
-[05](05_testprotokoll.md) Phase 8). Nur einzelne Tests: `--only TEXT`; Liste: `--list`.
+[05](05_testprotokoll.md) Phase 8). Nur einzelne Tests: `--only TEXT`; Liste: `--list`. Ein
+Ergebnis für die Weboberfläche von 0.5.0 ist nicht eingetragen (**noch nicht geprüft**, T9.15).
+
+Seit 0.5.0 bildet der Testserver auch API Version 5 nach (Uhr, angefangener Upload, abbrechende
+Upload-Verbindung, automatisches Sperren, WebDAV-Schalter). Die zusätzlichen Schalter für
+`/mock/set` stehen in [15_api_v5.md](15_api_v5.md) Abschnitt 13.
 
 ## 12. Verschlüsselung unabhängig prüfen (`firmware/components/pd_crypt/tools/pd_crypt_check.py`)
 

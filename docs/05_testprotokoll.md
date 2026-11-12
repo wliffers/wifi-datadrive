@@ -18,8 +18,9 @@ Prozeduren und erwarteten Texte unten beschreiben den Stand 0.2.0; Ergebniszeile
 wie sie am Testtag eingetragen wurden, und nennen deshalb zum Teil die alten Namen
 (`PrintDrive-54D5`, `PRINTDRIVE`, „Host …“ auf dem LCD) und die alte Weboberfläche.
 
-Stand 0.4.0: Die Ergebnisse für Anmeldung, Verschlüsselung und WLAN-Suche stehen in Phase 7 und 8
-am Ende dieses Dokuments. Die Übersicht gilt für 0.2.0: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
+Stand 0.5.0: Die Ergebnisse für Anmeldung, Verschlüsselung und WLAN-Suche stehen in Phase 7 und 8,
+die für 0.5.0 (Netzlaufwerk, Uhrzeit, automatisches Sperren, Upload fortsetzen, ZIP, HTTPS) in
+Phase 9 am Ende dieses Dokuments. Die Übersicht gilt für 0.2.0: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
 `tools/api_test.py` weitgehend bestanden (T2.11: Flash 18/18, microSD 21/21), offen T2.2 (3),
 T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 6
 (Umbenennung, API v2 28/28, gzip-Auslieferung) bestanden, Browser-Test der neuen
@@ -562,9 +563,82 @@ Abschnitt 2.5.
 | T8.14 | Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** | – |
 | T8.15 | Verschlüsselung auf dem internen Flash (ohne Karte) | **noch nicht geprüft** | – |
 | T8.16 | Unabhängige Prüfung der Verfahren mit `firmware/components/pd_crypt/tools/pd_crypt_check.py` | **noch nicht geprüft** (Ergebnis nicht eingetragen) | – |
-| T8.17 | HTTPS (Build-Schalter `PD_HTTPS_OPTION`) | Uploads scheitern mit TLS; Schalter aus. Siehe [14](14_vormerkliste.md) | 2026-11-12 |
+| T8.17 | HTTPS (Build-Schalter `PD_HTTPS_OPTION`) | Uploads scheitern mit TLS; Schalter aus. Siehe [14](14_vormerkliste.md). In 0.5.0 umgebaut, siehe T9.11 | 2026-11-12 |
 
 Während der Tests am Gerät gefunden und behoben:
 
 - Abgewiesene Anfragen mit Formulardaten schlossen die Verbindung, statt zu antworten.
 - Eine Übernahme direkt nach dem Entsperren wurde durch das Neu-Einstecken des USB-Geräts rückgängig gemacht.
+
+## Phase 9 – Netzlaufwerk, Uhrzeit, automatisches Sperren, HTTPS (Firmware 0.5.0)
+
+Stand 2026-11-12, Commits `da1df2c` bis `af2a675`. Schnittstelle: [15_api_v5.md](15_api_v5.md).
+Version 0.5.0 entstand in sieben parallelen Arbeitspaketen. Der erste gemeinsame Build lief ohne
+Fehler durch. Gerät: LILYGO T-Dongle-S3 (LCD-Variante); bei den Läufen war das Laufwerk
+verschlüsselt und entsperrt. Welches Speichermedium (microSD oder interner Flash) dabei steckte,
+ist nicht protokolliert (noch nicht geprüft).
+
+Aufruf des API-Tests, Beispiel (Version 3 bis 5; nur Version 5: zusätzlich `--only v5`; die
+genaue Befehlszeile des Laufs ist nicht protokolliert):
+
+```powershell
+python tools\api_test.py <ip> --user admin --password <Passwort> --drive-password <Laufwerks-Passwort>
+```
+
+### T9.1 API-Test am Gerät
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **FEHLER** (behoben) | 2026-11-12 | Erster Lauf am Gerät: 349/355, sechs Abweichungen. Ursachen: (1) Die Einstellung für das automatische Sperren verlangte beide Parameter, statt einen allein anzunehmen. (2) Ein nicht plausibler Uhrzeit-Wert wurde stillschweigend ignoriert statt mit `400` abgewiesen. (3) Eine falsche Erwartung im Test selbst. Alle drei behoben (Commit `8417f9e`) |
+| **bestanden** | 2026-11-12 | 354/354. Übersprungen (6): Schutz des letzten Administrators, Test-WLAN, OTA-Probe, Prüfungen, die ein unverschlüsseltes Laufwerk brauchen, HTTPS-Felder (der Lauf war vor Commit `af2a675`, der HTTPS in den Build nimmt), der Zeitablauf des automatischen Sperrens |
+
+### T9.2 bis T9.14 Einzelpunkte
+
+| Nr. | Prüfpunkt | Ergebnis | Datum |
+|---|---|---|---|
+| T9.2 | Netzlaufwerk (WebDAV) per API-Test: Liste (`PROPFIND`), Hochladen (`PUT`), Verschieben (`MOVE`), Löschen (`DELETE`), Anmeldung nötig (`401`), abgewiesen bei gesperrtem Laufwerk (`423`) | **bestanden** (API-Test) | 2026-11-12 |
+| T9.3 | Netzlaufwerk mit echten Programmen: Windows-Explorer (mit `tools/webdav/Connect-DataDrive.ps1`), iPhone-App mit WebDAV, Android, macOS-Finder | **noch nicht geprüft** | – |
+| T9.4 | Uhrzeit aus dem Netz (NTP): Uhr nach dem Start gestellt | **bestanden** | 2026-11-12 |
+| T9.5 | Uhrzeit ohne Internet: Browser stellt die Uhr nach dem Anmelden; nach Stromausfall Uhr unbekannt, bis das Netz wieder da ist | **noch nicht geprüft** am Gerät (Verhalten laut [15](15_api_v5.md) Abschnitt 1) |
+| T9.6 | Automatisches Sperren: Einstellungen setzen, einzeln und gemeinsam, ungültige Werte abgewiesen | **bestanden** (API-Test) | 2026-11-12 |
+| T9.7 | Automatisches Sperren: Laufwerk sperrt nach Ablauf der Zeit; beim Trennen des USB-Geräts; nicht während eines Schreibvorgangs | **noch nicht geprüft** | – |
+| T9.8 | Display-Sprache: Einstellung `de`/`en` per API | **bestanden** (API-Test) | 2026-11-12 |
+| T9.9 | Display-Sprache: Aussehen der englischen Texte auf dem LCD | **noch nicht geprüft** | – |
+| T9.10 | Einrichtungsseite öffnet sich von selbst (Captive Portal), mit einem echten Handy am Einrichtungs-WLAN | **noch nicht geprüft** | – |
+| T9.11 | HTTPS am Gerät (Schalter eingeschaltet, Laufwerk verschlüsselt und entsperrt): Upload, Download, Dateiliste, Seitenaufruf, Speicher | **bestanden**; Messwerte unten | 2026-11-12 |
+| T9.12 | Abgebrochenen Upload fortsetzen: Abbruch, Fortsetzen ab dem gemeldeten Stand, falscher Stand (`409 RESUME_MISMATCH`) | **bestanden** (API-Test) | 2026-11-12 |
+| T9.13 | Ordner als ZIP: verschachtelte Ordner, Umlaute, Inhalt und Prüfsummen | **bestanden** (API-Test) | 2026-11-12 |
+| T9.14 | Ganze Ordner hochladen in der Weboberfläche | nur gegen den Testserver geprüft; am Gerät **noch nicht geprüft** | – |
+| T9.15 | Browser-Test der Weboberfläche Version 5 (`tools/ui_test.py`, PC- und Handy-Profil) | **noch nicht geprüft** (kein Ergebnis eingetragen) | – |
+| T9.16 | Unabhängige Sicherheitsprüfung der Neuerungen von 0.5.0 | läuft, Ergebnis steht aus | – |
+
+### T9.11 Messwerte HTTPS
+
+| Messung | Wert |
+|---|---|
+| Upload 30 MB über HTTPS | 864 kB/s; Datei nach dem Herunterladen bitgleich |
+| Download über HTTPS | 389 kB/s |
+| Download über HTTP (Vergleich) | 487 kB/s |
+| Dateiliste und Seitenaufruf über HTTPS | funktionieren (Zeiten nicht gemessen) |
+| Freier Heap im Leerlauf | 66 KiB |
+| Tiefster freier Heap während des Uploads | 22 KiB |
+| Fehlgriffe beim reservierten TLS-Puffer | keine |
+
+Umbau gegenüber 0.4.0: Die TLS-Puffer werden einmal beim Start reserviert, es wird nur eine
+TLS-Verbindung gleichzeitig bedient, und die Dateiliste wird ohne den 33-KiB-Puffer direkt
+gesendet. Danach wurde `PD_HTTPS_OPTION` im Build eingeschaltet (Commit `af2a675`); der Schalter
+in den Einstellungen bleibt aus, bis der Benutzer ihn einschaltet.
+
+Noch nicht geprüft: iPhone mit installiertem Zertifikat (Profil installieren und volles Vertrauen
+unter „Zertifikatsvertrauenseinstellungen“), Home-Bildschirm-Symbol und Kurzbefehl über `https`,
+WebDAV über `https`, Dauerbetrieb. Ob der API-Test mit eingeschaltetem HTTPS läuft, ist ebenfalls
+noch nicht geprüft (er baut seine Adressen mit `http://`).
+
+### Weiter offen aus 0.4.0
+
+| Nr. | Prüfpunkt | Ergebnis |
+|---|---|---|
+| T8.14 | Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** (der Besitzer erwartet, dass es geht) |
+| T7.7 | Firmware-Update über die Weboberfläche | **noch nicht geprüft** |
+| T8.9 | WLAN-Suche im Einrichtungsmodus | **noch nicht geprüft** |
+| T8.13 | Stromausfall während der Einrichtung der Verschlüsselung | **noch nicht geprüft** |

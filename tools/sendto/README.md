@@ -2,6 +2,8 @@
 
 Rechtsklick auf Dateien oder Ordner im Explorer, **Senden an**, **WiFi DataDrive**: Die Dateien landen auf dem Stick. Es wird nur das in Windows eingebaute Windows PowerShell 5.1 gebraucht, nichts muss installiert werden.
 
+Prüfstand (2026-11-12, Firmware 0.5.0): an einem echten PC mit dem Stick **noch nicht geprüft**.
+
 ## Einrichten
 
 1. Ordner `tools\sendto` öffnen (der Pfad darf Leerzeichen enthalten).
@@ -43,4 +45,6 @@ oder `Install-SendTo.ps1` erneut ausführen. Einmaliger anderer Zielordner: `-Ta
 - Der PC muss im selben WLAN wie der Stick sein.
 - Das Passwort wird nur für den aktuellen Windows-Benutzer geschützt gespeichert (DPAPI), nie im Klartext. Auf einem anderen Konto oder PC muss neu eingerichtet werden.
 - Die Verbindung ist HTTP, also unverschlüsselt: im Heimnetz ok, nicht in fremden WLANs.
+- **Mit eingeschaltetem HTTPS (seit Firmware 0.5.0, Voreinstellung aus):** Der Stick leitet `http://` auf `https://` um. Die Adresse in der Einrichtung (`-Setup`) muss dann mit `https://` beginnen, und das Zertifikat des Sticks muss in Windows unter „Vertrauenswürdige Stammzertifizierungsstellen“ installiert sein (siehe Haupt-README, Abschnitt „HTTPS einschalten“). Ob das Skript so über `https` sendet: **noch nicht geprüft**.
+- Seit Firmware 0.5.0 sind alle Zeitangaben der API echte UTC-Sekunden ([docs/15_api_v5.md](../../docs/15_api_v5.md) Abschnitt 1.3). Ob das Änderungsdatum der gesendeten Dateien richtig ankommt: **noch nicht geprüft**.
 - Leere Ordner werden nicht übertragen, versteckte Dateien nicht mitgesendet.

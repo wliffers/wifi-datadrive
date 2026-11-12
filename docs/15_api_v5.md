@@ -106,7 +106,7 @@ Der Stick erscheint unter `http://<adresse>/dav/` als Netzlaufwerk; `/dav/` ents
 ### 6.1 Anmeldung und Regeln
 
 - **Nur HTTP Basic** bei jeder Anfrage, auch bei `OPTIONS`. Ein Sitzungs-Cookie wird hier nicht angenommen, ein `X-PrintDrive`-Header nicht verlangt. Ohne oder mit falscher Anmeldung: `401` mit `WWW-Authenticate: Basic realm="DataDrive", charset="UTF-8"`. Anmeldesperre (`429 LOCKED` mit `Retry-After`), `403 MUST_CHANGE_PASSWORD` und `503 AUTH_UNAVAILABLE` wie bei der API.
-- **Rollen und Laufwerksregeln wie bei der Datei-API:** Rolle `user` darf alles unter `/dav/`. Gehört das Laufwerk dem USB-Gerät: `409` (`WRONG_OWNER`); läuft ein Up- oder Download: `409` (`BUSY`); gesperrt: `423` (`DRIVE_LOCKED` / `CRYPT_DAMAGED`). Namensregeln, erlaubte Dateitypen (`415`), 3MF-Prüfung (`422`) und Platzprüfung (`507`) wie beim Upload. Es gibt keine automatische Übernahme des Laufwerks.
+- **Rollen und Laufwerksregeln wie bei der Datei-API:** Rolle `user` darf alles unter `/dav/`. Gehört das Laufwerk dem USB-Gerät: `503` mit `Retry-After: 30` und einem kurzen Text (so zeigen WebDAV-Programme „vorübergehend nicht verfügbar“); läuft ein Up- oder Download oder fehlt das Dateisystem: `503` mit `Retry-After: 10`; gesperrt: `423` (`DRIVE_LOCKED` / `CRYPT_DAMAGED`). Namensregeln, erlaubte Dateitypen (`415`), 3MF-Prüfung (`422`) und Platzprüfung (`507`) wie beim Upload. Es gibt keine automatische Übernahme des Laufwerks.
 - Fehlerantworten tragen denselben JSON-Körper wie die API (für die Fehlersuche; WebDAV-Programme werten nur den Status aus).
 - Versteckte Namen (führender Punkt in irgendeinem Abschnitt, `System Volume Information`) und die Hilfsdateien von Windows und macOS (`._*`, `.DS_Store`, `desktop.ini`, `Thumbs.db`, `ehthumbs.db`) erscheinen nie: Lesen antwortet `404`, Schreiben (`PUT`, `MKCOL`, `LOCK`, Ziel von `MOVE`/`COPY`) `403`.
 
@@ -126,7 +126,7 @@ Der Stick erscheint unter `http://<adresse>/dav/` als Netzlaufwerk; `/dav/` ents
 
 ### 6.3 Schalter (falls vorhanden)
 
-Falls die Firmware einen Schalter hat: `GET /api/status` enthält `"webdav":true`, und `POST /api/settings/webdav?value=0|1` (Rolle `admin`; anderer Wert: `400 BAD_REQUEST`) schaltet das Netzlaufwerk ein oder aus. Ausgeschaltet antwortet `/dav/` mit `404`. Ohne Schalter fehlt das Feld, und WebDAV ist immer an. Der Testserver hat den Schalter (Voreinstellung an).
+`GET /api/status` enthält `"webdav":true`, und `POST /api/settings/webdav?value=0|1` (Rolle `admin`; anderer Wert: `400 BAD_REQUEST`) schaltet das Netzlaufwerk ein oder aus. Ausgeschaltet antwortet `OPTIONS` ohne DAV-Kopfzeilen und jede andere Anfrage unter `/dav/` mit `403`. Voreinstellung: an. (Der Testserver antwortet ausgeschaltet mit `404`.)
 
 ### 6.4 Hinweise zu den Programmen
 
@@ -141,7 +141,7 @@ Dafür gibt es keine Schnittstelle: Solange der Einrichtungs-Zugangspunkt aktiv 
 
 ## 8. HTTPS
 
-Unverändert wie in Version 4, Abschnitt 3 beschrieben. In den Builds 0.4.0 und 0.5.0 ist HTTPS jedoch **per Build-Schalter `PD_HTTPS_OPTION` ausgeschaltet** (siehe [14_vormerkliste.md](14_vormerkliste.md), V8). Dann fehlen in `GET /api/status` die Felder `https`, `https_active`, `https_restart`, `cert_sha256`, `ca_sha256` und `cert_expires`, und `POST /api/settings/https` sowie `GET /api/https/ca.cer` gibt es nicht. Oberfläche und Skripte müssen das Fehlen der Felder vertragen (dann kein HTTPS-Bereich). Der Testserver meldet die Felder weiterhin wie in Version 4.
+Unverändert wie in Version 4, Abschnitt 3 beschrieben. Ab 0.5.0 ist HTTPS im Build enthalten (Build-Schalter `PD_HTTPS_OPTION`, Voreinstellung an); der Schalter in den Einstellungen steht auf aus, bis ihn ein Administrator einschaltet. In 0.4.0 und in Builds ohne die Option fehlen in `GET /api/status` die Felder `https`, `https_active`, `https_restart`, `cert_sha256`, `ca_sha256` und `cert_expires`, und `POST /api/settings/https` sowie `GET /api/https/ca.cer` gibt es nicht. Oberfläche und Skripte müssen das Fehlen der Felder vertragen (dann kein HTTPS-Bereich). Der Testserver meldet die Felder weiterhin wie in Version 4.
 
 ## 9. Ganze Ordner hochladen
 

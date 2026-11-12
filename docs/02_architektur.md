@@ -1,9 +1,9 @@
 # 02 – Architektur
 
-Beschreibt den Stand des Quellcodes in `firmware/` (WiFi DataDrive, Firmware 0.4.0). Die
+Beschreibt den Stand des Quellcodes in `firmware/` (WiFi DataDrive, Firmware 0.5.0). Die
 Abschnitte 1 bis 8 stammen aus 0.2.0 und gelten unverändert, soweit nicht anders vermerkt.
 Neu dazu kommen die Abschnitte 9 bis 11 (Anmeldung, Verschlüsselung, WLAN-Suche) mit ihrem
-Prüfstand. Auf echter Hardware verifiziert sind USB-Laufwerk, Auswurf/Bereitstellen,
+Prüfstand und Abschnitt 12 (Neuerungen von 0.5.0). Auf echter Hardware verifiziert sind USB-Laufwerk, Auswurf/Bereitstellen,
 Download-Modus, Web-API und microSD unter Windows; offen sind Nur-Lese-Modus und der
 Drucker (siehe [03_umsetzungsplan.md](03_umsetzungsplan.md)).
 
@@ -30,7 +30,11 @@ bereitgestellt und Upload-Modus.
 | `auth`, `web_auth` | `printdrive/main/auth.c`, `web_auth.c` | Benutzer, Sitzungen, vertraute Geräte, Anmeldesperre (seit 0.3.0, Abschnitt 9) |
 | `web_files`, `web_wifi`, `web_system`, `web_crypt`, `web_ota` | `printdrive/main/web_*.c` | Endpunkte je Bereich (Dateien/Ordner, WLAN inkl. Suche, System, Verschlüsselung, Update); seit 0.3.0 |
 | `ota` | `printdrive/main/ota.c` | Firmware-Update über die Weboberfläche, Rückkehr zur alten Version (seit 0.3.0) |
-| `tls`, `web_static` | `printdrive/main/tls.c`, `web_static.c` | HTTPS-Option (im Build abgeschaltet, seit 0.4.0); statische Auslieferung |
+| `tls`, `web_static` | `printdrive/main/tls.c`, `web_static.c` | HTTPS-Option (seit 0.4.0; in 0.4.0 im Build abgeschaltet, seit 0.5.0 im Build mit Schalter, Voreinstellung aus); statische Auslieferung |
+| `web_dav` | `printdrive/main/web_dav.c` | Netzlaufwerk (WebDAV) unter `/dav/` (seit 0.5.0, Abschnitt 12) |
+| `web_zip` | `printdrive/main/web_zip.c` | Ordner als ZIP herunterladen (seit 0.5.0) |
+| `pd_time` | `components/pd_time` | Uhrzeit per NTP, Zeitzone (seit 0.5.0) |
+| `pd_dns` | `components/pd_wifi/pd_dns.c` | kleiner DNS-Dienst für die Einrichtungsseite am Setup-AP (seit 0.5.0) |
 
 Startreihenfolge (`app_main.c`): `applog_init` → NVS (bei veraltetem Format nur NVS
 löschen) → `board_init` → `ui_init` (BOOT-Bild) → `drive_init` (Speicher + USB; bei
@@ -419,3 +423,43 @@ Einrichtungsmodus (Handy am Zugangspunkt des Sticks) **noch nicht geprüft**.
 - Endpunkt `GET /api/wifi/scan` (Rolle `admin`), Antwort in [12](12_api_v4.md) Abschnitt 1.
 - Die Suche dauert 2 bis 3 s und blockiert wie jede Anfrage; es läuft immer nur eine.
 - Sie ändert weder die gespeicherten Netze noch die bestehende Verbindung.
+
+## 12. Neuerungen von 0.5.0
+
+Schnittstelle: [15](15_api_v5.md). Prüfstand: [05](05_testprotokoll.md) Phase 9 (API-Test am
+Gerät 354/354). Die Beschreibung folgt dem Quelltext und den Kommentaren darin.
+
+- **Netzlaufwerk (`web_dav.c`):** WebDAV unter `/dav/`, nur HTTP-Basic-Anmeldung. Greift nur
+  über `drive.h` auf das Laufwerk zu, mit denselben Regeln wie die Dateiverwaltung (Pfadprüfung,
+  Dateitypen, Upload über Temp-Datei). Arbeitet nur, solange die Firmware das Laufwerk besitzt;
+  gehört es dem USB-Gerät, antwortet es `503` mit `Retry-After`. Es übernimmt das Laufwerk nie
+  selbst, weil WebDAV-Programme lange Folgen von Anfragen schicken und das Medium sonst ständig
+  zwischen Drucker und Firmware wechseln würde. Leere Dateien, die Windows zuerst anlegt, werden
+  nur im Arbeitsspeicher vorgemerkt (höchstens 5 Minuten). Mit echten Programmen **noch nicht
+  geprüft**.
+- **Uhrzeit (`components/pd_time`):** NTP-Server aus dem DHCP des Routers, dazu `pool.ntp.org`.
+  Zeitzone als POSIX-Zeichenkette (Voreinstellung Deutschland mit Sommerzeit); sie bestimmt die
+  Ortszeit, die auf das FAT geschrieben wird. Ohne NTP stellt der Browser die Uhr. Verifiziert:
+  Uhr nach dem Start gestellt.
+- **Automatisches Sperren (`drive.c`):** prüft Untätigkeit von Web, WebDAV und USB-Gerät und das
+  Verschwinden des USB-Geräts; sperrt nie während eines Schreibvorgangs oder einer Übertragung.
+  Wirkung wie das Sperren von Hand. Zeitablauf am Gerät **noch nicht geprüft**.
+- **Upload fortsetzen (`drive.c`, `web_files.c`):** höchstens ein angefangener Upload; sein
+  Stand liegt nur im Arbeitsspeicher, die Daten in der Temp-Datei. Verifiziert per API-Test.
+- **ZIP (`web_zip.c`):** Methode „stored“, gestreamt mit `chunked`. Das zentrale Verzeichnis wird
+  nicht im Speicher gehalten, sondern in einem weiteren Durchlauf neu erzeugt; im Speicher bleiben
+  nur die CRC-Werte (4 Byte je Datei, höchstens 4096 Dateien). Während des ZIP gelten Besitzerwechsel,
+  Formatieren, Sperren und Ordneraktionen als belegt (`BUSY`). Verifiziert per API-Test.
+- **Einrichtungsseite (`pd_dns.c`, `web_server.c`):** Solange der Setup-AP läuft, beantwortet
+  ein kleiner DNS-Dienst jeden Namen mit der Adresse des Sticks; der Webserver leitet die
+  Prüfadressen der Betriebssysteme auf die Einrichtungsseite um. Kconfig:
+  `CONFIG_PD_WIFI_CAPTIVE_PORTAL`. Mit echtem Handy **noch nicht geprüft**.
+- **Display-Sprache (`ui.c`):** eine Einstellung für das Display, die die Weboberfläche beim
+  Umstellen der Sprache mitschickt.
+- **HTTPS (`tls.c`):** Der Stick ist seine eigene kleine Zertifizierungsstelle (ECDSA P-256,
+  beschränkt auf den Gerätenamen, `*.local` und private IPv4-Adressen). Neu in 0.5.0: Die beiden
+  TLS-Datensatzpuffer werden einmal beim Start reserviert und über einen eigenen Allokator an
+  mbedTLS gegeben (`CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC`); es gibt nur eine TLS-Verbindung
+  gleichzeitig; die Dateiliste wird (auch über HTTP) ohne eigenen großen Puffer direkt gesendet,
+  die Grenze für `truncated` bleibt laut Quelltext wie bisher. Messwerte:
+  [05](05_testprotokoll.md) T9.11.

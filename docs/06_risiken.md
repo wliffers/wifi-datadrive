@@ -1,7 +1,9 @@
 # 06 – Risiken und Annahmen
 
-Stand: 2026-11-12, Firmware 0.4.0. Die Risiken aus 0.2.0 gelten, soweit unten nichts anderes
-steht; Abschnitt 8 behandelt die Verschlüsselung (0.4.0). Bewertung: **hoch** = kann das Projektziel verhindern,
+Stand: 2026-11-12, Firmware 0.5.0. Die Risiken aus 0.2.0 gelten, soweit unten nichts anderes
+steht; Abschnitt 8 behandelt die Verschlüsselung (0.4.0), Abschnitt 9 die Neuerungen von 0.5.0.
+Eine unabhängige Sicherheitsprüfung der Neuerungen von 0.5.0 läuft; ihr Ergebnis steht noch aus
+und ist hier nicht eingearbeitet. Bewertung: **hoch** = kann das Projektziel verhindern,
 **mittel** = erfordert Nacharbeit, **niedrig** = Komfort/Randfall.
 
 Das Projekt heißt seit Version 0.2.0 „WiFi DataDrive“ (vorher „WiFi PrintDrive“); interne
@@ -87,8 +89,8 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 | Weboberfläche am echten Handy ungeprüft | mittel | Die Handy-Ansicht ist nur emuliert geprüft (Chromium mit iPhone-User-Agent, 390×844 und 320 px Breite). Ein echter Handy-Browser fehlt, vor allem iOS Safari: Bildschirmtastatur (verdeckte Eingabefelder und Dialoge), Safe Areas, Herunterladen über das `download`-Attribut, Bottom Sheet (B15). |
 | BOOT-Bestätigung per zweitem Druck | niedrig | Übernahme per BOOT-Taste bei aktivem USB-Gerät verlangt einen zweiten Druck innerhalb von 4 s; am Gerät noch nicht geprüft (T2.2). |
 | Ordner in der Weboberfläche ausgeblendet (Stand 0.2.0, seit 0.3.0 überholt) | niedrig | Ordner sind seit 0.3.0 in der Weboberfläche bedienbar. Ob Ordner, die am PC angelegt wurden, dort richtig erscheinen, ist **noch nicht geprüft**. Der Text zur Zeit vor 0.3.0: Die Weboberfläche zeigte nur Dateien im Hauptverzeichnis. Ordner, die ein PC angelegt hat, werden gezählt (`dirs`, Hinweis unter der Liste), ihr Inhalt ist im Web aber weder sichtbar noch herunterladbar oder löschbar. Der belegte Speicher enthält sie trotzdem, und Formatieren löscht sie mit. Ordner-Unterstützung ist machbar, aber zurückgestellt. |
-| Änderungsdatum hängt an der Browser-Uhr | niedrig | Das Gerät hat keine Uhr. Beim Upload liefert der Browser das Änderungsdatum der Datei (`mtime`) und seine aktuelle Zeit (`now`); gespeichert wird Ortszeit ohne Zeitzone. Eine falsch gestellte Uhr oder Zeitzone im Browser ergibt falsche Zeitstempel, ein Host in einer anderen Zeitzone zeigt sie verschoben. `now` stellt die Geräteuhr nur einmal je Start; Uploads ohne diese Parameter (eigene API-Clients) bekommen kein verlässliches Datum (Anzeige „–“). Ohne Anmeldung kann jeder Client beliebige Zeitstempel setzen. Sortierung „Neueste zuerst“ ist deshalb nur so gut wie die Uhren der Schreiber. |
-| Sehr viele Dateien | niedrig | Die Dateiliste entsteht aus einem 32-KiB-Puffer (ca. 1000 übliche Namen, bei langen Namen weniger). Darüber wird gekürzt (`truncated`, Hinweis in der Oberfläche); die übrigen Dateien sind im Web nicht erreichbar, am USB-Gerät schon. Kürzung und Ladezeit bei sehr vielen Dateien sind am Gerät nicht geprüft (nur im Testserver, Szenarien `truncated` und `many`: 300 Dateien, Neuaufbau der Liste 45–70 ms, seit T6.4 nur noch bei Änderungen). |
+| Änderungsdatum hängt an der Browser-Uhr (Stand bis 0.4.0; seit 0.5.0 teilweise überholt, siehe Abschnitt 9) | niedrig | Das Gerät hat keine Uhr. Beim Upload liefert der Browser das Änderungsdatum der Datei (`mtime`) und seine aktuelle Zeit (`now`); gespeichert wird Ortszeit ohne Zeitzone. Eine falsch gestellte Uhr oder Zeitzone im Browser ergibt falsche Zeitstempel, ein Host in einer anderen Zeitzone zeigt sie verschoben. `now` stellt die Geräteuhr nur einmal je Start; Uploads ohne diese Parameter (eigene API-Clients) bekommen kein verlässliches Datum (Anzeige „–“). Ohne Anmeldung kann jeder Client beliebige Zeitstempel setzen. Sortierung „Neueste zuerst“ ist deshalb nur so gut wie die Uhren der Schreiber. |
+| Sehr viele Dateien | niedrig | Die Dateiliste entsteht aus einem 32-KiB-Puffer (ca. 1000 übliche Namen, bei langen Namen weniger). Seit 0.5.0 wird sie ohne eigenen Puffer direkt gesendet; die Grenze ist laut Quelltext dieselbe geblieben. Darüber wird gekürzt (`truncated`, Hinweis in der Oberfläche); die übrigen Dateien sind im Web nicht erreichbar, am USB-Gerät schon. Kürzung und Ladezeit bei sehr vielen Dateien sind am Gerät nicht geprüft (nur im Testserver, Szenarien `truncated` und `many`: 300 Dateien, Neuaufbau der Liste 45–70 ms, seit T6.4 nur noch bei Änderungen). |
 | Weboberfläche nur gzip | niedrig | `index.html` liegt nur komprimiert im Flash und wird immer mit `Content-Encoding: gzip` gesendet, unabhängig vom `Accept-Encoding` des Clients. Alle üblichen Browser können das; einfache Werkzeuge (z. B. `curl` ohne `--compressed`) erhalten komprimierte Daten. |
 | Einstellungen je Browser | niedrig | „Nach dem Hochladen wieder bereitstellen“ und die Darstellung liegen im Browser (`localStorage`), nicht auf dem Gerät. Ein anderes Gerät oder ein Browser mit gelöschten Daten verhält sich wieder nach dem Standard (bereitstellen: an). |
 | Weboberfläche: `hidden` überschrieben | niedrig (behoben) | CSS-`display` überschrieb das `hidden`-Attribut, beide Modus-Knöpfe waren sichtbar. Fix: `[hidden]{display:none!important}`. Weitere Nuancen in UI und LED-Farben möglich. |
@@ -108,7 +110,7 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 | CSRF | niedrig | POST-Anfragen brauchen `X-PrintDrive: 1` (Headername unverändert). Fremde Webseiten können diesen Header ohne CORS-Freigabe nicht setzen; GET-Endpunkte (Status, Liste, Download, Log) sind ungeschützt lesbar. |
 | WLAN-Zugangsdaten | mittel | STA-Passwort und AP-Passwort liegen **unverschlüsselt** im NVS (keine NVS-Verschlüsselung, kein Flash Encryption). Wer den Dongle hat, kann sie per esptool auslesen. Gleiches gilt für Flash-Backups in `backup\`. |
 | Setup-AP | niedrig | `DataDrive-XXXX`, WPA2 mit gerätespezifischem 10-Zeichen-Passwort; das Passwort steht offen auf dem LCD. Im Log steht es nach aktuellem Quelltext nicht (`setup access point on: SSID '…' (password on the LCD)`). |
-| Kein HTTPS | mittel | Übertragung im LAN unverschlüsselt, auch Passwörter. Seit 0.4.0 gibt es HTTPS nur als Option, die im Build abgeschaltet ist, weil Uploads mit TLS auf diesem Board scheitern (Speicher, siehe [14](14_vormerkliste.md)). |
+| Kein HTTPS | mittel | Übertragung im LAN unverschlüsselt, auch Passwörter. Seit 0.4.0 gibt es HTTPS nur als Option, die im Build abgeschaltet ist, weil Uploads mit TLS auf diesem Board scheitern (Speicher, siehe [14](14_vormerkliste.md)). **Seit 0.5.0:** HTTPS ist im Build und lässt sich in den Einstellungen einschalten (Voreinstellung aus). Solange der Schalter aus ist, gilt das Risiko unverändert. Restrisiken mit HTTPS: Abschnitt 9. |
 
 ## 6. Annahmen (Zusammenfassung)
 
@@ -119,8 +121,16 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 5. ~~Der X2D liest FAT32 (microSD) von einem USB-MSC-Gerät mit 512-B-Sektoren~~ – vom Besitzer bestätigt 2026-11-12. Weiter Annahme: FAT12/FAT16 (interner Flash) am X2D.
 6. ~~Der X2D druckt gesliceste `.gcode.3mf` vom USB-Stick~~ – vom Besitzer bestätigt 2026-11-12.
 7. ~~Der X2D kommt mit dem Composite-Gerät (MSC + CDC) zurecht~~ – vom Besitzer bestätigt 2026-11-12, Build ohne CDC nicht nötig.
-8. Die Uhr des hochladenden Browsers stimmt (Quelle aller Zeitstempel, Abschnitt 4).
+8. Die Uhr des hochladenden Browsers stimmt (Quelle aller Zeitstempel, Abschnitt 4). Seit 0.5.0
+   gilt das nur noch ohne Internet; mit Internet stellt NTP die Uhr (am Gerät verifiziert).
 9. Der X2D stört sich nicht an fremden Dateitypen auf dem Laufwerk.
+10. Der X2D druckt von einem verschlüsselten, per Handy entsperrten Stick (Erwartung des
+    Besitzers, nicht geprüft).
+11. Ob der X2D eine Druckdatei beim Start ganz einliest oder während des Drucks weiter vom Stick
+    liest, ist unbekannt. Davon hängt ab, ob das automatische Sperren einen Druck abbrechen kann
+    (Abschnitt 9).
+12. Die Angaben zu Windows, iPhone und macOS beim Netzlaufwerk stammen aus Recherche, nicht aus
+    eigenen Tests (Abschnitt 9).
 
 ## 7. Verbleibende Hauptrisiken (Kurzfassung)
 
@@ -141,7 +151,11 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 | Verschlüsselung: Passwortstärke, Klartext bei entsperrtem Laufwerk, keine Update-Signatur | 0.4.0, siehe Abschnitt 8 |
 | Beliebige Dateitypen ohne Inhaltsprüfung | bewusst so, abschaltbar (Abschnitt 2) |
 | Ordner in der Weboberfläche | seit 0.3.0 umgesetzt; PC-Ordner in der Anzeige noch nicht geprüft |
-| Zeitstempel aus der Browser-Uhr | hingenommen (Abschnitt 4) |
+| Zeitstempel aus der Browser-Uhr | seit 0.5.0 Uhr per NTP; ohne Internet weiter Browser-Uhr (Abschnitt 9) |
+| Netzlaufwerk (WebDAV), 0.5.0 | nur per API-Test am Gerät geprüft, mit echten Programmen ungetestet (Abschnitt 9) |
+| Automatisches Sperren während eines Drucks, 0.5.0 | Voreinstellung aus; Verhalten des X2D unbekannt (Abschnitt 9) |
+| HTTPS, 0.5.0 | Grundfunktion gemessen; iPhone mit Zertifikat, WebDAV über https und Dauerbetrieb ungetestet (Abschnitt 9) |
+| Unabhängige Sicherheitsprüfung 0.5.0 | läuft, Ergebnis steht aus |
 
 ## 8. Verschlüsselung des Laufwerks (seit 0.4.0)
 
@@ -153,9 +167,9 @@ von [12](12_api_v4.md) („Was die Verschlüsselung schützt“). Hier die Risik
 |---|---|---|---|
 | Passwortstärke | **hoch**, wenn das Passwort kurz ist | Wer die Karte hat, probiert Passwörter offline durch. Das Gerät bremst dabei nicht. Jede Prüfung eines Passworts braucht eine PBKDF2-Ableitung (am Gerät auf 2 s kalibriert). Auf einem PC geht sie schneller als am Gerät; die Geschwindigkeit eines Angreifers ist **nicht gemessen**. | Mindestlänge 12 Zeichen wird erzwungen. Ein langes, zufälliges Passwort oder mehrere Wörter ist nötig. Wiederherstellungsschlüssel ist praktisch nicht zu erraten (160 Bit). |
 | Drosselung nur über das Netz | mittel | Die Wartezeit nach falschen Eingaben (5 s, dann doppelt, höchstens 300 s; die ersten zwei Fehler sind frei) gilt nur für Anfragen an das laufende Gerät. Ein Neustart setzt sie zurück. | Keine Abhilfe gegen den Angriff auf eine entnommene Karte. |
-| Klartext bei entsperrtem Laufwerk | mittel | Drucker und PC sehen die Dateien im Klartext, solange das Laufwerk entsperrt ist. Das ist nötig, damit der Drucker drucken kann. | Stick nach Gebrauch im Browser sperren. Automatisches Sperren beim Abziehen ist für die Vormerkliste vorgesehen (V2 in [14](14_vormerkliste.md)). |
+| Klartext bei entsperrtem Laufwerk | mittel | Drucker und PC sehen die Dateien im Klartext, solange das Laufwerk entsperrt ist. Das ist nötig, damit der Drucker drucken kann. | Stick nach Gebrauch im Browser sperren. Seit 0.5.0 gibt es das automatische Sperren (Voreinstellung aus; das Sperren nach Ablauf der Zeit ist noch nicht geprüft, Abschnitt 9). |
 | Keine Erkennung von Manipulation | mittel | Das Verfahren erkennt gezielte Änderungen an den verschlüsselten Daten nicht. | Kein Gegenmittel in 0.4.0. |
-| Passwörter durchs WLAN | mittel | Das Laufwerks-Passwort geht beim Entsperren im Klartext durchs WLAN, solange kein HTTPS aktiv ist. | HTTPS ist eingebaut, aber im Build aus (Abschnitt 5). |
+| Passwörter durchs WLAN | mittel | Das Laufwerks-Passwort geht beim Entsperren im Klartext durchs WLAN, solange kein HTTPS aktiv ist. | Seit 0.5.0 HTTPS in den Einstellungen einschalten (Voreinstellung aus, Abschnitt 5 und 9). |
 | Updates nicht signiert | mittel | Wer Administrator-Zugriff hat, kann geänderte Firmware aufspielen. Die könnte das Passwort beim nächsten Entsperren mitlesen. | Signierte Updates sind in [14](14_vormerkliste.md) empfohlen, Entscheidung des Besitzers offen. |
 | Einrichten löscht die Karte | hoch (Datenverlust) | Einrichten und Ausschalten löschen alle Dateien. Ohne Passwort und ohne Wiederherstellungsschlüssel ist der Inhalt endgültig verloren. | Die Oberfläche warnt vor dem Einrichten. Der Wiederherstellungsschlüssel wird nur einmal angezeigt. |
 | Stromausfall während Einrichtung oder Passwortwechsel | mittel | Der Kopfbereich wird mit einer Sicherungskopie und Prüfsummen geschrieben. Ein Stromausfall in diesen Vorgängen ist **noch nicht geprüft**. | Vor dem Einrichten die Daten sichern. |
@@ -164,3 +178,29 @@ von [12](12_api_v4.md) („Was die Verschlüsselung schützt“). Hier die Risik
 | Geschwindigkeit | niedrig | Verschlüsselt: USB schreiben 820 KB/s (vorher 832 KB/s), Web-Upload 1,0 MB/s. Der Vergleich beim Lesen und beim Upload unter gleichen Bedingungen ist **noch nicht geprüft**. | – |
 | Größe | niedrig | Das Volumen ist etwa 8 bis 12 MiB kleiner (Kopfbereich, Reserve, Sicherungskopie). | – |
 | Unterschied im Alltag | niedrig | Die Karte ist an anderen Geräten nicht mehr lesbar. Nach jedem Stromausfall ist ein Entsperren nötig. | Siehe Anleitung in der [README](../README.md). |
+
+## 9. Neuerungen von 0.5.0
+
+Schnittstelle: [15](15_api_v5.md). Prüfstand: [05](05_testprotokoll.md) Phase 9 (API-Test am Gerät
+354/354). Die unabhängige Sicherheitsprüfung dieser Neuerungen läuft noch; ihr Ergebnis fehlt hier.
+
+| Risiko | Bew. | Details | Gegenmaßnahme / Stand |
+|---|---|---|---|
+| Netzlaufwerk mit echten Programmen ungetestet | mittel | WebDAV ist am Gerät nur per API-Test geprüft (Liste, Hochladen, Verschieben, Löschen, Anmeldung, gesperrtes Laufwerk). Windows-Explorer, macOS-Finder und Handy-Apps sind **noch nicht geprüft**. Programme schicken lange Folgen von Anfragen und haben eigene Eigenheiten; Fehler zeigen sich erst dort. | Vor dem Alltagseinsatz mit dem eigenen Programm ausprobieren (T9.3). Die Weboberfläche bleibt der geprüfte Weg. |
+| Windows: `BasicAuthLevel = 2` | mittel | Ohne HTTPS verbindet sich der Windows-Explorer erst nach dieser Registry-Änderung (Recherche, nicht selbst getestet). Sie gilt für **alle** WebDAV-Server: Windows schickt Benutzername und Passwort dann bei jedem WebDAV-Server über `http` lesbar mit. | `tools/webdav/Connect-DataDrive.ps1` fragt vorher und kann die Änderung mit `-Rueckgaengig` zurücknehmen. Nur in vertrauenswürdigen Netzen; für den Stick ein eigenes Passwort. |
+| Windows: Dateigrenze 50 MB | niedrig | Der Windows-WebDAV-Client überträgt ohne Änderung nur Dateien bis etwa 50 MB (Recherche). | Das Skript erhöht die Grenze nach Rückfrage. |
+| macOS-Finder kann nicht hineinkopieren | niedrig | Der Finder lädt „chunked“ hoch; der Webserver des Sticks kann das nicht annehmen und antwortet `411` (Recherche und Quelltext, nicht mit einem Mac getestet). | Weboberfläche oder ein WebDAV-Programm, das die Länge mitschickt. |
+| iPhone „Dateien“ ohne WebDAV | niedrig | Die eingebaute App kann nur SMB (Recherche). | Zusatz-App nötig; keine davon ist getestet. |
+| Netzlaufwerk und Drucker | niedrig | WebDAV arbeitet nur, solange die Dateiverwaltung das Laufwerk hat, und nimmt es dem Drucker nie weg. Ein Programm, das gerade verbunden ist, bekommt Fehler, sobald das Laufwerk dem USB-Gerät gegeben wird. | Bewusst so, damit kein Druck abbricht. |
+| WebDAV-Passwort im Klartext | mittel | Anmeldung nur per HTTP Basic. Ohne HTTPS geht das Passwort bei jeder Anfrage lesbar durchs WLAN. WebDAV über `https` ist **noch nicht geprüft**. | Abschaltbar in den Einstellungen (Netzwerk). Eigenes Passwort, vertrauenswürdiges Netz. |
+| Automatisches Sperren während eines Drucks | mittel | Nach Ablauf der Zeit sperrt das Laufwerk auch dann, wenn ein Drucker angeschlossen ist, der gerade nichts liest; er verliert das Medium. Ob der X2D eine Datei beim Start ganz einliest oder während des Drucks weiter liest, ist **nicht bekannt**. Gesperrt wird nie, solange das USB-Gerät schreibt oder ein Upload läuft. Das Sperren nach Zeit ist am Gerät **noch nicht geprüft** (nur die Einstellungen). | Voreinstellung aus. Für lange Drucke „Aus“ oder eine großzügige Zeit wählen. |
+| Uhr nach Stromausfall | niedrig | Nach einem Stromausfall ist die Uhr unbekannt, bis NTP sie stellt oder ein Browser sie mitteilt. Dateien, die in dieser Zeit geschrieben werden, haben kein Datum. Ohne Internet hängt die Uhr weiter an der Browser-Uhr. NTP am Gerät verifiziert; das Verhalten ohne Internet und nach Stromausfall ist **noch nicht geprüft**. | Hingenommen. |
+| Zeitstempel jetzt echte UTC-Sekunden | niedrig | Ab API Version 5 sind alle Zeiten echte UTC-Sekunden. Eigene Skripte, die bisher Ortszeit-Sekunden geschickt haben, liegen um den Zeitzonen-Versatz daneben ([15](15_api_v5.md) Abschnitt 1.3). | Skripte anpassen. „Senden an“ und Kurzbefehl: **noch nicht geprüft**, ob betroffen. |
+| Einrichtungsseite öffnet sich von selbst | niedrig | Gebaut, mit einem echten Handy **noch nicht geprüft**. Im Anmeldefenster des Handys geht nur die WLAN-Einrichtung, kein Hoch- oder Herunterladen. | Fenster schließen (iPhone: „Ohne Internet verwenden“), dann `http://192.168.4.1` im Browser. |
+| Upload fortsetzen | niedrig | Es gibt nur einen angefangenen Upload. Er wird verworfen durch einen anderen Upload, die Übergabe an das USB-Gerät, Sperren (auch automatisch) und Neustart. | Großen Upload zuerst fertig machen. |
+| Ordner hochladen nur am Testserver geprüft | niedrig | Am Gerät **noch nicht geprüft**. Am iPhone gibt es keine Ordnerauswahl. | Ordner einzeln anlegen oder ZIP am PC entpacken. |
+| ZIP blockiert andere Vorgänge | niedrig | Solange ein ZIP läuft, sind Ordner anlegen und Besitzerwechsel mit `409 BUSY` gesperrt; höchstens 4096 Dateien je ZIP. | Unterordner einzeln laden. |
+| HTTPS: wenig freier Speicher | mittel | Gemessen: 66 KiB frei im Leerlauf, 22 KiB als tiefster Wert beim Upload, keine Puffer-Fehlgriffe. Wie es über viele Stunden oder bei mehreren Geräten gleichzeitig aussieht, ist **noch nicht geprüft**. Es wird nur eine TLS-Verbindung gleichzeitig bedient. | Schalter bleibt aus, bis der Benutzer ihn einschaltet. |
+| HTTPS: Skripte und Symbole | niedrig | Mit HTTPS wird `http://` umgeleitet; „Senden an“, Kurzbefehl, Home-Bildschirm-Symbol und `api_test.py` müssen auf `https://` umgestellt werden. iPhone mit installiertem Zertifikat, Symbol und Kurzbefehl über `https` sind **noch nicht geprüft**. | Anleitung in der [README](../README.md), Abschnitt „HTTPS einschalten“. |
+| HTTPS: Download langsamer | niedrig | Download über HTTPS 389 kB/s gegenüber 487 kB/s über HTTP (gemessen). | Hingenommen. |
+| Display-Sprache Englisch | niedrig | Einstellung per API geprüft; ob die englischen Texte auf das LCD passen, ist **noch nicht geprüft**. | Bei Problemen Deutsch wählen. |

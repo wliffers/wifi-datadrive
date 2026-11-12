@@ -1,6 +1,6 @@
 # WiFi DataDrive – der Kern in Kurzform
 
-Stand: 2026-11-12, Firmware 0.4.0. Die Abschnitte bis „Weboberfläche und API“ beschreiben den Kern seit 0.2.0 und sind auf dem echten Gerät getestet, außer wo „offen“ steht. Anmeldung, Verschlüsselung und die übrigen Neuerungen von 0.3.0 und 0.4.0 stehen in „Version 0.3.0 und 0.4.0 in Kurzform“ weiter unten, jeweils mit Prüfstand.
+Stand: 2026-11-12, Firmware 0.5.0. Die Abschnitte bis „Weboberfläche und API“ beschreiben den Kern seit 0.2.0 und sind auf dem echten Gerät getestet, außer wo „offen“ steht. Anmeldung, Verschlüsselung und die übrigen Neuerungen von 0.3.0 und 0.4.0 stehen in „Version 0.3.0 und 0.4.0 in Kurzform“ weiter unten, die von 0.5.0 in „Version 0.5.0 in Kurzform“, jeweils mit Prüfstand.
 
 Das Projekt hieß bis Version 0.1.0 „WiFi PrintDrive“. Intern bleibt der alte Name stehen: Ordner `firmware/printdrive`, HTTP-Header `X-PrintDrive`, Code-Präfix `pd_`.
 
@@ -275,13 +275,40 @@ Prüfstand: **verifiziert** = am Gerät geprüft (Ergebnis in [05](05_testprotok
   Stick; Stromausfall während des Einrichtens oder Passwortwechsels; Verschlüsselung des
   internen Flashs (ohne Karte).
 
+## Version 0.5.0 in Kurzform
+
+API-Test am Gerät 354/354 (6 übersprungen). Schnittstelle: [15](15_api_v5.md), Ergebnisse:
+[05](05_testprotokoll.md) Phase 9, Anleitungen in der [README.md](../README.md).
+
+- **Netzlaufwerk (WebDAV)** unter `http://<Stick>/dav/`: nur per API-Test geprüft, mit echten
+  Programmen **noch nicht geprüft**. Nimmt dem Drucker das Laufwerk nie weg. Windows braucht über
+  `http` eine Registry-Änderung (`tools/webdav/Connect-DataDrive.ps1`), die iPhone-App „Dateien“
+  kann kein WebDAV, der macOS-Finder kann nicht hineinkopieren (alles aus Recherche).
+- **Uhrzeit aus dem Netz** mit Zeitzone: verifiziert. Alle Zeiten der API sind jetzt echte
+  UTC-Sekunden. Der Abschnitt „Weboberfläche und API“ oben („Das Gerät hat keine Uhr“) gilt seit
+  0.5.0 nur noch ohne Internet.
+- **Automatisches Sperren** des verschlüsselten Laufwerks (Voreinstellung aus): Einstellungen
+  verifiziert, Sperren nach Ablauf der Zeit **noch nicht geprüft**. Kann einem untätigen Drucker
+  das Laufwerk nehmen; für lange Drucke „Aus“ oder eine großzügige Zeit.
+- **Display-Sprache** folgt der Weboberfläche: Einstellung verifiziert, englische Texte auf dem
+  LCD **noch nicht geprüft**.
+- **Einrichtungsseite öffnet sich von selbst:** gebaut, mit echtem Handy **noch nicht geprüft**.
+- **Upload fortsetzen** und **Ordner als ZIP**: per API-Test verifiziert. Ordner hochladen nur am
+  Testserver geprüft.
+- **HTTPS:** im Build, Schalter aus bis zum Einschalten. Gemessen mit entsperrtem, verschlüsseltem
+  Laufwerk: Upload 864 kB/s (30 MB, bitgleich), Download 389 kB/s (HTTP 487 kB/s), 66 KiB frei im
+  Leerlauf, 22 KiB als Tiefstwert. iPhone mit Zertifikat, WebDAV über https und Dauerbetrieb
+  **noch nicht geprüft**.
+- Eine unabhängige Sicherheitsprüfung der Neuerungen läuft; Ergebnis steht aus.
+
 ## Offen
 
 - **Verschlüsselung:** die Punkte oben unter „noch nicht geprüft“ und die Grenzen in
   [12](12_api_v4.md) Abschnitt 2.5 (Passwortstärke, Klartext am Drucker, keine Signatur der Updates).
 - **Bambu X2D:** Grundkompatibilität am 2026-11-12 vom Besitzer bestätigt (Rückmeldung „alles geklappt inklusive Drucken“, keine Messung des Entwicklers): Standard-Build (MSC + CDC-Logport, USB-Gerät darf schreiben), microSD 64 GB FAT32; Drucker erkennt das Laufwerk, zeigt die per Web hochgeladene `.gcode.3mf` und druckt daraus. Ein Build ohne Logport ist für den X2D nicht nötig. Upload vom Handy bei eingestecktem Dongle mit anschließend sichtbarer neuer Datei: laut Rückmeldung bestanden, Einzelschritt nicht separat bestätigt. Nicht geprüft bzw. nicht gemessen: lange Drucke, Nur-Lese-Modus am Drucker, „Dateiverwaltung aktivieren“ während eines Drucks, Stromaufnahme, interner Flash als Medium am Drucker, andere Druckermodelle; keine Logs oder Datenraten vom Drucker.
 - **Nur-Lese-Modus für das USB-Gerät:** eingebaut, am Gerät noch nicht geprüft.
-- **Anmeldung (seit 0.3.0):** Passwörter gehen unverschlüsselt durchs WLAN (HTTP, kein HTTPS). Die Anmeldung schützt vor anderen Nutzern im selben Netz, nicht vor jemandem, der den Funkverkehr mitschneidet.
+- **Anmeldung (seit 0.3.0):** Passwörter gehen ohne HTTPS unverschlüsselt durchs WLAN. Die Anmeldung schützt vor anderen Nutzern im selben Netz, nicht vor jemandem, der den Funkverkehr mitschneidet. Seit 0.5.0 lässt sich HTTPS einschalten (Voreinstellung aus).
+- **Neu offen nach 0.5.0:** siehe [14](14_vormerkliste.md), O1 bis O10.
 - **Ordner (seit 0.3.0):** in der Weboberfläche vorhanden. Ob Ordner, die am PC angelegt wurden, dort richtig erscheinen: **noch nicht geprüft**.
 - **Weboberfläche am echten Handy:** Der Browser-Test (`tools/ui_test.py`, 566/566 am Testserver) lief mit Chromium im Handyformat; echtes iOS Safari und echtes Drag & Drop sind ungeprüft.
 - **3MF ist nicht automatisch druckbar:** Der Drucker braucht eine geslicete Datei (`.gcode.3mf`); eine solche Datei hat der X2D vom Dongle gedruckt (2026-11-12). Andere Dateiarten am Drucker sind ungeprüft.

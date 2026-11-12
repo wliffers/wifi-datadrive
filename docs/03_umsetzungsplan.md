@@ -1,8 +1,8 @@
 # 03 – Umsetzungsplan und Status
 
-Stand: 2026-11-12, Firmware 0.4.0 (WiFi DataDrive). Die Phasen 0 bis 6 gelten für 0.2.0, Phase 7
-(0.3.0) und Phase 8 (0.4.0) stehen am Ende des Abschnitts Phasen. Die Pläne dazu: [08](08_plan_v03.md),
-[11](11_plan_v04.md). Das Projekt hieß bis Version 0.1.0
+Stand: 2026-11-12, Firmware 0.5.0 (WiFi DataDrive). Die Phasen 0 bis 6 gelten für 0.2.0, Phase 7
+(0.3.0), Phase 8 (0.4.0) und Phase 9 (0.5.0) stehen am Ende des Abschnitts Phasen. Die Pläne dazu:
+[08](08_plan_v03.md), [11](11_plan_v04.md); für 0.5.0 die Vormerkliste [14](14_vormerkliste.md). Das Projekt hieß bis Version 0.1.0
 „WiFi PrintDrive“; ältere Einträge nennen deshalb noch `PrintDrive-54D5`, `PRINTDRIVE` oder
 `printdrive.local`. Der Ordner `firmware/printdrive` behält seinen Namen.
 
@@ -187,11 +187,34 @@ Ziel: Das Laufwerk lässt sich verschlüsseln; WLAN-Suche; Anzeige „LIO“. Pl
 | WLAN-Suche bei bestehender Verbindung (5 Netze in 2,9 s) | **verifiziert** |
 | WLAN-Suche im Einrichtungsmodus | **noch nicht geprüft** |
 | Anzeige „LIO“ mit Zustandsfarben | Besitzer: Aussehen gut |
-| HTTPS | im Quelltext, im Build abgeschaltet (`PD_HTTPS_OPTION`): Uploads scheitern mit TLS, weil der 16-KiB-Puffer nicht am Stück frei ist; siehe [14](14_vormerkliste.md) |
+| HTTPS | im Quelltext, im Build abgeschaltet (`PD_HTTPS_OPTION`): Uploads scheitern mit TLS, weil der 16-KiB-Puffer nicht am Stück frei ist; siehe [14](14_vormerkliste.md). In 0.5.0 umgebaut (Phase 9) |
 | Browser-Test der Weboberfläche (`tools/ui_test.py`) | **verifiziert**: 548/548 (PC) und 561/561 (Handy-Emulation), am Testserver |
 | Während des Tests behobene Fehler | Abgelehnte Anfragen mit Formulardaten schlossen die Verbindung, statt zu antworten; eine Übernahme direkt nach dem Entsperren wurde durch das Neu-Einstecken des USB-Geräts rückgängig gemacht. Beides behoben. |
 
+## Phase 9 – Netzlaufwerk, Uhrzeit, automatisches Sperren, HTTPS (Firmware 0.5.0)
+
+Ziel: die Punkte V1 bis V8 der Vormerkliste [14](14_vormerkliste.md). Schnittstelle:
+[15_api_v5.md](15_api_v5.md). Gebaut in sieben parallelen Arbeitspaketen; der erste gemeinsame
+Build lief ohne Fehler. Ergebnisse: [05](05_testprotokoll.md) Phase 9.
+
+| Abnahmekriterium | Status |
+|---|---|
+| API-Test Version 3 bis 5 am Gerät | **verifiziert**: 354/354, 6 übersprungen; erster Lauf 349/355, Abweichungen behoben |
+| Netzlaufwerk (WebDAV) | per API-Test **verifiziert**; mit echten Programmen **noch nicht geprüft** |
+| Uhrzeit aus dem Netz (NTP) mit Zeitzone | **verifiziert** (Uhr nach dem Start gestellt) |
+| Automatisches Sperren | Einstellungen **verifiziert**; Sperren nach Ablauf der Zeit **noch nicht geprüft** |
+| Display folgt der Sprache der Weboberfläche | Einstellung **verifiziert**; englische Texte auf dem LCD **noch nicht geprüft** |
+| Einrichtungsseite öffnet sich von selbst | gebaut; mit echtem Handy **noch nicht geprüft** |
+| Abgebrochene Uploads fortsetzen | **verifiziert** (API-Test) |
+| Ordner als ZIP | **verifiziert** (API-Test) |
+| Ganze Ordner hochladen | nur am Testserver geprüft |
+| HTTPS mit Speicher-Umbau, Option im Build, Schalter aus | **verifiziert** (Upload 30 MB 864 kB/s, Download 389 kB/s, tiefster freier Speicher 22 KiB); iPhone mit Zertifikat, WebDAV über https, Dauerbetrieb **noch nicht geprüft** |
+| Browser-Test der Weboberfläche Version 5 | **noch nicht geprüft** |
+| Unabhängige Sicherheitsprüfung | läuft, Ergebnis steht aus |
+
 ## Nächste Schritte
+
+Neu offen nach 0.5.0: siehe [14](14_vormerkliste.md), Abschnitt „Neu offen nach 0.5.0“ (O1 bis O10).
 
 Offen aus 0.4.0 (siehe Tabellen oben): Druck am X2D von einem verschlüsselten Stick, Stromausfall
 bei Einrichtung und Passwortwechsel, Vergleichsmessung unverschlüsselt, Einrichtungsmodus bei der
@@ -211,10 +234,10 @@ Kurzbefehl (iPhone), App-Icon am Handy. Danach: Phase 6 unten bleibt offen für 
 
 | Thema | Notiz |
 |---|---|
-| Authentifizierung | **umgesetzt in 0.3.0** (Benutzer, Rollen, Anmeldesperre); Passwörter gehen trotzdem unverschlüsselt durchs WLAN (HTTPS offen, siehe 14) |
+| Authentifizierung | **umgesetzt in 0.3.0** (Benutzer, Rollen, Anmeldesperre); Passwörter gehen ohne HTTPS unverschlüsselt durchs WLAN. HTTPS seit 0.5.0 als Schalter (Voreinstellung aus) |
 | Ordner | **umgesetzt in 0.3.0** (anlegen, verschieben, kopieren, löschen). Anzeige von PC-Ordnern: noch nicht geprüft |
 | Laufwerksverschlüsselung | **umgesetzt in 0.4.0**, optional; Restpunkte siehe Phase 8 |
-| Captive Portal | Setup-AP öffnet die Einrichtungsseite automatisch |
+| Captive Portal | **umgesetzt in 0.5.0**: Setup-AP öffnet die Einrichtungsseite automatisch; mit echtem Handy noch nicht geprüft |
 | OTA-Update | **Eingebaut in 0.3.0** (Update über die Weboberfläche, Rückkehr zur alten Version); am Gerät noch nicht geprüft. Signierte Updates fehlen (Vormerkliste 14) |
 | microSD-Komfort | Hot-Swap nicht möglich (Slot am Stecker); ggf. Anzeige der Karte in der Weboberfläche ausbauen, exFAT nur mit anderer FatFs-Konfiguration |
 | Workflow ALLPLAN / 3MFStudio | Datei direkt aus der Planungs-/Slicer-Umgebung an den Dongle senden; Ablauf offen |
