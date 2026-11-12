@@ -99,6 +99,10 @@ static esp_err_t h_set_time(httpd_req_t *req)
     if (!query_uint(req, "epoch", &epoch)) {
         return web_send_error(req, "400 Bad Request", "BAD_REQUEST", "epoch fehlt");
     }
+    // Refuse nonsense also while NTP is in charge (2023-11-14 .. 2100), then let pd_time decide.
+    if (epoch < 1700000000u || epoch >= 4102444800u) {
+        return web_send_error(req, "400 Bad Request", "BAD_REQUEST", "Uhrzeit nicht plausibel");
+    }
     const esp_err_t err = pd_time_set_client(epoch);
     if (err == ESP_ERR_INVALID_STATE) {
         return web_send_json(req, "200 OK", "{\"ok\":true,\"set\":false}");
@@ -112,15 +116,22 @@ static esp_err_t h_set_time(httpd_req_t *req)
 // POST /api/settings/autolock?minutes=N&on_detach=0|1 (admin)
 static esp_err_t h_set_autolock(httpd_req_t *req)
 {
-    uint32_t minutes;
+    // Either parameter may be omitted: it then keeps its value.
+    uint16_t cur_min = 0;
+    bool on_detach = false;
+    drive_autolock_get(&cur_min, &on_detach);
+    uint32_t minutes = cur_min;
     char det[8];
-    if (!query_uint(req, "minutes", &minutes) || minutes > DRIVE_AUTOLOCK_MINUTES_MAX ||
-        !web_query_param(req, "on_detach", det, sizeof(det)) ||
-        (strcmp(det, "0") && strcmp(det, "1") && strcmp(det, "true") && strcmp(det, "false"))) {
+    const bool has_min = query_uint(req, "minutes", &minutes);
+    const bool has_det = web_query_param(req, "on_detach", det, sizeof(det));
+    if ((!has_min && !has_det) || minutes > DRIVE_AUTOLOCK_MINUTES_MAX ||
+        (has_det && strcmp(det, "0") && strcmp(det, "1") && strcmp(det, "true") && strcmp(det, "false"))) {
         return web_send_error(req, "400 Bad Request", "BAD_REQUEST",
-                              "minutes (0-1440) und on_detach (0/1) erforderlich");
+                              "minutes (0-1440) oder on_detach (0/1) erforderlich");
     }
-    const bool on_detach = strcmp(det, "1") == 0 || strcmp(det, "true") == 0;
+    if (has_det) {
+        on_detach = strcmp(det, "1") == 0 || strcmp(det, "true") == 0;
+    }
     if (drive_autolock_set((uint16_t)minutes, on_detach) != ESP_OK) {
         return web_send_error(req, "500 Internal Server Error", "IO", "Einstellung konnte nicht gespeichert werden");
     }

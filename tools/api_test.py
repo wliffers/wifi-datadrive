@@ -1798,6 +1798,8 @@ def sec_webdav(a):
     if r.status_code == 404:
         skip("WebDAV smoke test", "/dav/ answers 404: no WebDAV in this firmware")
         return
+    # OPTIONS is public on the device (Windows asks before it logs in): test the login with PROPFIND
+    r = dav("PROPFIND", "/dav/", auth=None, headers={"Depth": "0"})
     check("401 without credentials, WWW-Authenticate: Basic", r.status_code == 401
           and r.headers.get("WWW-Authenticate", "").lower().startswith("basic"), f"{r.status_code} "
           f"{r.headers.get('WWW-Authenticate')}")
