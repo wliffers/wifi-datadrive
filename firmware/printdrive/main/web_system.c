@@ -93,6 +93,7 @@ static esp_err_t h_status(httpd_req_t *req)
     web_appendf(buf, sizeof(buf), ",\"crypt\":{\"enabled\":%s,\"unlocked\":%s,\"damaged\":%s}",
                 d.crypt != DRIVE_CRYPT_OFF ? "true" : "false", locked ? "false" : "true",
                 d.crypt == DRIVE_CRYPT_DAMAGED ? "true" : "false");
+#ifdef CONFIG_PD_HTTPS_OPTION
     pd_tls_info_t t;
     pd_tls_get_info(&t);
     web_appendf(buf, sizeof(buf),
@@ -100,6 +101,9 @@ static esp_err_t h_status(httpd_req_t *req)
                 "\"cert_expires\":\"%s\"}",
                 t.enabled ? "true" : "false", t.active ? "true" : "false", t.restart_pending ? "true" : "false",
                 t.cert_sha256, t.ca_sha256, t.cert_expires);
+#else
+    web_appendf(buf, sizeof(buf), "}");   // without the fields the web UI hides its HTTPS section
+#endif
     return web_send_json(req, "200 OK", buf);
 }
 

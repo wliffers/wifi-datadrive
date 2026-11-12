@@ -63,4 +63,13 @@ menu "DataDrive"
         depends on !PD_UPLOAD_ALL_TYPES
         default n
 
+    config PD_HTTPS_OPTION
+        bool "Offer HTTPS as a switchable option (experimental)"
+        default n
+        help
+            Off: the device serves plain HTTP only and the web UI shows no HTTPS section.
+            Measured on the T-Dongle-S3 (no PSRAM) with 0.4.0: with HTTPS on, uploads fail
+            because the 16 KiB TLS record buffer cannot be allocated (about 50 KiB free heap,
+            fragmented). Needs a memory rework before it can be enabled by default.
+
 endmenu

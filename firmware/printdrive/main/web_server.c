@@ -20,6 +20,12 @@
 #include "web_system.h"
 #include "web_wifi.h"
 
+#ifdef CONFIG_PD_HTTPS_OPTION
+#define PD_HTTPS 1
+#else
+#define PD_HTTPS 0   // see Kconfig: uploads fail with TLS on this board without PSRAM
+#endif
+
 static const char *TAG = "web";
 
 static uint8_t *s_io_buf;
@@ -473,7 +479,7 @@ esp_err_t web_server_start(void)
 
     // HTTPS if enabled; on any failure plain HTTP as before, so the device stays reachable.
     const esp_err_t tls_err = pd_tls_init();
-    if (pd_tls_enabled()) {
+    if (PD_HTTPS && pd_tls_enabled()) {
         esp_err_t err = tls_err == ESP_OK ? start_https_server(&cfg, &server) : tls_err;
         if (err == ESP_OK) {
             pd_tls_set_active(true);
@@ -499,7 +505,9 @@ esp_err_t web_server_start(void)
     ESP_RETURN_ON_ERROR(web_crypt_register(server), TAG, "crypt routes");
     ESP_RETURN_ON_ERROR(web_auth_register(server), TAG, "auth routes");
     ESP_RETURN_ON_ERROR(web_ota_register(server), TAG, "ota routes");
-    ESP_RETURN_ON_ERROR(web_register_routes(server, s_https_routes, sizeof(s_https_routes) / sizeof(s_https_routes[0])),
-                        TAG, "https routes");
+    if (PD_HTTPS) {
+        ESP_RETURN_ON_ERROR(web_register_routes(server, s_https_routes, sizeof(s_https_routes) / sizeof(s_https_routes[0])),
+                            TAG, "https routes");
+    }
     return ESP_OK;
 }
