@@ -52,6 +52,11 @@ selection, refusals WRONG_OWNER / TOO_MANY_FILES), automatic lock settings, the 
 card (WebDAV), the captive portal mode (/?captive=1), the HTTPS section with and without the HTTPS fields, English
 texts and narrow windows (390 / 320 px). Where the mock cannot produce a state (status without `webdav` or without the
 HTTPS fields) the test rewrites the /api/status answer inside the browser (page.route).
+UI redesign (0.5.x): the mode card (segmented control "Dateiverwaltung | USB-Gerät" with a sliding thumb, a tap during a
+running switch is carried out afterwards), the encryption card, the collapsible settings cards (they start closed: tests
+open a card with open_card() / to_sec() first), the ⓘ popovers (tap, outside tap, Escape with focus return, one at a
+time, "Anleitung öffnen") and the local help page (#!hilfe/<topic>, also signed out), the rules against doubled actions
+(one "Hochladen" with a menu, no floating button, "Entsperren" once, "Sperren" not in the user menu) and reduced motion.
 
 The page is instrumented only by an init script that records toasts and dialog openings;
 index.html itself is not modified. "Failed to load resource" lines of the browser console for
@@ -97,8 +102,8 @@ PROFILES = {
 
 ADMIN = ("admin", "admin123")
 GUEST = ("gast", "gast123")
-T_USB = "USB-Laufwerk aktiv"
-T_APP = "Dateiverwaltung aktiv"
+T_USB = "segUsb"                 # ui()["title"]: the pressed segment of the mode card (who has the drive) ...
+T_APP = "segApp"                 # ... or, with no segment pressed (locked / unreadable), the status text
 T_TAKEOVER = "Laufwerk vom USB-Gerät trennen?"
 ROOT_DIRS = ["Größen Prüfung äöü", "Leerer Ordner", "Projekte"]          # the folders of scenario `files`, sorted
 ROOT_COUNT = 17                                                          # 14 files + 3 folders
@@ -126,18 +131,21 @@ window.__toasts = []; window.__dialogs = [];
 JS_UI = r"""() => {
   const q = s => document.querySelector(s);
   const vis = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
-  const b = q('#modeBtn'), st = q('#list .state');
+  // the mode switch is the segment of the side that does not have the drive (none while locked / unreadable)
+  const b = [...document.querySelectorAll('.seg2 button')].find(x => x.getAttribute('aria-pressed') !== 'true' && !x.disabled) || null, st = q('#list .state');
+  const on = [...document.querySelectorAll('.seg2 button')].find(x => x.getAttribute('aria-pressed') === 'true');
   const crumbs = [...document.querySelectorAll('#crumbs .cr')].filter(vis).map(e => e.textContent.trim());
   return {
     auth: S.auth, login: vis(q('#vLogin')), pw: vis(q('#vPw')), app: vis(q('#app')), header: vis(q('header.top')),
-    title: q('#modeTitle').textContent, sub: q('#modeSub').textContent, modeCls: q('#modeCell').className,
-    btn: vis(b) ? b.textContent.trim() : null, btnDisabled: b.disabled,
+    title: on ? on.id : q('#modeTitle').textContent, status: q('#modeTitle').textContent, sub: q('#modeInfo').dataset.x || '', modeCls: q('#modeCell').className,
+    seg: on ? on.id : '', thumb: q('.seg2').dataset.on || '',
+    btn: vis(b) ? b.textContent.trim() : null, btnDisabled: !b,
     stoTitle: q('#stoTitle').textContent, stoSub: q('#stoSub').textContent,
     count: q('#count').textContent, h1: q('#title').textContent, crumbs, crumbsVisible: vis(q('#crumbs')),
     rows: [...document.querySelectorAll('#list .row')].map(r => r.dataset.name),
     dirs: [...document.querySelectorAll('#list .row.dir')].map(r => r.dataset.name),
     skel: document.querySelectorAll('#list .skel').length,
-    stateH: st && st.querySelector('h2') ? st.querySelector('h2').textContent : null,
+    stateH: st && st.querySelector('h2') ? st.querySelector('h2').textContent.trim() : null,
     notice: q('#notice').hidden ? '' : q('#notice').textContent.trim(),
     files: vis(q('#vFiles')), settings: vis(q('#vSettings')), hash: location.hash, dir: S.dir,
     selbar: vis(q('#selbar')), selCount: q('#selCount').textContent, clipbar: vis(q('#clipbar')),
@@ -217,7 +225,13 @@ JS_TARGETS = r"""(sels) => {
 # other language that the current language does not share.
 # Section chips of the settings (visible ones). The optional "Security" chip (HTTPS, only when the firmware reports it) is
 # left out: it is not part of the contract of these tests.
-JS_TABS = r"""() => [...document.querySelectorAll('.tabs a')].filter(a => a.getClientRects().length && a.getAttribute('href') !== '#s-sec').map(a => a.textContent)"""
+JS_TABS = r"""() => [...document.querySelectorAll('.sec')].filter(s => s.getClientRects().length).map(s => s.querySelector('.sechead b').textContent)"""
+
+# The ⓘ popover: open state, text, guide link, position, how many (i) buttons are expanded.
+JS_POP = r"""() => { const p = document.querySelector('#pop'), r = p.getBoundingClientRect(), a = document.querySelector('#popA');
+  return {open: !p.hidden, text: document.querySelector('#popT').textContent, link: a.hidden ? '' : a.getAttribute('href'), linkTxt: a.textContent,
+    l: r.left, r: r.right, t: r.top, b: r.bottom, vw: innerWidth, vh: innerHeight,
+    expanded: [...document.querySelectorAll('.ib[aria-expanded=true]')].map(b => b.id || b.dataset.i || '?'), focus: document.activeElement ? document.activeElement.id : ''}; }"""
 
 JS_UNTRANSLATED = r"""() => {
   const cur = L[lang], oth = L[lang === 'de' ? 'en' : 'de'];
@@ -471,7 +485,12 @@ class Ctx:
         return self.ev(JS_DLG)
 
     def menu(self):
+        self.settled("#menu")
         return self.ev(JS_MENU)
+
+    def settled(self, sel: str, timeout=2000) -> bool:
+        """Waits until the element's enter/exit transition is over (geometry is read only then)."""
+        return self.wait("s => { const e = document.querySelector(s); return !e || !e.getAnimations().length; }", sel, timeout)
 
     def text(self, sel):
         return self.ev("s => document.querySelector(s).textContent", sel)
@@ -537,6 +556,30 @@ class Ctx:
     def go(self, hash_: str):
         self.ev("h => { location.hash = h; }", hash_)
 
+    def new_folder(self):
+        """'Neuer Ordner': its own button on the desktop, an item of the 'Hochladen' menu on the phone."""
+        if self.phone:
+            self.tap("#upBtn")
+            self.wait("() => !document.querySelector('#menu').hidden")
+            self.tap('#menu [data-act="mk"]')
+        else:
+            self.tap("#mkBtn")
+
+    def pop(self):
+        return self.ev(JS_POP)
+
+    def choose_files(self, paths):
+        """'Hochladen' › 'Dateien hochladen' through the real file chooser (the button opens a menu)."""
+        self.tap("#upBtn")
+        self.wait("() => !document.querySelector('#menu').hidden", None, 3000)
+        with self.page.expect_file_chooser() as fc:
+            self.tap('#menu [data-act="file"]')
+        fc.value.set_files(paths)
+
+    def switch(self):
+        """Taps the segment of the mode card that does not have the drive (activate / hand over)."""
+        self.tap('.seg2 button[aria-pressed="false"]:not(:disabled)')
+
     def fill_dlg(self, *vals):
         for i, v in enumerate(vals):
             sel = f"#dF{i}"
@@ -554,6 +597,8 @@ class Ctx:
         self.tap("#dNo")
 
     def overflow_check(self, label: str):
+        # enter/exit transitions (transform) must be over; spinners and the loading pulse loop forever and are ignored
+        self.wait("() => !document.getAnimations().some(a => a.effect && a.effect.getTiming().iterations !== Infinity)", None, 2000)
         o = self.ev(JS_OVERFLOW)
         self.check(f"{label}: no horizontal scrolling, nothing outside the viewport",
                    o["scrollW"] <= o["innerW"] and not o["out"], f"scrollWidth {o['scrollW']} / {o['innerW']} {o['out'] or ''}")
@@ -732,15 +777,27 @@ def t01b_forced_password(c: Ctx):
 def t02a_files_and_folders(c: Ctx):
     p = c.start("files")
     ui = c.ui()
-    c.check("file view: status strip and storage", ui["title"] == T_APP and ui["sub"] == "Das USB-Gerät sieht das Laufwerk im Moment nicht."
-            and ui["btn"] == "USB-Laufwerk bereitstellen" and ui["stoTitle"] == "microSD-Karte" and "belegt" in ui["stoSub"], f"{ui['title']} / {ui['stoSub']}")
+    c.check("mode card: 'Dateiverwaltung' pressed, short status, other segment switches, storage 'microSD · used / total'",
+            ui["title"] == T_APP and ui["thumb"] == "app" and ui["status"] == "Bereit für Uploads" and ui["btn"] == "USB-Gerät"
+            and ui["stoTitle"] == "microSD" and re.fullmatch(r"[\d,]+ / [\d,]+ GB", ui["stoSub"]), f"{ui['title']} {ui['status']} / {ui['stoSub']}")
+    c.check("mode card ⓘ holds the explanation (no description text in the card)", ui["sub"].startswith("Das USB-Gerät sieht das Laufwerk im Moment nicht.")
+            and vis(c, "#modeInfo") and not c.ev("() => !!document.querySelector('#status p')"), ui["sub"][:60])
     c.check("root: 17 entries, folders first, count shown", len(ui["rows"]) == ROOT_COUNT and ui["dirs"] == ROOT_DIRS and ui["rows"][:3] == ROOT_DIRS
             and ui["count"] == str(ROOT_COUNT) and ui["h1"] == "Meine Dateien" and not ui["crumbsVisible"], f"{len(ui['rows'])} rows, {ui['dirs']}")
     c.check("hidden system folders are not listed", "System Volume Information" not in ui["rows"] and ".Trash-1000" not in ui["rows"])
-    c.check("toolbar: new folder and upload (FAB on the phone)", ui["mkBtn"] and (ui["fab"] and not ui["upBtn"] if c.phone else ui["upBtn"] and not ui["fab"]),
-            f"mk {ui['mkBtn']} up {ui['upBtn']} fab {ui['fab']}")
-    updir = c.ev("() => document.querySelector('#upDirBtn').getClientRects().length > 0")
-    c.check("folder upload button: on the desktop; not with the iPhone user agent (Safari has no folder picker)", updir != c.phone, updir)
+    c.check("toolbar: one 'Hochladen'; 'Neuer Ordner' as a button only on the desktop; no floating button, no separate '+'",
+            ui["upBtn"] and ui["mkBtn"] != c.phone and not c.ev("() => !!document.querySelector('#fab, #upDirBtn')")
+            and c.ev("() => [...document.querySelectorAll('#toolbar button')].filter(b => b.getClientRects().length).length") == (1 if c.phone else 2),
+            f"mk {ui['mkBtn']} up {ui['upBtn']}")
+    c.tap("#upBtn")
+    c.wait("() => !document.querySelector('#menu').hidden")
+    m = c.menu()
+    want = ["Dateien hochladen", "Neuer Ordner"] if c.phone else ["Dateien hochladen", "Ordner hochladen"]   # iPhone: no folder picker
+    c.check("upload menu: files, folder upload where supported, new folder on the phone", m["items"] == want
+            and c.ev("() => document.querySelector('#upBtn').getAttribute('aria-haspopup')") == "menu", m["items"])
+    c.shot("upload_menu")
+    c.page.keyboard.press("Escape")
+    c.wait("() => document.querySelector('#menu').hidden")
     c.shot("files_root")
     c.overflow_check("file list root")
     nm = c.ev(JS_NAMES)
@@ -852,7 +909,7 @@ def t02b_create_folder_and_upload(c: Ctx):
     p = c.start("files")
     c.go("#/Projekte")
     c.wait_dir("Projekte")
-    c.tap("#mkBtn")
+    c.new_folder()
     ok = c.wait_dlg("Neuer Ordner")
     d = c.dlg()
     c.check("new folder dialog: one name field with focus", ok and len(d["fields"]) == 1 and d["fields"][0]["label"] == "Name" and d["focus"] == "dF0" and d["yes"] == "Anlegen", d)
@@ -873,8 +930,9 @@ def t02b_create_folder_and_upload(c: Ctx):
     c.tap(c.row("Neu äöü").locator(".name"))
     ok = c.wait_dir("Projekte/Neu äöü")
     c.check("enter the new folder: empty state", ok and c.ui()["stateH"] == "Dieser Ordner ist leer", c.ui()["stateH"])
-    if c.phone:
-        c.check("empty folder on the phone: no FAB, upload button in the empty state", not c.ui()["fab"] and c.ev("() => !!document.querySelector('#emptyUp')"))
+    c.check("empty folder: no second upload button in the empty state (the toolbar has 'Hochladen'), an ⓘ instead of a hint text",
+            c.ui()["upBtn"] and not c.ev("() => !!document.querySelector('#list .state button.btn, #list .state p')")
+            and c.ev("() => !!document.querySelector('#list .state .ib[data-i=i_empty]')"))
     c.shot("folder_new_empty")
     # upload into this folder
     c.page.set_input_files("#picker", [str(c.run.f["txt"]), str(c.run.f["odd"])])
@@ -886,6 +944,7 @@ def t02b_create_folder_and_upload(c: Ctx):
     c.shot("upload_in_folder")
     c.overflow_check("upload panel")
     if c.phone:
+        c.settled("#uploads")
         panel_ok = c.ev("() => { const r = document.querySelector('#uploads').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight + 1; }")
         c.check("upload panel fits the phone screen", panel_ok)
     if c.ev("() => !document.querySelector('#uploads').hidden"):       # a finished panel without errors closes itself after about 6 s
@@ -1104,7 +1163,7 @@ def t03b_busy_overlay(c: Ctx):
     c.check("other_upload: notice at the top", ok, c.ui()["notice"])
     c.shot("notice_other_upload")
     c.overflow_check("notice other upload")
-    c.tap("#mkBtn")
+    c.new_folder()
     c.wait_dlg("Neuer Ordner")
     p.fill("#dF0", "Gesperrt")
     c.dlg_yes()
@@ -1126,9 +1185,15 @@ def t03c_select_and_delete(c: Ctx):
     c.check("selection bar replaces the toolbar and counts", ui["selbar"] and not ui["toolbar"] and ui["selCount"] == "2 ausgewählt", ui["selCount"])
     dl = c.ev("() => document.querySelector('#sDl').getClientRects().length > 0")
     c.check("two files selected: download button visible (v5: any selection downloads, one item after the other)", dl)
-    c.tap("#sAll")
-    c.wait("() => S.sel.size === 17")
-    c.check("'Alle auswählen' selects every entry of the folder", c.ui()["selCount"] == "17 ausgewählt" and c.ev("() => document.querySelector('#sAll').disabled"), c.ui()["selCount"])
+    if c.phone:
+        c.tap("#sAll")
+        c.wait("() => S.sel.size === 17")
+        c.check("'Alle auswählen' selects every entry of the folder", c.ui()["selCount"] == "17 ausgewählt" and c.ev("() => document.querySelector('#sAll').disabled"), c.ui()["selCount"])
+    else:
+        c.check("desktop: no 'Alle auswählen' in the bar (the header checkbox does it)", not vis(c, "#sAll") and vis(c, "#ckAll"))
+        c.tap("#ckAll")
+        c.wait("() => S.sel.size === 17")
+        c.check("header checkbox selects every entry of the folder", c.ui()["selCount"] == "17 ausgewählt", c.ui()["selCount"])
     c.shot("selection_all")
     c.overflow_check("selection all")
     c.tap("#sX")
@@ -1146,6 +1211,7 @@ def t03c_select_and_delete(c: Ctx):
         p.keyboard.press("Escape")
         c.check("Escape leaves the selection", c.wait("() => S.sel.size === 0"))
     else:
+        c.row("README").scroll_into_view_if_needed()
         box = c.row("README").bounding_box()
         c.page.touchscreen.tap(box["x"] + 60, box["y"] + box["height"] / 2)
         c.page.wait_for_timeout(300)
@@ -1202,12 +1268,13 @@ def t03c_select_and_delete(c: Ctx):
 def t04a_owner_switch(c: Ctx):
     c.start("usb_active")
     ui = c.ui()
-    c.check("usb_active: status 'USB-Laufwerk aktiv', locked state without list or upload buttons",
-            ui["title"] == T_USB and ui["sub"] == "Das angeschlossene USB-Gerät hat Zugriff auf die Dateien." and ui["btn"] == "Dateiverwaltung aktivieren"
-            and ui["stateH"] == "Die Dateien gehören gerade dem USB-Gerät" and not ui["rows"] and not ui["mkBtn"] and not ui["fab"], f"{ui['title']} / {ui['stateH']}")
+    c.check("usb_active: 'USB-Gerät' pressed, status 'USB-Gerät verbunden' (details in ⓘ), state panel without list or upload buttons",
+            ui["title"] == T_USB and ui["thumb"] == "usb" and ui["status"] == "USB-Gerät verbunden" and ui["sub"] == "Das angeschlossene USB-Gerät hat Zugriff auf die Dateien."
+            and ui["btn"] == "Dateiverwaltung" and ui["stateH"] == "Die Dateien gehören gerade dem USB-Gerät" and not ui["rows"] and not ui["mkBtn"] and not ui["upBtn"],
+            f"{ui['title']} {ui['status']} / {ui['stateH']}")
     c.shot("usb_locked")
     c.overflow_check("locked state")
-    c.tap("#modeBtn")
+    c.switch()
     ok = c.wait_dlg(T_TAKEOVER)
     d = c.dlg()
     c.check("activate while the host uses the drive: take-over dialog (danger button)", ok and d["yes"] == "Trennen und fortfahren" and d["no"] == "Abbrechen" and "danger" in d["yesCls"], d["title"])
@@ -1215,43 +1282,54 @@ def t04a_owner_switch(c: Ctx):
     c.overflow_check("take-over dialog")
     c.dlg_no()
     c.wait_dlg_closed()
-    c.check("cancel keeps USB mode", c.mock.state()["owner"] == "usb" and c.ui()["title"] == T_USB)
-    c.tap("#modeBtn")
+    c.check("cancel keeps USB mode", c.mock.state()["owner"] == "usb" and c.ui()["title"] == T_USB and c.wait("() => document.querySelector('.seg2').dataset.on === 'usb'"))
+    c.switch()
     c.wait_dlg(T_TAKEOVER)
     c.page.keyboard.press("Escape")
     c.check("Escape cancels the dialog", c.wait_dlg_closed() and c.mock.state()["owner"] == "usb")
-    c.tap("#modeBtn")
+    c.switch()
     c.wait_dlg(T_TAKEOVER)
     c.dlg_yes()
-    ok = c.wait("() => document.querySelector('#modeTitle').textContent === 'Dateiverwaltung aktiv' && document.querySelectorAll('#list .row').length > 0")
-    c.check("confirm: file mode, list appears", ok and c.mock.state()["owner"] == "app", c.ui()["title"])
+    ok = c.wait("() => document.querySelector('#segApp').getAttribute('aria-pressed') === 'true' && document.querySelectorAll('#list .row').length > 0")
+    c.check("confirm: file mode, list appears, thumb on 'Dateiverwaltung'", ok and c.mock.state()["owner"] == "app" and c.ui()["thumb"] == "app", c.ui()["title"])
     c.shot("after_activate")
     # back to the USB device
     c.clear_toasts()
-    c.tap("#modeBtn")
+    c.switch()
     ok = c.wait_toast("Das USB-Laufwerk ist bereitgestellt.")
-    c.check("hand over to the USB device: toast, locked state, owner usb", ok and c.wait("() => document.querySelector('#modeTitle').textContent === 'USB-Laufwerk aktiv'")
+    c.check("hand over to the USB device: toast, state panel, owner usb", ok and c.wait("() => document.querySelector('#segUsb').getAttribute('aria-pressed') === 'true'")
             and c.mock.state()["owner"] == "usb" and not c.ui()["rows"], c.toast_texts())
-    # busy while switching (slow device): button disabled with a spinner
+    # slow device: the thumb moves on press, the target segment shows a spinner and stays tappable
     c.mock.set(delay_ms=1200)
-    c.tap("#modeBtn")
-    ok = c.wait("() => document.querySelector('#modeBtn').disabled && !!document.querySelector('#modeBtn .spin')", None, 4000)
+    c.switch()
+    ok = c.wait("() => !!document.querySelector('#segApp .spin') && document.querySelector('.seg2').dataset.on === 'app' && !document.querySelector('#segApp').disabled", None, 4000)
     c.shot("switching_busy")
-    c.check("while switching: button disabled with spinner", ok, c.ui()["btn"])
+    c.check("while switching: thumb already on the target, spinner in it, segments not blocked", ok, c.ui())
     c.wait_dlg(T_TAKEOVER, timeout=8000)
     c.mock.set(delay_ms=0)
     c.dlg_no()
+    # a second tap during a running switch is kept and done afterwards (no host: no take-over question)
+    c.start("usb_no_host", delay_ms=900)
+    c.switch()
+    c.wait("() => S.switching === 'app'", None, 3000)
+    c.tap("#segUsb")
+    ok = c.wait("() => document.querySelector('.seg2').dataset.on === 'usb'", None, 2000)
+    done = c.wait("() => !S.switching && S.st.drive.owner === 'usb' && !S.segQ", None, 15000)
+    modes = [q.get("target") for q in reqs(c, "POST", "/api/mode")]
+    c.check("second tap while switching: registered (thumb back at once), carried out after the first switch", ok and done and modes[:2] == ["app", "usb"]
+            and c.mock.state()["owner"] == "usb", modes)
+    c.mock.set(delay_ms=0)
     # no host connected / ejected: no dialog
     for label, scen, sets in (("host ejected", "usb_active", dict(host_ejected=1, owner="usb")), ("no USB device", "usb_no_host", {})):
         c.start(scen, **sets)
-        c.tap("#modeBtn")
-        ok = c.wait("() => document.querySelector('#modeTitle').textContent === 'Dateiverwaltung aktiv'")
+        c.switch()
+        ok = c.wait("() => document.querySelector('#segApp').getAttribute('aria-pressed') === 'true'")
         c.check(f"activate with {label}: no dialog, file mode", ok and not c.ev("() => window.__dialogs.length") and c.mock.state()["owner"] == "app")
     # host writing
     c.start("usb_active", host_writing="hold")
-    c.wait("() => document.querySelector('#modeSub').textContent.includes('schreibt')")
-    c.check("host writing: status line says so", c.text("#modeSub") == "Das USB-Gerät schreibt gerade auf das Laufwerk.", c.text("#modeSub"))
-    c.tap("#modeBtn")
+    c.wait("() => (document.querySelector('#modeInfo').dataset.x || '').includes('schreibt')")
+    c.check("host writing: status line and ⓘ say so", c.ui()["status"] == "USB-Gerät schreibt …" and c.ui()["sub"] == "Das USB-Gerät schreibt gerade auf das Laufwerk.", c.ui()["sub"])
+    c.switch()
     ok = c.wait_toast("schreibt gerade")
     t = c.toasts()
     c.check("host writing: error toast, no dialog, still USB", ok and t[-1]["err"] and not c.ev("() => window.__dialogs.length") and c.mock.state()["owner"] == "usb", t[-1]["text"] if t else "no toast")
@@ -1272,11 +1350,12 @@ def t04a_owner_switch(c: Ctx):
     c.shot("upload_usb_reprovided")
     c.no_console_errors()
     # special media / states
-    for scen, title in (("no_fs", "Speicher nicht lesbar"), ("empty", T_APP), ("flash_medium", T_APP)):
+    for scen, title in (("no_fs", ""), ("empty", T_APP), ("flash_medium", T_APP)):
         c.start(scen)
         ui = c.ui()
-        extra = ui["stateH"] == "Der Speicher muss eingerichtet werden" if scen == "no_fs" else ui["stateH"] == "Noch keine Dateien" if scen == "empty" else ui["stoTitle"] == "Interner Speicher"
-        c.check(f"scenario {scen}: status and list state", ui["title"] == title and extra, f"{ui['title']} / {ui['stateH']} / {ui['stoTitle']}")
+        extra = (ui["stateH"] == "Der Speicher muss eingerichtet werden" and not ui["seg"] and ui["btn"] is None) if scen == "no_fs" \
+            else ui["stateH"] == "Noch keine Dateien" if scen == "empty" else ui["stoTitle"] == "Intern"
+        c.check(f"scenario {scen}: status and list state", (ui["title"] == title or not title) and extra, f"{ui['title']} / {ui['stateH']} / {ui['stoTitle']}")
         c.shot(f"scenario_{scen}")
         c.overflow_check(f"scenario {scen}")
 
@@ -1292,14 +1371,29 @@ def t05a_settings_general(c: Ctx):
     ui = c.ui()
     c.check("settings: view switches, hash, header link hidden", ok and ui["settings"] and not ui["files"] and ui["hash"] == "#einstellungen" and c.ev("() => document.querySelector('#navSettings').hidden"), ui["hash"])
     tabs = c.ev(JS_TABS)
-    c.check("admin sees all section chips", tabs == ["Allgemein", "Vertraute Geräte", "Netzwerk", "Speicher & USB", "Benutzer", "System"], tabs)
-    c.check("account line", c.text("#acctX") == "Angemeldet als admin (Administrator).", c.text("#acctX"))
+    c.check("admin sees all settings cards", tabs == ["WLAN", "Speicher & USB", "Sicherheit", "Benutzer", "Darstellung & Sprache", "System"], tabs)
+    cards = c.ev("""() => [...document.querySelectorAll('.sec')].filter(s => s.getClientRects().length).map(s => ({id: s.id,
+      exp: s.querySelector('.sechead').getAttribute('aria-expanded'), ctl: s.querySelector('.sechead').getAttribute('aria-controls'),
+      body: s.querySelector('.secbody').hidden, sum: s.querySelector('.sum').textContent}))""")
+    c.check("cards start closed, headers expose aria-expanded/aria-controls, every card has a one-line summary",
+            all(x["exp"] == "false" and x["body"] and x["ctl"] == "b-" + x["id"][2:] and x["sum"] for x in cards), cards)
+    c.check("summaries show the state", c.text("#sumGen") == "Automatisch · Deutsch" and "belegt" in c.text("#sumUsb")
+            and c.text("#sumNet").endswith("· Verbunden") and c.text("#sumSys").startswith("In Betrieb seit"), [x["sum"] for x in cards])
+    c.check("no account block in the settings (password and sign-out live in the user menu only)",
+            not c.ev("() => !!document.querySelector('#acctX, #pwBtn, #outBtn')"))
+    c.check("'?' at the top right opens the help page", c.ev("() => document.querySelector('#helpBtn').getAttribute('href')") == "#!hilfe" and vis(c, "#helpBtn"))
     c.shot("settings_top")
     c.shot("settings_full", full=True)
     c.overflow_check("settings")
     nm = c.ev(JS_NAMES)
     c.check("settings: every visible control has an accessible name", not nm["bad"], f"{nm['n']} controls {nm['bad'][:3]}")
     c.ev("() => scrollTo(0, 0)")
+    # one card open at a time
+    open_card(c, "usb")
+    open_card(c, "gen")
+    c.check("opening a card closes the other one; the open card hides its summary",
+            c.ev("() => document.querySelector('#b-usb').hidden && !document.querySelector('#b-gen').hidden && !document.querySelector('#sumGen').getClientRects().length"))
+    c.shot("settings_card_open")
     # theme
     c.tap('#theme button[data-v="dark"]')
     th = c.ev("() => [document.documentElement.dataset.theme, getComputedStyle(document.body).backgroundColor, localStorage.getItem('dd-theme')]")
@@ -1313,13 +1407,24 @@ def t05a_settings_general(c: Ctx):
     pressed = c.ev("() => [...document.querySelectorAll('#theme button')].map(b => b.getAttribute('aria-pressed'))")
     c.check("theme buttons expose their state", pressed == ["true", "false", "false"], pressed)
     # USB / storage section
+    open_card(c, "usb")
     c.check("storage section filled", c.text("#suMedium").startswith("microSD-Karte") and "von" in c.text("#suUsed") and c.text("#suFree") != "–", c.text("#suMedium"))
     c.tap("label.switch:has(#swWrite)")
     ok = c.wait_toast("darf nur noch lesen")
     c.check("'USB-Gerät darf Dateien ändern' off: API called, toast, mock follows", ok and c.mock.state()["host_writable"] is False, c.toast_texts())
     c.tap("label.switch:has(#swAuto)")
     c.check("'Nach dem Hochladen wieder bereitstellen' is stored per browser", c.ev("() => localStorage.getItem('dd-auto')") == "0" and not c.ev("() => document.querySelector('#swAuto').checked"))
+    c.tap("#fmtBtn")
+    c.wait_dlg("Speicher formatieren?")
+    c.fill_dlg("falsch")
+    c.dlg_yes()
+    ok = c.wait_derr()
+    c.check("format: needs the exact word LÖSCHEN", ok and c.dlg()["err"] == "Bitte genau das Wort LÖSCHEN eingeben.", c.dlg()["err"])
+    c.shot("format_dialog")
+    c.dlg_no()
+    c.wait_dlg_closed()
     # system section
+    open_card(c, "sys")
     c.check("system section: version, slot, uptime, memory", c.text("#sysVer") == c.mock.state()["version"] and c.text("#sysSlot").startswith("ota_") and c.text("#sysUp") != "–" and "kB" in c.text("#sysHeap"),
             f"{c.text('#sysVer')} {c.text('#sysSlot')} {c.text('#sysUp')} {c.text('#sysHeap')}")
     c.tap("#logBtn")
@@ -1332,22 +1437,15 @@ def t05a_settings_general(c: Ctx):
     c.check("restart: confirmation dialog", ok and c.dlg()["yes"] == "Neu starten", c.dlg()["title"])
     c.dlg_no()
     c.wait_dlg_closed()
-    c.tap("#fmtBtn")
-    c.wait_dlg("Speicher formatieren?")
-    c.fill_dlg("falsch")
-    c.dlg_yes()
-    ok = c.wait_derr()
-    c.check("format: needs the exact word LÖSCHEN", ok and c.dlg()["err"] == "Bitte genau das Wort LÖSCHEN eingeben.", c.dlg()["err"])
-    c.shot("format_dialog")
-    c.dlg_no()
-    c.wait_dlg_closed()
-    c.check("danger zone has the maintenance mode button", c.text("#flashBtn") == "Starten …")
+    c.check("system card has the maintenance mode button", c.text("#flashBtn") == "Starten …")
     # Wi-Fi section
+    open_card(c, "net")
     c.ev("() => document.querySelector('#s-net').scrollIntoView()")
     n0 = c.ev("() => document.querySelectorAll('#wifiList .li').length")
-    c.check("saved networks: 3 listed, the active one marked, count text", n0 == 3 and c.ev("() => document.querySelectorAll('#wifiList .pill').length") == 1
-            and c.text("#wifiCount") == "3 von 5 gespeichert", c.text("#wifiCount"))
-    active = c.ev("() => document.querySelector('#wifiList .pill').closest('.li').querySelector('[data-wdel]').dataset.wdel")
+    active = c.text("#netTitle")
+    c.check("saved networks: 3 listed, 'Verbunden' only once (status row, not again in the list), count text", n0 == 3
+            and not c.ev("() => document.querySelectorAll('#wifiList .pill').length") and c.text("#netPill") == "Verbunden"
+            and c.text("#wifiCount") == "3 von 5 gespeichert" and c.ev("a => !!document.querySelector(`[data-wdel=\"${a}\"]`)", active), c.text("#wifiCount"))
     c.tap(f'[data-wdel="{active}"]')
     c.wait_dlg("entfernen?")
     c.check("removing the connected network warns about it", "gerade mit diesem WLAN verbunden" in c.dlg()["body"], c.dlg()["body"][:60])
@@ -1378,6 +1476,7 @@ def t05a_settings_general(c: Ctx):
     c.go("#/")
     c.go("#einstellungen")
     c.wait("() => document.querySelectorAll('#wifiList .li').length === 5")
+    open_card(c, "net")
     c.tap("#wifiAdd")
     c.wait_dlg("WLAN hinzufügen")
     c.fill_dlg("Sechstes", "geheim1234")
@@ -1398,6 +1497,7 @@ def t05b_users_and_devices(c: Ctx):
     p = c.start("two_users", trust=True, wifi_count=1)
     c.go("#einstellungen")
     c.wait("() => document.querySelectorAll('#userList .li').length === 2")
+    open_card(c, "users")
     c.ev("() => document.querySelector('#s-users').scrollIntoView()")
     rows = c.ev("() => [...document.querySelectorAll('#userList .li')].map(l => l.querySelector('.txt').textContent)")
     c.check("users listed with role, own account marked 'du'", len(rows) == 2 and any("admin" in r and "du" in r and "Administrator" in r for r in rows) and any("gast" in r and "Benutzer" in r for r in rows)
@@ -1469,6 +1569,7 @@ def t05b_users_and_devices(c: Ctx):
     # last admin
     c.tap('[data-umore="admin"]')
     c.wait("() => !document.querySelector('#menu').hidden")
+    c.check("own row: no 'Neues Passwort festlegen' (the user menu has 'Passwort ändern')", c.menu()["items"] == ["Administratorrechte entziehen", "Löschen"], c.menu()["items"])
     c.tap('#menu [data-act="del"]')
     c.wait_dlg("Benutzer „admin“ löschen?")
     c.check("deleting your own account warns that you will be signed out", "dein eigenes Konto" in c.dlg()["body"], c.dlg()["body"][-60:])
@@ -1487,9 +1588,11 @@ def t05b_users_and_devices(c: Ctx):
     c.check("last administrator cannot be demoted", ok and "letzte Administrator" in c.dlg()["err"], c.dlg()["err"])
     c.dlg_no()
     c.wait_dlg_closed()
-    # change own password via the settings button
+    # change own password via the user menu (its only place)
     c.ev("() => scrollTo(0, 0)")
-    c.tap("#pwBtn")
+    c.tap("#userBtn")
+    c.wait("() => !document.querySelector('#menu').hidden")
+    c.tap('#menu [data-act="pw"]')
     ok = c.wait_dlg("Passwort ändern")
     c.check("own password dialog: current, new, repeat", ok and len(c.dlg()["fields"]) == 3, c.dlg()["fields"])
     c.shot("own_password_dialog")
@@ -1510,6 +1613,7 @@ def t05b_users_and_devices(c: Ctx):
     c.start("two_users", trust=True, wifi_count=1)
     c.go("#einstellungen")
     c.wait("() => document.querySelectorAll('#devList .li').length >= 1")
+    open_card(c, "sec")
     c.ev("() => document.querySelector('#s-dev').scrollIntoView()")
     li = c.ev("() => [...document.querySelectorAll('#devList .li')].map(l => l.textContent.replace(/\\s+/g, ' ').trim())")
     c.check("trusted devices: this device listed with a mark and the account (admin sees accounts)", len(li) == 1 and "Dieses Gerät" in li[0] and "Konto admin" in li[0]
@@ -1522,6 +1626,7 @@ def t05b_users_and_devices(c: Ctx):
     c.go("#/")
     c.go("#einstellungen")
     c.wait("() => document.querySelectorAll('#devList .li').length === 3")
+    open_card(c, "sec")
     li = c.ev("() => [...document.querySelectorAll('#devList .li')].map(l => l.textContent.replace(/\\s+/g, ' ').trim())")
     c.check("three devices listed, none is the current one", len(li) == 3 and not any("Dieses Gerät" in x for x in li) and c.text("#devCount") == "3 von 8 Plätzen belegt.", li)
     first = c.ev("() => document.querySelector('#devList [data-ddel]').getAttribute('aria-label')")
@@ -1535,6 +1640,7 @@ def t05b_users_and_devices(c: Ctx):
     c.start("two_users", trust=True, wifi_count=1)
     c.go("#einstellungen")
     c.wait("() => document.querySelectorAll('#devList .li').length >= 1")
+    open_card(c, "sec")
     c.tap("#devList [data-ddel] >> nth=0")
     c.wait_dlg("entfernen?")
     c.check("removing this device warns that you will be signed out", "wirst hier abgemeldet" in c.dlg()["body"], c.dlg()["body"])
@@ -1553,7 +1659,7 @@ def t05c_firmware_update(c: Ctx):
     p = c.start("two_users", wifi_count=1)
     c.go("#einstellungen")
     c.wait("() => !document.querySelector('#vSettings').hidden")
-    c.ev("() => document.querySelector('#s-sys').scrollIntoView()")
+    open_card(c, "sys")
     ver0 = c.mock.state()["version"]
     slot0 = c.mock.state()["status"]["ota"]["partition"]
     new_ver = f"0.9.{int(time.time()) % 1000}"
@@ -1614,6 +1720,7 @@ def t05d_restart_and_offline(c: Ctx):
     c.check("device back: notice disappears, still signed in", ok and c.ui()["auth"] == "ok")
     c.go("#einstellungen")
     c.wait("() => !document.querySelector('#vSettings').hidden")
+    open_card(c, "sys")
     c.tap("#rebootBtn")
     c.wait_dlg("Laufwerk neu starten?")
     c.dlg_yes()
@@ -1626,6 +1733,7 @@ def t05d_restart_and_offline(c: Ctx):
     c.start("files", trust=True, wifi_count=1)
     c.go("#einstellungen")
     c.wait("() => !document.querySelector('#vSettings').hidden")
+    open_card(c, "sys")
     c.tap("#rebootBtn")
     c.wait_dlg("Laufwerk neu starten?")
     c.dlg_yes()
@@ -1640,7 +1748,7 @@ def t05d_restart_and_offline(c: Ctx):
 def t06_role_user(c: Ctx):
     c.start("two_users", who=GUEST, trust=False)
     ui = c.ui()
-    c.check("role user: file management works (list, folders, new folder, upload)", ui["app"] and ui["title"] == T_APP and len(ui["rows"]) >= 3 and ui["mkBtn"] and (ui["fab"] or ui["upBtn"]), f"{ui['title']} {len(ui['rows'])} rows")
+    c.check("role user: file management works (list, folders, new folder, upload)", ui["app"] and ui["title"] == T_APP and len(ui["rows"]) >= 3 and (ui["mkBtn"] or c.phone) and ui["upBtn"], f"{ui['title']} {len(ui['rows'])} rows")
     c.check("avatar shows the user", c.text("#userAv") == "g")
     c.shot("files_user_role")
     c.tap("#userBtn")
@@ -1650,14 +1758,19 @@ def t06_role_user(c: Ctx):
     c.go("#einstellungen")
     c.wait("() => !document.querySelector('#vSettings').hidden")
     c.wait("() => document.querySelector('#devList .li') !== null")
-    vis = c.ev("() => ['#s-gen','#s-dev','#s-net','#s-usb','#s-users','#s-sys','#s-danger'].map(s => document.querySelector(s).getClientRects().length > 0)")
-    c.check("settings for a user: only General, Trusted devices, Storage & USB", vis == [True, True, False, True, False, False, False], vis)
     tabs = c.ev(JS_TABS)
-    c.check("section chips for a user", tabs == ["Allgemein", "Vertraute Geräte", "Speicher & USB"], tabs)
-    shown = c.ev("() => ['#swWrite', '#wifiAdd', '#userAdd', '#rebootBtn', '#logBtn', '#otaBtn', '#fmtBtn', '#flashBtn', '#wifiList', '#userList'].map(s => document.querySelector(s).getClientRects().length > 0)")
-    c.check("no admin control visible (USB write switch, Wi-Fi, users, restart, log, update, format, maintenance)", not any(shown), shown)
-    c.check("account line says 'Benutzer'", c.text("#acctX") == "Angemeldet als gast (Benutzer).", c.text("#acctX"))
-    c.check("the user's own settings work: auto switch and theme", c.ev("() => document.querySelector('#swAuto').getClientRects().length > 0") and c.ev("() => document.querySelector('#theme').getClientRects().length > 0"))
+    c.check("settings cards for a user: Speicher & USB, Sicherheit, Darstellung & Sprache", tabs == ["Speicher & USB", "Sicherheit", "Darstellung & Sprache"], tabs)
+    shown = []
+    for k in ("usb", "sec", "gen"):
+        open_card(c, k)
+        shown += c.ev("() => ['#swWrite', '#wifiAdd', '#userAdd', '#rebootBtn', '#logBtn', '#otaBtn', '#fmtBtn', '#flashBtn', '#wifiList', '#userList', '#swHttps', '#alItem'].filter(s => document.querySelector(s).getClientRects().length > 0)")
+    c.check("no admin control visible in any open card (USB write switch, Wi-Fi, users, restart, log, update, format, maintenance, HTTPS)", not shown, shown)
+    c.check("no account block in the settings", not c.ev("() => !!document.querySelector('#acctX, #pwBtn, #outBtn')"))
+    open_card(c, "usb")
+    ok = vis(c, "#swAuto")
+    open_card(c, "gen")
+    c.check("the user's own settings work: auto switch and theme", ok and vis(c, "#theme"))
+    open_card(c, "sec")
     reqs = [u for m, u in c.requests if u.split("?")[0].endswith(("/api/users", "/api/wifi/list", "/api/log"))]
     c.check("the page does not even ask for admin data", not reqs, reqs)
     c.check("trusted devices: a user sees no account line", not c.ev("() => document.querySelector('#devList').textContent.includes('Konto ')"))
@@ -1681,11 +1794,11 @@ def t07_language(c: Ctx):
     c.reset("two_users")
     p = c.open()
     r = c.ev(JS_UNTRANSLATED)
-    c.check("German sign-in view: no foreign or raw key texts", not r["bad"] and r["n"] > 6, r)
+    c.check("German sign-in view: no foreign or raw key texts", not r["bad"] and r["n"] >= 5, r)
     c.tap("#loginForm [data-lang]")
     c.wait("() => lang === 'en'")
     r = c.ev(JS_UNTRANSLATED)
-    texts = c.ev("() => ({u: document.querySelector('label[for=lUser]').textContent, btn: document.querySelector('#loginBtn').textContent, t: document.querySelector('#lTrust').nextElementSibling.firstElementChild.textContent, "
+    texts = c.ev("() => ({u: document.querySelector('label[for=lUser]').textContent, btn: document.querySelector('#loginBtn').textContent, t: document.querySelector('#lTrust').nextElementSibling.textContent, "
                  "lang: document.documentElement.lang, other: document.querySelector('#loginForm [data-lang]').textContent})")
     c.check("switch on the sign-in view: English texts, <html lang>, link now offers Deutsch", texts == {"u": "User name", "btn": "Sign in", "t": "Trust this device", "lang": "en", "other": "Deutsch"} and not r["bad"], f"{texts} {r['bad']}")
     c.shot("login_en")
@@ -1700,7 +1813,7 @@ def t07_language(c: Ctx):
     c.tap("#loginBtn")
     c.wait_ready()
     ui = c.ui()
-    c.check("language kept after sign-in: English file view", ui["title"] == "File management active" and ui["h1"] == "My files" and ui["btn"] == "Hand drive to USB device", f"{ui['title']} / {ui['h1']}")
+    c.check("language kept after sign-in: English file view", ui["title"] == T_APP and ui["status"] == "Ready for uploads" and ui["h1"] == "My files" and ui["btn"] == "USB device", f"{ui['status']} / {ui['h1']}")
     r = c.ev(JS_UNTRANSLATED)
     c.check("English file view: no German leftovers or raw keys", not r["bad"], r)
     c.shot("files_en")
@@ -1724,7 +1837,7 @@ def t07_language(c: Ctx):
         c.dlg_no()
         c.wait_dlg_closed()
 
-    dialog("mkdir", lambda: c.tap("#mkBtn"), "New folder")
+    dialog("mkdir", lambda: c.new_folder(), "New folder")
     dialog("rename", lambda: c.act("README", "ren"), "Rename file")
     dialog("delete", lambda: c.act("README", "del"), "Delete file?")
     for label, ok, bad, title in checks:
@@ -1749,17 +1862,27 @@ def t07_language(c: Ctx):
     c.mock.set(devices=2, wifi_count=2, scan_ms=200)
     c.go("#einstellungen")
     c.wait("() => document.querySelector('#userList .li') !== null && document.querySelector('#wifiList .li') !== null && document.querySelectorAll('#devList .li').length === 2")
-    r = c.ev(JS_UNTRANSLATED)
-    c.check("English settings: no German leftovers or raw keys", not r["bad"] and r["n"] > 40, r)
+    bad, n = [], 0
+    for k in ("net", "usb", "sec", "users", "gen", "sys"):
+        open_card(c, k)
+        r = c.ev(JS_UNTRANSLATED)
+        bad += r["bad"]
+        n += r["n"]
+    c.check("English settings (every card opened): no German leftovers or raw keys", not bad and n > 60, f"{n} {bad[:6]}")
     tabs = c.ev(JS_TABS)
-    c.check("English section chips", tabs == ["General", "Trusted devices", "Network", "Storage & USB", "Users", "System"], tabs)
+    c.check("English settings cards", tabs == ["Wi-Fi", "Storage & USB", "Security", "Users", "Appearance & language", "System"], tabs)
     c.shot("settings_en", full=True)
     c.overflow_check("settings in English")
     pressed = c.ev("() => [...document.querySelectorAll('#langSeg button')].map(b => b.getAttribute('aria-pressed'))")
     c.check("language buttons show English selected", pressed == ["false", "true"], pressed)
     c.check("English devices texts", "slots used" in c.text("#devCount") and "Remove" in c.ev("() => document.querySelector('#devList [data-ddel]').getAttribute('aria-label')"), c.text("#devCount"))
-    for label, opener, part in (("wifi", lambda: c.tap("#wifiAdd"), "Add network"), ("user", lambda: c.tap("#userAdd"), "Add user"), ("pw", lambda: c.tap("#pwBtn"), "Change password"),
-                                ("format", lambda: c.tap("#fmtBtn"), "Format the storage?"), ("restart", lambda: c.tap("#rebootBtn"), "Restart the drive?")):
+    def via_user_menu():
+        c.tap("#userBtn")
+        c.wait("() => !document.querySelector('#menu').hidden")
+        c.tap('#menu [data-act="pw"]')
+    for label, opener, part in (("wifi", lambda: (open_card(c, "net"), c.tap("#wifiAdd")), "Add network"), ("user", lambda: (open_card(c, "users"), c.tap("#userAdd")), "Add user"),
+                                ("pw", via_user_menu, "Change password"), ("format", lambda: (open_card(c, "usb"), c.tap("#fmtBtn")), "Format the storage?"),
+                                ("restart", lambda: (open_card(c, "sys"), c.tap("#rebootBtn")), "Restart the drive?")):
         opener()
         ok = c.wait_dlg(part)
         r = c.ev(JS_UNTRANSLATED)
@@ -1767,11 +1890,13 @@ def t07_language(c: Ctx):
         c.shot("dlg_en_" + label)
         c.dlg_no()
         c.wait_dlg_closed()
+    open_card(c, "users")
     c.tap('[data-umore="gast"]')
     c.wait("() => !document.querySelector('#menu').hidden")
     m = c.menu()
     c.check("English user menu", m["items"] == ["Make administrator", "Set new password", "Delete"], m["items"])
     c.page.keyboard.press("Escape")
+    open_card(c, "sys")
     c.tap("#logBtn")
     c.wait("() => !document.querySelector('#log').hidden")
     p.set_input_files("#otaPick", str(c.run.f["fw_bad"]))
@@ -1783,10 +1908,12 @@ def t07_language(c: Ctx):
     c.check("English persists across a reload (stored per browser)", c.ui()["lang"] == "en" and c.ev("() => localStorage.getItem('dd-lang')") == "en")
     c.go("#einstellungen")
     c.wait("() => !document.querySelector('#vSettings').hidden")
+    open_card(c, "gen")
     c.tap('#langSeg button[data-v="de"]')
     c.wait("() => lang === 'de'")
     r = c.ev(JS_UNTRANSLATED)
-    c.check("back to German via the settings: German texts, no English leftovers", c.ui()["lang"] == "de" and c.text("#acctX").startswith("Angemeldet als") and not r["bad"], r["bad"])
+    c.check("back to German via the settings: German texts, no English leftovers", c.ui()["lang"] == "de" and c.text("#vSettings h1") == "Einstellungen"
+            and c.text("#sumGen") == "Automatisch · Deutsch" and not r["bad"], r["bad"])
     c.go("#/")
     c.wait_dir("")
     c.check("German list again", c.ui()["h1"] == "Meine Dateien" and c.ui()["title"] == T_APP)
@@ -1807,7 +1934,7 @@ def t08_layout(c: Ctx):
     c.overflow_check("long file names")
     c.shot("layout_list_long_names")
     if c.phone:
-        res = c.ev(JS_TARGETS, ["#userBtn", "#navSettings", "#modeBtn", "#fab", "#mkBtn", "#list .row [data-more]", "#sortM"])
+        res = c.ev(JS_TARGETS, ["#userBtn", "#navSettings", "#segApp", "#segUsb", "#modeInfo", "#encInfo", "#encSetup", "#upBtn", "#search", "#sortM", "#list .row [data-more]"])
         c.open_menu("README")
         res += c.ev(JS_TARGETS, ["#menu [data-act]"])
         c.page.keyboard.press("Escape")
@@ -1818,7 +1945,7 @@ def t08_layout(c: Ctx):
             if r.get("missing"):
                 c.check(f"touch target {r['sel']}: found", False, "element not visible")
             else:
-                c.check(f"touch target {r['sel']} at least 40x40 px", r["w"] >= 40 and r["h"] >= 40, f"{r['w']}x{r['h']}")
+                c.check(f"touch target {r['sel']} at least 44x44 px", r["w"] >= 43.5 and r["h"] >= 43.5, f"{r['w']}x{r['h']}")
     # small phone / narrow window
     for vw, vh in ((320, 568), (360, 740)) if c.phone else ((900, 700), (721, 700)):
         c.reset("files")
@@ -1836,13 +1963,21 @@ def t08_layout(c: Ctx):
         c.wait("() => !document.querySelector('#vSettings').hidden")
         c.wait("() => document.querySelector('#userList .li') !== null")
         c.overflow_check(f"{vw} px wide: settings")
+        for k in ("net", "usb", "sec", "users", "gen", "sys"):
+            open_card(c, k)
+            c.page.wait_for_timeout(350)                    # the card body fades in (transform/opacity only)
+            c.overflow_check(f"{vw} px wide: settings card {k} open")
+        c.go("#!hilfe")
+        c.wait("() => !document.querySelector('#vHelp').hidden")
+        c.page.wait_for_timeout(350)
+        c.overflow_check(f"{vw} px wide: help page")
         c.shot(f"w{vw}_settings")
     if not c.phone:
         c.reset("files")
         c.open("", viewport={"width": 1920, "height": 1080})
         c.login(ADMIN)
         w = c.ev("() => document.querySelector('#app').getBoundingClientRect().width")
-        c.check("wide window: content column limited to 960 px", w <= 960 + 1, w)
+        c.check("wide window: content column limited to 984 px (952 px content, as in the mockup)", w <= 984 + 1, w)
         c.shot("wide_1920")
     c.no_console_errors()
 
@@ -1872,10 +2007,13 @@ JS_LOCK = r"""() => {
     h2: q('#unlock h2').textContent, lbl: q('#ulLbl').textContent, ftype: q('#ulPass').type, fval: q('#ulPass').value,
     btn: q('#ulBtn').textContent.trim(), btnDisabled: q('#ulBtn').disabled, msg: q('#ulMsg').textContent,
     mode: q('#ulMode').textContent, eye: vis(q('#ulEye')), eyePressed: q('#ulEye').getAttribute('aria-pressed'),
-    lockBtn: vis(q('#lockBtn')), encTag: vis(q('#encTag')), encTagTxt: q('#encTag').textContent,
-    modeTitle: q('#modeTitle').textContent, modeSub: q('#modeSub').textContent, modeBtn: vis(q('#modeBtn')),
-    stoSub: q('#stoSub').textContent, stateH: q('#list .state h2') ? q('#list .state h2').textContent : null,
-    hint: q('#unlock p.small:not([hidden])').textContent, forgot: vis(q('#ulForgot')), forgotTxt: q('#ulForgot').textContent, lost: vis(q('#ulLost')), lostTxt: q('#ulLost').textContent, focus: document.activeElement ? document.activeElement.id : ''};
+    lockBtn: vis(q('#lockBtn')), encTag: vis(q('#encCard')) && !q('#encCard').classList.contains('off'), encTagTxt: q('#encTitle').textContent,
+    encSub: q('#encSub').textContent, encInfo: q('#encInfo').dataset.x || '', encSetup: vis(q('#encSetup')),
+    modeTitle: q('#modeTitle').textContent, modeSub: q('#modeInfo').dataset.x || '',
+    modeBtn: [...document.querySelectorAll('.seg2 button')].some(x => !x.disabled && x.getAttribute('aria-pressed') !== 'true'),
+    stoSub: q('#stoSub').textContent, stoTip: q('#stoCell').title, stateH: q('#list .state h2') ? q('#list .state h2').textContent.trim() : null,
+    unlockBtns: [...document.querySelectorAll('#app button, #app a')].filter(e => vis(e) && e.textContent.trim() === (lang === 'de' ? 'Entsperren' : 'Unlock')).length,
+    lost: vis(q('#ulLost')), lostTxt: q('#ulLost').textContent, focus: document.activeElement ? document.activeElement.id : ''};
 }"""
 
 JS_SCAN = r"""() => {
@@ -1922,10 +2060,18 @@ def crypt_btns(c: Ctx) -> list:
 
 
 def to_settings(c: Ctx):
+    """Settings, card 'Sicherheit' open, scrolled to the encryption item."""
     c.go("#einstellungen")
     c.wait("() => !document.querySelector('#vSettings').hidden")
+    open_card(c, "sec")
     c.wait("() => !!document.querySelector('#cryptItem') && !document.querySelector('#cryptItem').hidden")
     c.ev("() => document.querySelector('#cryptItem').scrollIntoView()")
+
+
+def open_card(c: Ctx, key: str):
+    """Opens the settings card #s-<key> (the cards start closed; one is open at a time)."""
+    c.ev("k => { const h = document.getElementById('h-' + k); if (h && h.getAttribute('aria-expanded') !== 'true') h.click(); }", key)
+    c.wait("k => !document.getElementById('b-' + k).hidden", key, 3000)
 
 
 def key_ok_label(c: Ctx) -> str:
@@ -1966,14 +2112,19 @@ def t09a_unlock_view(c: Ctx):
     ui = c.ui()
     c.check("locked drive: unlock view instead of list, toolbar and breadcrumb", u["unlock"] and not u["list"] and not u["toolbar"] and not u["crumbs"]
             and u["h2"] == "Laufwerk gesperrt" and not ui["mkBtn"] and not ui["fab"] and not ui["upBtn"], u)
-    c.check("locked drive: status strip says so, no switch button, no 'format' offer", u["modeTitle"] == "Laufwerk gesperrt"
-            and u["modeSub"] == "Das USB-Gerät sieht kein Laufwerk, bis es entsperrt ist." and not u["modeBtn"] and u["stateH"] is None, f"{u['modeTitle']} / {u['modeSub']} / {u['stateH']}")
-    c.check("locked drive: storage line without size, 'verschlüsselt' tag, no lock button", u["stoSub"] == "Größe erst nach dem Entsperren sichtbar"
-            and u["encTag"] and u["encTagTxt"] == "verschlüsselt" and not u["lockBtn"], f"{u['stoSub']} {u['encTagTxt']}")
-    c.check("unlock form: drive password field (password type), 'Entsperren', recovery key link, hint", u["lbl"] == "Laufwerks-Passwort" and u["ftype"] == "password"
+    c.check("locked drive: the mode card does not repeat 'gesperrt' (it says what the USB device sees), segments off, no 'format' offer",
+            u["modeTitle"] == "USB-Gerät sieht kein Laufwerk" and u["modeSub"] == "" and not u["modeBtn"] and u["stateH"] is None
+            and not c.ev("() => document.querySelector('#status').textContent.includes('gesperrt')"),
+            f"{u['modeTitle']} / {u['modeSub']} / {u['stateH']}")
+    c.check("locked drive: storage line without size (reason as tooltip); encryption card 'Verschlüsselt · Gesperrt', no lock button",
+            u["stoSub"] == "" and u["stoTip"] == "Größe erst nach dem Entsperren sichtbar" and u["encTag"] and u["encTagTxt"] == "Verschlüsselt"
+            and u["encSub"] == "Gesperrt" and not u["lockBtn"], f"{u['stoSub']} {u['encTagTxt']} {u['encSub']}")
+    c.check("'Entsperren' exists once on the screen (in the panel, not in the card)", u["unlockBtns"] == 1 and not c.ev("() => !!document.querySelector('#encCard .btn:not([hidden])')"), u["unlockBtns"])
+    c.check("unlock form: drive password field (password type, label for screen readers, same placeholder), 'Entsperren', recovery key link; explanation behind the card's ⓘ",
+            u["lbl"] == "Laufwerks-Passwort" and u["ftype"] == "password" and c.ev("() => document.querySelector('#ulPass').placeholder") == "Laufwerks-Passwort"
             and u["btn"] == "Entsperren" and u["mode"] == "Stattdessen den Wiederherstellungsschlüssel verwenden" and u["eye"]
-            and "auch der Drucker oder PC kein Laufwerk" in u["hint"] and not u["msg"] and not u["forgot"]
-            and u["lost"] and u["lostTxt"] == "Passwort und Wiederherstellungsschlüssel verloren?", u)
+            and "nicht das Anmelde-Passwort" in u["encInfo"] and "auch der Drucker oder PC kein Laufwerk" in u["encInfo"] and not u["msg"]
+            and not c.ev("() => !!document.querySelector('#unlock p.small')") and u["lost"] and u["lostTxt"] == "Passwort und Wiederherstellungsschlüssel verloren?", u)
     if not c.phone:
         c.check("desktop: focus starts in the drive password field", u["focus"] == "ulPass", u["focus"])
     r = c.ev(JS_UNTRANSLATED)
@@ -1985,8 +2136,8 @@ def t09a_unlock_view(c: Ctx):
     if c.phone:
         res = c.ev(JS_TARGETS, ["#ulBtn", "#ulEye", "#ulMode"])
         for t in res:
-            c.check(f"touch target {t['sel']} at least 40x40 px" if t["sel"] != "#ulMode" else "touch target #ulMode (link) at least 40 px high",
-                    not t.get("missing") and (t["h"] >= 40 and (t["w"] >= 40 or t["sel"] == "#ulMode")), t)
+            c.check(f"touch target {t['sel']} at least 44x44 px" if t["sel"] != "#ulMode" else "touch target #ulMode (link) at least 40 px high",
+                    not t.get("missing") and (t["h"] >= (40 if t["sel"] == "#ulMode" else 43.5) and (t["w"] >= 43.5 or t["sel"] == "#ulMode")), t)
     # empty submit
     c.tap("#ulBtn")
     c.check("empty submit: hint, no request", ul(c)["msg"] == "Bitte das Laufwerks-Passwort eingeben." and n_post(c, "/api/crypt/unlock") == 0, ul(c)["msg"])
@@ -2026,9 +2177,10 @@ def t09a_unlock_view(c: Ctx):
     # switch to the recovery key (waiting text and disabled button survive the switch)
     c.tap("#ulMode")
     u = ul(c)
-    c.check("recovery key mode: label, text field, switch-back link, no eye, 'Passwort vergessen' help; waiting text stays", u["lbl"] == "Wiederherstellungsschlüssel" and u["ftype"] == "text"
-            and u["mode"] == "Stattdessen das Laufwerks-Passwort verwenden" and not u["eye"] and u["forgot"] and "Passwort vergessen?" in u["forgotTxt"]
-            and "als bisheriges Passwort dient dabei der Wiederherstellungsschlüssel" in u["forgotTxt"] and u["msg"].startswith("Zu viele falsche Eingaben.") and u["btnDisabled"], u)
+    c.check("recovery key mode: label and placeholder, text field, switch-back link, no eye, no help paragraph (it is on the help page); waiting text stays",
+            u["lbl"] == "Wiederherstellungsschlüssel" and c.ev("() => document.querySelector('#ulPass').placeholder") == "Wiederherstellungsschlüssel" and u["ftype"] == "text"
+            and u["mode"] == "Stattdessen das Laufwerks-Passwort verwenden" and not u["eye"] and not c.ev("() => !!document.querySelector('#unlock p.small')")
+            and u["msg"].startswith("Zu viele falsche Eingaben.") and u["btnDisabled"], u)
     c.shot("unlock_recovery_key")
     c.overflow_check("unlock view, recovery key")
     c.shot("unlock_locked_out")
@@ -2060,7 +2212,7 @@ def t09a_unlock_view(c: Ctx):
     u = ul(c)
     st = c.mock.state()
     c.check("unlock with the recovery key: toast, unlock view gone, drive belongs to the USB device (host connected)",
-            ok and st["owner"] == "usb" and st["crypt"]["unlocked"] and u["modeTitle"] == T_USB and u["stateH"] == "Die Dateien gehören gerade dem USB-Gerät"
+            ok and st["owner"] == "usb" and st["crypt"]["unlocked"] and c.ui()["title"] == T_USB and u["stateH"] == "Die Dateien gehören gerade dem USB-Gerät"
             and not u["unlock"], f"{st['owner']} {u['modeTitle']} {u['stateH']}")
     c.check("after unlocking: lock button and 'verschlüsselt' tag are there, form reset to the password", u["lockBtn"] and u["encTag"] and u["lbl"] == "Laufwerks-Passwort"
             and u["fval"] == "" and u["stoSub"] != "Größe erst nach dem Entsperren sichtbar", u)
@@ -2070,7 +2222,8 @@ def t09a_unlock_view(c: Ctx):
     # password unlock, no USB host: file management takes the drive and the list appears
     c.start("crypt_locked", usb_connected=0, crypt_kdf_ms=50)
     u = ul(c)
-    c.check("locked without a USB host: status line without the USB sentence", u["modeSub"] == "Die Dateien sind erst nach dem Entsperren zugänglich.", u["modeSub"])
+    c.check("locked without a USB host: status line 'Kein USB-Gerät angeschlossen', no ⓘ", u["modeTitle"] == "Kein USB-Gerät angeschlossen" and u["modeSub"] == ""
+            and not vis(c, "#modeInfo"), u["modeTitle"])
     c.page.fill("#ulPass", DEF_PW)
     if c.phone:
         c.tap("#ulBtn")
@@ -2079,8 +2232,9 @@ def t09a_unlock_view(c: Ctx):
     ok = wait_unlock_view(c, False) and c.wait("() => S.st.drive.owner === 'app' && S.entries !== null && document.querySelectorAll('#list .row').length > 0")
     u, ui = ul(c), c.ui()
     c.check("unlock with the drive password (Enter / tap): toast, file list is back, toolbar there, owner app",
-            ok and c.wait_toast("Das Laufwerk ist entsperrt.") and ui["title"] == T_APP and ui["mkBtn"] and len(ui["rows"]) > 0 and c.mock.state()["owner"] == "app", f"{ui['title']} {len(ui['rows'])}")
-    c.check("unlocked in file mode: lock button visible next to the storage line", u["lockBtn"] and u["encTag"], u)
+            ok and c.wait_toast("Das Laufwerk ist entsperrt.") and ui["title"] == T_APP and ui["upBtn"] and len(ui["rows"]) > 0 and c.mock.state()["owner"] == "app", f"{ui['title']} {len(ui['rows'])}")
+    c.check("unlocked in file mode: encryption card 'Entsperrt' with its one action 'Sperren'", u["lockBtn"] and u["encTag"] and u["encSub"] == "Entsperrt"
+            and c.text("#lockBtn").strip() == "Sperren", u)
     c.shot("unlocked_files")
     c.overflow_check("unlocked, file list")
     c.no_console_errors()
@@ -2100,7 +2254,7 @@ def t09b_locked_during_use(c: Ctx):
     c.ev("() => loadFiles()")
     ok = wait_unlock_view(c)
     u = ul(c)
-    c.check("423 DRIVE_LOCKED on a file request: unlock view, list gone, toast", ok and not u["list"] and c.wait_toast(T_LOCKED_DONE) and u["modeTitle"] == "Laufwerk gesperrt", c.toast_texts())
+    c.check("423 DRIVE_LOCKED on a file request: unlock view, list gone, toast", ok and not u["list"] and c.wait_toast(T_LOCKED_DONE) and u["encSub"] == "Gesperrt", c.toast_texts())
     c.check("the 423 really came from /api/files (or the status poll saw the lock first)", any("/api/files" in x and s == 423 for x, s in resp) or c.ev("() => S.st.crypt.unlocked") is False, resp[-3:])
     c.shot("locked_during_use")
     c.overflow_check("locked during use")
@@ -2112,7 +2266,7 @@ def t09b_locked_during_use(c: Ctx):
     c.mock.set(owner="app")
     c.ev("() => refresh(true)")
     c.wait("() => S.st.drive.owner === 'app' && S.entries !== null")
-    c.tap("#mkBtn")
+    c.new_folder()
     c.wait_dlg("Neuer Ordner")
     c.clear_toasts()
     c.mock.set(crypt="locked")
@@ -2139,7 +2293,7 @@ def t09b_locked_during_use(c: Ctx):
     # settings stay reachable while locked
     to_settings(c)
     c.check("settings while locked: state text, 'Entsperren' link, no lock button, format disabled with reason",
-            c.text("#cState") == "Ein, das Laufwerk ist gesperrt." and "cUnlock" in crypt_btns(c) and "cLock" not in crypt_btns(c) and c.ev("() => document.querySelector('#fmtBtn').disabled")
+            c.text("#cState") == "Ein, gesperrt" and "cUnlock" in crypt_btns(c) and "cLock" not in crypt_btns(c) and c.ev("() => document.querySelector('#fmtBtn').disabled")
             and "Erst nach dem Entsperren möglich." in c.text("#fmtSub"), f"{c.text('#cState')} {crypt_btns(c)}")
     c.shot("settings_locked")
     c.overflow_check("settings, locked drive")
@@ -2195,7 +2349,7 @@ def t09c_lock_now(c: Ctx):
     c.tap("#cLock")
     c.wait_dlg("Laufwerk jetzt sperren?")
     c.dlg_yes()
-    ok = c.wait_dlg_closed() and c.wait("() => document.querySelector('#cState').textContent === 'Ein, das Laufwerk ist gesperrt.'")
+    ok = c.wait_dlg_closed() and c.wait("() => document.querySelector('#cState').textContent === 'Ein, gesperrt'")
     c.check("lock from the settings: section shows 'gesperrt' and offers 'Entsperren'", ok and crypt_btns(c) == ["cUnlock", "cOff"], crypt_btns(c))
     c.no_console_errors()
 
@@ -2204,7 +2358,7 @@ def t09c_lock_now(c: Ctx):
 def t09d_crypt_setup(c: Ctx):
     c.start("usb_active", crypt_kdf_ms=600)
     to_settings(c)
-    c.check("unencrypted: section says 'Aus' and offers only 'Einrichten'", c.text("#cState").startswith("Aus. Wer die Speicherkarte entnimmt") and crypt_btns(c) == ["cSetup"], f"{c.text('#cState')[:30]} {crypt_btns(c)}")
+    c.check("unencrypted: section says 'Aus' and offers only 'Einrichten'", c.text("#cState") == "Aus" and crypt_btns(c) == ["cSetup"], f"{c.text('#cState')[:30]} {crypt_btns(c)}")
     c.shot("settings_crypt_off")
     c.overflow_check("settings, encryption off")
     # the USB device uses the drive: take-over question first
@@ -2224,7 +2378,8 @@ def t09d_crypt_setup(c: Ctx):
     c.check("setup dialog: warnings, three fields (password, repeat, confirmation word), danger button", ok and d["yes"] == "Löschen und verschlüsseln" and "danger" in d["yesCls"]
             and [f["type"] for f in d["fields"]] == ["password", "password", "text"] and d["fields"][0]["label"] == "Laufwerks-Passwort (mindestens 12 Zeichen)"
             and d["fields"][1]["label"] == "Laufwerks-Passwort wiederholen" and d["fields"][2]["label"] == "Zur Bestätigung LÖSCHEN eintippen"
-            and "Alle Dateien auf" in d["body"] and "endgültig verloren" in d["body"] and d["focus"] == "dF0" and not r["bad"], f"{d['fields']} {r['bad']}")
+            and "Alle Dateien auf" in d["body"] and "endgültig verloren" in d["body"] and d["focus"] == "dF0" and not r["bad"]
+            and "nur noch in diesem Stick lesbar" in c.ev("() => document.querySelector('#dInfo').dataset.x"), f"{d['fields']} {r['bad']}")
     c.shot("crypt_setup_dialog")
     c.overflow_check("setup dialog")
     c.ev("() => document.querySelector('#dlg').scrollTo(0, 99999)")
@@ -2294,9 +2449,9 @@ def t09d_crypt_setup(c: Ctx):
     c.clear_toasts()
     c.dlg_yes()
     ok = c.wait_dlg_closed() and c.wait_toast("Das Laufwerk ist jetzt verschlüsselt und entsperrt.")
-    c.wait("() => document.querySelector('#cState').textContent.startsWith('Ein, das Laufwerk ist entsperrt.')")
+    c.wait("() => document.querySelector('#cState').textContent.startsWith('Ein, entsperrt')")
     c.check("key confirmed: dialog closes, toast, section shows 'Ein, entsperrt' with lock / change password / turn off", ok and crypt_btns(c) == ["cLock", "cPw", "cRec", "cOff"]
-            and c.text("#cState") == "Ein, das Laufwerk ist entsperrt. Ohne Laufwerks-Passwort ist der Speicher nicht lesbar.", f"{crypt_btns(c)} {c.text('#cState')}")
+            and c.text("#cState") == "Ein, entsperrt", f"{crypt_btns(c)} {c.text('#cState')}")
     c.shot("settings_crypt_on")
     c.overflow_check("settings, encryption on")
     c.go("#/")
@@ -2325,7 +2480,8 @@ def t09e_crypt_manage(c: Ctx):
     r = c.ev(JS_UNTRANSLATED)
     c.check("change drive password dialog: current, new (12+), repeat; reassuring text; 'Speichern'", ok and [f["type"] for f in d["fields"]] == ["password"] * 3
             and d["fields"][0]["label"] == "Bisheriges Laufwerks-Passwort oder Wiederherstellungsschlüssel" and d["fields"][1]["label"] == "Neues Laufwerks-Passwort (mindestens 12 Zeichen)"
-            and "Wiederherstellungsschlüssel bleibt gültig" in d["body"] and d["yes"] == "Speichern" and not r["bad"], f"{d['fields']} {r['bad']}")
+            and not d["body"].strip() and "Wiederherstellungsschlüssel bleibt gültig" in c.ev("() => document.querySelector('#dInfo').dataset.x") and vis(c, "#dInfo")
+            and d["yes"] == "Speichern" and not r["bad"], f"{d['fields']} {r['bad']}")
     c.shot("crypt_pw_dialog")
     c.overflow_check("change drive password dialog")
     for o, a, b, msg in (("", NEW_PW, NEW_PW, "Bitte das Laufwerks-Passwort eingeben."),
@@ -2360,7 +2516,8 @@ def t09e_crypt_manage(c: Ctx):
     to_settings(c)
     c.tap("#cPw")
     c.wait_dlg("Laufwerks-Passwort ändern")
-    c.check("change dialog explains the forgotten-password route (recovery key in the first field)", "Passwort vergessen? Dann ins erste Feld den Wiederherstellungsschlüssel eintragen." in c.dlg()["body"], c.dlg()["body"][-120:])
+    c.check("change dialog: its ⓘ explains the forgotten-password route (recovery key in the first field)",
+            "Passwort vergessen? Dann ins erste Feld den Wiederherstellungsschlüssel eintragen." in c.ev("() => document.querySelector('#dInfo').dataset.x"))
     c.fill_dlg(DEF_KEY, NEW_PW, NEW_PW)
     c.dlg_yes()
     ok = c.wait_dlg_closed() and c.wait_toast("Das Laufwerks-Passwort wurde geändert.")
@@ -2443,7 +2600,7 @@ def t09e_crypt_manage(c: Ctx):
     c.fill_dlg(DEF_PW, "löschen")
     c.dlg_yes()
     ok = c.wait_dlg_closed() and c.wait_toast("Die Verschlüsselung ist aus. Das Laufwerk ist leer.")
-    c.wait("() => document.querySelector('#cState').textContent.startsWith('Aus.')")
+    c.wait("() => document.querySelector('#cState').textContent.startsWith('Aus')")
     st = c.mock.state()
     c.check("turned off: unencrypted, drive empty, section offers 'Einrichten', tag and lock button gone", ok and not st["crypt"]["enabled"] and st["files"] == [] and crypt_btns(c) == ["cSetup"]
             and not ul(c)["encTag"] and not ul(c)["lockBtn"], f"{st['crypt']} {crypt_btns(c)}")
@@ -2454,9 +2611,10 @@ def t09e_crypt_manage(c: Ctx):
 def t09f_crypt_role_user(c: Ctx):
     c.start("two_users", who=GUEST)
     u = ul(c)
-    c.check("role user, unencrypted drive: no lock button, no tag", not u["lockBtn"] and not u["encTag"])
+    c.check("role user, unencrypted drive: card 'Unverschlüsselt', no lock button, no setup action", not u["lockBtn"] and not u["encTag"] and not u["encSetup"]
+            and u["encTagTxt"] == "Unverschlüsselt")
     to_settings(c)
-    c.check("role user, unencrypted: the section is read-only (no setup, no buttons)", crypt_btns(c) == [] and c.text("#cState").startswith("Aus."), crypt_btns(c))
+    c.check("role user, unencrypted: the section is read-only (no setup, no buttons)", crypt_btns(c) == [] and c.text("#cState") == "Aus", crypt_btns(c))
     r = c.ev("async () => { const o = {method: 'POST', credentials: 'same-origin', headers: {'X-PrintDrive': '1', 'Content-Type': 'application/x-www-form-urlencoded'}};"
              "const out = []; for (const [p, b] of [['/api/crypt/setup', 'password=Geheimes-Passwort-12'], ['/api/crypt/password', 'old=a&new=b'], ['/api/crypt/disable', 'password=x']]) {"
              "const x = await fetch(p, Object.assign({body: b}, o)); out.push([x.status, (await x.json()).code]); } return out; }")
@@ -2495,6 +2653,7 @@ def t09g_wifi_scan(c: Ctx):
     c.go("#einstellungen")
     c.wait("() => !document.querySelector('#vSettings').hidden")
     c.wait("() => document.querySelector('#wifiList .li') !== null")
+    open_card(c, "net")
     c.ev("() => document.querySelector('#s-net').scrollIntoView()")
     c.tap("#wifiAdd")
     ok = c.wait_dlg("WLAN hinzufügen")
@@ -2503,7 +2662,7 @@ def t09g_wifi_scan(c: Ctx):
     c.check("scan dialog while searching: spinner text, 'Erneut suchen' disabled, polling paused",
             ok and s["spin"] and s["msg"] == "Suche nach WLANs …" and s["againDisabled"] and s["scanning"], s)
     c.check("dialog still has name and password fields and the hint for hidden networks", [f["type"] for f in d["fields"]] == ["text", "password"]
-            and "WLANs in Reichweite" in d["body"] and "Verstecktes WLAN oder nicht in der Liste?" in d["body"] and "Erneut suchen" in d["body"], d["body"][:120])
+            and "WLANs in Reichweite" in d["body"] and "Erneut suchen" in d["body"] and "Versteckte WLANs von Hand eintragen" in c.ev("() => document.querySelector('#dInfo').dataset.x"), d["body"][:120])
     c.shot("wifi_scan_loading")
     c.overflow_check("wifi dialog, searching")
     ok = c.wait("() => document.querySelectorAll('#scanList .net').length > 0", None, 15000)
@@ -2601,6 +2760,7 @@ def t09g_wifi_scan(c: Ctx):
     c.go("#/")
     c.go("#einstellungen")
     c.wait("() => document.querySelectorAll('#wifiList .li').length === 1")
+    open_card(c, "net")
     c.tap("#wifiAdd")
     c.wait_dlg("WLAN hinzufügen")
     c.dlg_no()
@@ -2677,7 +2837,8 @@ def t09i_v4_english_and_layout(c: Ctx):
     u = ul(c)
     r = c.ev(JS_UNTRANSLATED)
     c.check("English unlock view: texts, status strip and storage line", u["h2"] == "Drive locked" and u["lbl"] == "Drive password" and u["btn"] == "Unlock" and u["mode"] == "Use the recovery key instead"
-            and u["modeTitle"] == "Drive locked" and u["modeSub"] == "The USB device sees no drive until it is unlocked." and u["stoSub"] == "Size visible after unlocking" and u["encTagTxt"] == "encrypted", u)
+            and u["modeTitle"] == "USB device sees no drive" and u["modeSub"] == "" and u["stoSub"] == "" and u["stoTip"] == "Size visible after unlocking"
+            and u["encTagTxt"] == "Encrypted" and u["encSub"] == "Locked" and "not your sign-in password" in u["encInfo"], u)
     c.check("English unlock view: no German leftovers or raw keys", not r["bad"] and r["n"] > 6, r)
     c.shot("unlock_en")
     c.overflow_check("unlock view in English")
@@ -2715,7 +2876,7 @@ def t09i_v4_english_and_layout(c: Ctx):
     # settings in English
     to_settings(c)
     r = c.ev(JS_UNTRANSLATED)
-    c.check("English encryption section: texts and buttons", c.text("#cState") == "On, the drive is unlocked. Without the drive password the storage can’t be read." and crypt_btns(c) == ["cLock", "cPw", "cRec", "cOff"]
+    c.check("English encryption section: texts and buttons", c.text("#cState") == "On, unlocked" and crypt_btns(c) == ["cLock", "cPw", "cRec", "cOff"]
             and c.text("#cLock") == "Lock drive" and c.text("#cPw") == "Change drive password …" and c.text("#cOff") == "Turn off …" and not r["bad"], f"{c.text('#cState')[:40]} {r['bad']}")
     c.shot("settings_crypt_en")
     c.tap("#cPw")
@@ -2777,6 +2938,7 @@ def t09i_v4_english_and_layout(c: Ctx):
     c.go("#/")
     c.go("#einstellungen")
     c.wait("() => document.querySelectorAll('#wifiList .li').length === 1")
+    open_card(c, "net")
     c.tap("#wifiAdd")
     ok = c.wait_dlg("Add network")
     s = c.ev(JS_SCAN)
@@ -2823,6 +2985,7 @@ def t09i_v4_english_and_layout(c: Ctx):
         c.overflow_check(f"{vw} px wide: turn off dialog")
         c.dlg_no()
         c.wait_dlg_closed()
+        open_card(c, "net")
         c.ev("() => document.querySelector('#s-net').scrollIntoView()")
         c.tap("#wifiAdd")
         c.wait_dlg("WLAN hinzufügen")
@@ -2844,7 +3007,8 @@ def t09j_crypt_erase_damaged(c: Ctx):
     r = c.ev(JS_UNTRANSLATED)
     c.check("'Passwort und Wiederherstellungsschlüssel verloren?': erase dialog with the consequences, confirmation word field, danger button",
             ok and d["yes"] == "Endgültig löschen" and "danger" in d["yesCls"] and len(d["fields"]) == 1 and d["fields"][0]["label"] == "Zur Bestätigung LÖSCHEN eintippen"
-            and "Ohne Laufwerks-Passwort und ohne Wiederherstellungsschlüssel" in d["body"] and "endgültig verloren" in d["body"] and not r["bad"], f"{d['fields']} {r['bad']}")
+            and "endgültig verloren" in d["body"] and "Ohne Laufwerks-Passwort und Wiederherstellungsschlüssel" in c.ev("() => document.querySelector('#dInfo').dataset.x")
+            and not r["bad"], f"{d['fields']} {r['bad']}")
     c.shot("crypt_erase_dialog")
     c.overflow_check("erase dialog")
     for w in ("", "ERASE"):
@@ -2874,24 +3038,25 @@ def t09j_crypt_erase_damaged(c: Ctx):
     # damaged key area
     c.start("crypt_damaged")
     dm = c.ev("""() => { const q = s => document.querySelector(s), vis = e => !!e && e.getClientRects().length > 0;
-      return {dmg: vis(q('#damaged')), unlock: vis(q('#unlock')), h2: q('#damaged h2').textContent, who: q('#dmgWho').textContent, btn: vis(q('#dmgErase')) ? q('#dmgErase').textContent : null,
-        title: q('#modeTitle').textContent, sub: q('#modeSub').textContent, sto: q('#stoSub').textContent, lock: vis(q('#lockBtn'))}; }""")
+      return {dmg: vis(q('#damaged')), unlock: vis(q('#unlock')), h2: q('#damaged h2').textContent.trim(), who: vis(q('#dmgWho')), btn: vis(q('#dmgErase')) ? q('#dmgErase').textContent : null,
+        title: q('#modeTitle').textContent, sub: q('#modeInfo').dataset.x || '', sto: q('#stoSub').textContent, tip: q('#stoCell').title, enc: q('#encSub').textContent,
+        info: vis(q('#damaged .ib')), lock: vis(q('#lockBtn'))}; }""")
     r = c.ev(JS_UNTRANSLATED)
     c.check("damaged key area: its own view (no unlock form), what happened, what is left (admin), status strip and storage line",
-            dm["dmg"] and not dm["unlock"] and dm["h2"] == "Schlüsselbereich des Laufwerks beschädigt" and dm["who"].startswith("Das Laufwerk lässt sich nur noch löschen und neu formatieren")
-            and dm["btn"] == "Laufwerk löschen und neu formatieren" and dm["title"] == "Laufwerk beschädigt" and dm["sub"] == "Der Schlüsselbereich ist nicht lesbar."
-            and dm["sto"] == "Dateien nicht lesbar" and not dm["lock"] and not r["bad"], f"{dm} {r['bad']}")
+            dm["dmg"] and not dm["unlock"] and dm["h2"] == "Schlüsselbereich des Laufwerks beschädigt" and not dm["who"] and dm["info"]
+            and dm["btn"] == "Laufwerk löschen und neu formatieren" and "beschädigt" not in dm["title"] and dm["sub"] == "" and dm["enc"] == "Schlüsselbereich beschädigt"
+            and dm["sto"] == "" and dm["tip"] == "Dateien nicht lesbar" and not dm["lock"] and not r["bad"], f"{dm} {r['bad']}")
     c.shot("crypt_damaged")
     c.overflow_check("damaged view")
     to_settings(c)
     c.check("damaged, settings: state text, only 'Löschen und neu formatieren', format disabled with the pointer",
-            c.text("#cState") == "Ein, aber der Schlüsselbereich ist beschädigt – die Dateien sind nicht lesbar." and crypt_btns(c) == ["cErase"]
-            and c.ev("() => document.querySelector('#fmtBtn').disabled") and "Bei beschädigtem Schlüsselbereich" in c.text("#fmtSub"), f"{c.text('#cState')} {crypt_btns(c)}")
+            c.text("#cState") == "Ein, Schlüsselbereich beschädigt" and crypt_btns(c) == ["cErase"]
+            and c.ev("() => document.querySelector('#fmtBtn').disabled") and "Bei beschädigtem Schlüsselbereich" in c.ev("() => document.querySelector('#fmtI').dataset.x"), f"{c.text('#cState')} {crypt_btns(c)}")
     c.shot("settings_crypt_damaged")
     c.overflow_check("settings, damaged")
     c.tap("#cErase")
     ok = c.wait_dlg("Laufwerk löschen und neu formatieren?")
-    c.check("erase from the settings (damaged): wording for a damaged key area", ok and "Der Schlüsselbereich ist beschädigt, die Dateien sind nicht mehr lesbar." in c.dlg()["body"], c.dlg()["body"][:80])
+    c.check("erase from the settings (damaged): wording for a damaged key area", ok and "Der Schlüsselbereich ist beschädigt, die Dateien sind nicht mehr lesbar." in c.ev("() => document.querySelector('#dInfo').dataset.x"), c.dlg()["body"][:80])
     c.fill_dlg("LÖSCHEN")
     c.dlg_yes()
     ok = c.wait_dlg_closed(15000) and c.wait_toast("Das Laufwerk ist gelöscht und neu formatiert.")
@@ -2959,12 +3124,14 @@ def route_status(c: Ctx, drop):
 
 
 def to_sec(c: Ctx, sel: str, cond: str = ""):
-    """Settings view, scrolled to an element (optionally after waiting for a condition)."""
+    """Settings view, the card holding the element opened and scrolled to it (optionally after waiting for a condition)."""
     c.go("#einstellungen")
     c.wait("() => !document.querySelector('#vSettings').hidden")
     if cond:
         c.wait(cond, None, 9000)
-    c.ev("s => { const e = document.querySelector(s); if (e) e.scrollIntoView(); }", sel)
+    c.ev("""s => { const e = document.querySelector(s); if (!e) return; const sec = e.closest('.sec');
+      if (sec) { const h = sec.querySelector('.sechead'); if (h.getAttribute('aria-expanded') !== 'true') h.click(); }
+      e.scrollIntoView(); }""", sel)
 
 
 def clock_is(c: Ctx, tz: str, suffix: str, timeout=9000) -> bool:
@@ -3008,7 +3175,7 @@ def menu_items(c: Ctx, name: str) -> list:
 def t10a_clock_and_time_zone(c: Ctx):
     c.start("files", wifi_count=1)
     to_sec(c, "#timeItem", "() => !document.querySelector('#timeItem').hidden")
-    c.check("system section: clock line and time zone choice (admin)", vis(c, "#sysTime") and vis(c, "#tzSel") and c.text("#timeItem h3") == "Zeitzone"
+    c.check("system section: clock line and time zone choice (admin)", vis(c, "#sysTime") and vis(c, "#tzSel") and c.text("#timeItem h3").strip() == "Zeitzone"
             and c.text("#timeItem .kv span") == "Uhrzeit des Laufwerks", c.text("#timeItem")[:80])
     c.check("clock synced by NTP: date and time in the device's zone (Berlin) and 'aus dem Netz'", clock_is(c, "Europe/Berlin", "aus dem Netz"), c.text("#sysTime"))
     c.check("synced clock: the page does not send its own time", not reqs(c, "POST", "/api/time"), reqs(c, "POST", "/api/time"))
@@ -3188,14 +3355,13 @@ def t10c_resume(c: Ctx):
     data4 = f4.read_bytes()
     c.mock.set(resumable=f"Projekte/{f4.name}|{len(data4)}|131072")
     ok = c.wait("() => document.querySelector('#resHint').getClientRects().length > 0", None, 9000)
-    txt, pick = c.text("#resHint"), c.ev("() => L.de.otaPick")
-    c.check("unfinished upload in the status: hint names the file and 50 %, says how to resume, button to choose the file",
-            ok and f"Der Upload von „{f4.name}“ wurde bei 50 % unterbrochen." in txt and "Wähle dieselbe Datei noch einmal aus" in txt and c.text("#resPick") == pick, txt)
+    txt = c.text("#resHint")
+    c.check("unfinished upload in the status: one line with the file and 50 %; how to resume behind its ⓘ; no second 'choose file' button",
+            ok and f"Upload von „{f4.name}“ bei 50 % unterbrochen." in txt and not c.ev("() => !!document.querySelector('#resHint button:not(.ib)')")
+            and c.ev("() => document.querySelector('#resHint .ib').dataset.i") == "i_res", txt)
     c.shot("v5_resume_hint")
     c.overflow_check("hint for an unfinished upload")
-    with c.page.expect_file_chooser() as fc:
-        c.tap("#resPick")
-    fc.value.set_files(str(f4))
+    c.choose_files(str(f4))
     done = up_done(c)
     q = [x for x in reqs(c, "POST", "/api/upload") if x.get("path", "").endswith(f4.name)]
     c.check("the same file chosen in the root goes into the folder of the unfinished upload and continues at 131072",
@@ -3221,23 +3387,27 @@ def t10c_resume(c: Ctx):
 def t10d_folder_upload(c: Ctx):
     if c.phone:
         c.start("files")
-        c.check("iPhone user agent: no folder upload button", not vis(c, "#upDirBtn"))
+        c.tap("#upBtn")
+        c.wait("() => !document.querySelector('#menu').hidden")
+        c.check("iPhone user agent: upload menu without 'Ordner hochladen' (Safari has no folder picker)", c.menu()["items"] == ["Dateien hochladen", "Neuer Ordner"], c.menu()["items"])
+        c.page.keyboard.press("Escape")
         c.reset("files")
         c.open(user_agent=ANDROID_UA)
         c.login(ADMIN)
-        t_ = c.ev(JS_TARGETS, ["#upDirBtn"])[0]
-        c.check("Android phone: folder upload icon in the toolbar (icon only, name 'Ordner hochladen', at least 40x40 px)",
-                not t_.get("missing") and t_["w"] >= 40 and t_["h"] >= 40 and c.ev("() => document.querySelector('#upDirBtn').getAttribute('aria-label')") == "Ordner hochladen"
-                and not vis(c, "#upDirBtn .bl"), t_)
     else:
         c.start("files")
-        c.check("desktop: 'Ordner hochladen' button next to 'Neuer Ordner'", vis(c, "#upDirBtn") and c.text("#upDirBtn").strip() == "Ordner hochladen", c.text("#upDirBtn"))
+    c.tap("#upBtn")
+    c.wait("() => !document.querySelector('#menu').hidden")
+    m = c.menu()
+    want = ["Dateien hochladen", "Ordner hochladen", "Neuer Ordner"] if c.phone else ["Dateien hochladen", "Ordner hochladen"]
+    c.check("folder upload is an item of the 'Hochladen' menu, no toolbar button of its own" + (" (Android)" if c.phone else ""), m["items"] == want
+            and not c.ev("() => !!document.querySelector('#upDirBtn')"), m["items"])
     c.shot("v5_folder_button")
-    c.overflow_check("toolbar with folder upload")
+    c.overflow_check("upload menu with folder upload")
     c.mock.set(upload_kbps=40)
     with c.page.expect_file_chooser() as fc:
-        c.tap("#upDirBtn")
-    c.check("the button opens a folder chooser (webkitdirectory)", c.ev("() => document.querySelector('#dirPicker').webkitdirectory") is True)
+        c.tap('#menu [data-act="dir"]')
+    c.check("the menu item opens a folder chooser (webkitdirectory)", c.ev("() => document.querySelector('#dirPicker').webkitdirectory") is True)
     fc.value.set_files(str(c.run.f["tree_new"]))
     ok = c.wait("() => /^„Neuer Upload Ordner“: \\d von 3 Dateien$/.test(document.querySelector('#upAllT').textContent) && !document.querySelector('#upAll').hidden", None, 10000)
     c.check("folder upload: one line with the folder's progress ('„Neuer Upload Ordner“: n von 3 Dateien')", ok, c.text("#upAllT"))
@@ -3357,7 +3527,7 @@ def t10f_autolock(c: Ctx):
     c.start("crypt_enabled", crypt_kdf_ms=50)
     to_sec(c, "#alItem", "() => !document.querySelector('#alItem').hidden")
     o = c.ev("() => ({v: document.querySelector('#alSel').value, o: [...document.querySelectorAll('#alSel option')].map(x => [x.value, x.textContent]), det: document.querySelector('#swDet').checked,"
-             " h: document.querySelector('#alItem h3').textContent})")
+             " h: document.querySelector('#alItem h3').textContent.trim()})")
     c.check("encrypted (admin): 'Automatisch sperren' with Aus / 5 / 15 / 30 / 60 minutes / 'Eigene Zeit …', 'Aus' selected, USB switch off",
             o["h"] == "Automatisch sperren" and o["v"] == "0" and o["o"] == [["0", "Aus"], ["5", "nach 5 Minuten"], ["15", "nach 15 Minuten"], ["30", "nach 30 Minuten"],
                                                                          ["60", "nach 60 Minuten"], ["c", "Eigene Zeit …"]] and not o["det"], o)
@@ -3438,13 +3608,18 @@ def t10g_display_language(c: Ctx):
     c.check("English chosen on the sign-in page: after signing in POST /api/settings/lang?value=en, the mock's display language follows",
             ok and q[-1] == {"value": "en"} and c.mock.state()["lang"] == "en", q)
     to_sec(c, "#s-gen")
-    c.check("language item notes that it also applies to the display", vis(c, "#langX") and c.text("#langX") == "Also applies to the display on the stick.", c.text("#langX"))
+    c.tap("#langX")
+    pop = c.pop()
+    c.check("language item: its ⓘ says it also applies to the display, guide 'Taste und Display'", pop["open"] and pop["text"] == "Also applies to the display on the stick."
+            and pop["link"] == "#!hilfe/stick", pop)
+    c.page.keyboard.press("Escape")
     c.tap('#langSeg button[data-v="de"]')
     c.wait("() => lang === 'de'")
     ok = wait_req(c, "POST", "/api/settings/lang", 2)
     q = reqs(c, "POST", "/api/settings/lang")
     c.check("switching to Deutsch in the settings: POST value=de, mock 'de', note in German", ok and q[-1] == {"value": "de"} and c.mock.state()["lang"] == "de"
-            and c.text("#langX") == "Gilt auch für das Display am Stick.", q)
+            and c.ev("() => (document.querySelector('#langX').click(), document.querySelector('#popT').textContent)") == "Gilt auch für das Display am Stick.", q)
+    c.page.keyboard.press("Escape")
     c.tap('#langSeg button[data-v="de"]')
     c.page.wait_for_timeout(800)
     c.check("choosing the language that is already set sends nothing", len(reqs(c, "POST", "/api/settings/lang")) == 2, reqs(c, "POST", "/api/settings/lang"))
@@ -3473,10 +3648,12 @@ def t10h_network_drive(c: Ctx):
     c.start("two_users", wifi_count=1)
     to_sec(c, "#davAddr", "() => document.querySelector('#davAddr').textContent !== '–'")
     lines = c.ev("() => document.querySelector('#davAddr').innerText.split('\\n').map(s => s.trim()).filter(Boolean)")
-    c.check("network drive card: title, both addresses (name.local and IP) with /dav/", c.ev("() => document.querySelector('#davAddr').closest('.item').querySelector('h3').textContent") == "Als Netzlaufwerk verbinden"
+    c.check("network drive card: title, both addresses (name.local and IP) with /dav/", c.ev("() => document.querySelector('#davAddr').closest('.item').querySelector('h3').textContent.trim()") == "Als Netzlaufwerk verbinden"
             and lines == ["http://datadrive-mock.local/dav/", "http://192.0.2.152/dav/"], lines)
-    how = c.text("#davHow")
-    c.check("instructions for Windows and phones (tools/webdav script, iPhone 'Dateien' cannot)", "Windows:" in how and "tools/webdav" in how and "Handy:" in how, how[:80])
+    c.check("no instructions in the card; its ⓘ explains and leads to the guide 'Netzlaufwerk'", not c.ev("() => !!document.querySelector('#davHow')")
+            and c.ev("() => { const b = document.querySelector('#b-net [data-i=davX]'); return !!b && b.dataset.h === 'netzlaufwerk'; }"))
+    how = c.ev("() => [...L.de.helpDoc].find(x => x[0] === 'netzlaufwerk')[2]")
+    c.check("help page 'Netzlaufwerk': Windows steps (tools/webdav script) and phone note (iPhone 'Dateien' cannot)", "Windows:" in how and "tools/webdav" in how and "Handy:" in how, how[:80])
     c.check("switch shown because the status has 'webdav' (on)", vis(c, "label.switch:has(#swDav)") and c.ev("() => document.querySelector('#swDav').checked"))
     c.shot("v5_dav_card")
     c.overflow_check("network drive card")
@@ -3510,9 +3687,11 @@ def t10h_network_drive(c: Ctx):
 @test
 def t10i_https_section(c: Ctx):
     c.start("two_users", wifi_count=1)
-    to_sec(c, "#s-sec", "() => !document.querySelector('#s-sec').hidden")
-    c.check("status with the HTTPS fields: section 'Sicherheit' and its chip are shown, state 'Aus'", vis(c, "#s-sec") and vis(c, "#secChip") and c.text("#secChip") == "Sicherheit"
-            and c.text("#httpsState") == "Aus: Passwörter und Dateien gehen lesbar durchs WLAN." and not c.ev("() => document.querySelector('#swHttps').checked"), c.text("#httpsState"))
+    to_sec(c, "#httpsBox", "() => !document.querySelector('#httpsBox').hidden")
+    c.check("status with the HTTPS fields: HTTPS block in the card 'Sicherheit', state 'Aus', summary says it, explanation behind the ⓘ",
+            vis(c, "#httpsBox") and c.text("#httpsState") == "Aus" and not c.ev("() => document.querySelector('#swHttps').checked")
+            and "HTTPS aus" in c.text("#sumSec") and c.ev("() => !!document.querySelector('#httpsBox [data-i=i_https]')") and not c.ev("() => !!document.querySelector('#httpsList, #certHow')"),
+            c.text("#httpsState"))
     c.tap("label.switch:has(#swHttps)")
     ok = c.wait_dlg("HTTPS einschalten?")
     c.check("switch: confirmation 'HTTPS einschalten?' with 'Einschalten'", ok and c.dlg()["yes"] == "Einschalten", c.dlg()["title"])
@@ -3535,9 +3714,11 @@ def t10i_https_section(c: Ctx):
     route_status(c, HTTPS_FIELDS)
     c.login(ADMIN)
     to_sec(c, "#s-sys", "() => document.querySelector('#sysVer').textContent !== '–'")
-    c.check("status without the HTTPS fields: no 'Sicherheit' section and no chip", not vis(c, "#s-sec") and not vis(c, "#secChip"))
-    tabs = c.ev("() => [...document.querySelectorAll('.tabs a')].filter(a => a.getClientRects().length).map(a => a.textContent)")
-    c.check("section chips without HTTPS", tabs == ["Allgemein", "Vertraute Geräte", "Netzwerk", "Speicher & USB", "Benutzer", "System"], tabs)
+    open_card(c, "sec")
+    c.check("status without the HTTPS fields: no HTTPS block, the card 'Sicherheit' stays (trusted devices) and its summary has no HTTPS",
+            not vis(c, "#httpsBox") and vis(c, "#s-dev") and "HTTPS" not in c.text("#sumSec"), c.text("#sumSec"))
+    tabs = c.ev(JS_TABS)
+    c.check("settings cards without HTTPS", tabs == ["WLAN", "Speicher & USB", "Sicherheit", "Benutzer", "Darstellung & Sprache", "System"], tabs)
     c.overflow_check("settings without HTTPS")
     c.no_console_errors()
 
@@ -3548,13 +3729,14 @@ def t10j_captive(c: Ctx):
     c.open(query="?captive=1")
     loc = c.ev("() => location.pathname + location.search")
     c.check("captive sheet (/?captive=1): address cleaned to '/', sign-in view with the hint about the phone's sign-in window",
-            loc == "/" and vis(c, "#cpLogin") and c.text("#cpLogin").startswith("Du bist im Anmeldefenster des Telefons.") and c.ev("() => document.documentElement.classList.contains('cap')"),
+            loc == "/" and vis(c, "#cpLogin") and c.text("#cpLogin").startswith("Anmeldefenster des Telefons – hier klappt nur die WLAN-Einrichtung.")
+            and c.ev("() => document.querySelector('#cpLogin .ib').dataset.i") == "cpX" and c.ev("() => document.documentElement.classList.contains('cap')"),
             f"{loc} {c.text('#cpLogin')[:50]}")
     c.shot("v5_captive_login")
     c.overflow_check("captive sign-in")
     c.login(ADMIN)
     hint = c.text("#cpHint")
-    c.check("signed in: hint at the top with the link 'Zur WLAN-Einrichtung' (admin)", vis(c, "#cpHint") and "Die WLAN-Einrichtung klappt hier." in hint and c.text("#cpHint a") == "Zur WLAN-Einrichtung", hint[:80])
+    c.check("signed in: hint at the top with the link 'Zur WLAN-Einrichtung' (admin)", vis(c, "#cpHint") and "hier klappt nur die WLAN-Einrichtung" in hint and c.text("#cpHint a") == "Zur WLAN-Einrichtung", hint[:80])
     ui = c.ui()
     c.check("captive: no upload buttons (upload, folder upload, FAB)", not ui["upBtn"] and not ui["fab"] and not vis(c, "#upDirBtn"), f"up {ui['upBtn']} fab {ui['fab']}")
     c.check("captive: file menu without 'Herunterladen'", menu_items(c, "README") == ["Umbenennen", "Ausschneiden", "Kopieren", "Auswählen", "Löschen"])
@@ -3606,10 +3788,12 @@ def t10k_v5_english_and_layout(c: Ctx):
     c.mock.set(resumable="Projekte/Big part.3mf|1048576|262144")
     ok = c.wait("() => document.querySelector('#resHint').getClientRects().length > 0", None, 9000)
     r = c.ev(JS_UNTRANSLATED)
-    c.check("English hint for an unfinished upload, no German leftovers", ok and "The upload of “Big part.3mf” stopped at 25 %." in c.text("#resHint") and not r["bad"], f"{c.text('#resHint')[:70]} {r['bad']}")
+    c.check("English hint for an unfinished upload, no German leftovers", ok and "Upload of “Big part.3mf” stopped at 25 %." in c.text("#resHint") and not r["bad"], f"{c.text('#resHint')[:70]} {r['bad']}")
     c.check("English folder menu: 'Download as ZIP'", menu_items(c, "Projekte")[:2] == ["Open", "Download as ZIP"])
-    if not c.phone:
-        c.check("English folder upload button", c.text("#upDirBtn").strip() == "Upload folder", c.text("#upDirBtn"))
+    c.tap("#upBtn")
+    c.wait("() => !document.querySelector('#menu').hidden")
+    c.check("English upload menu", c.menu()["items"] == (["Upload files", "New folder"] if c.phone else ["Upload files", "Upload folder"]), c.menu()["items"])
+    c.page.keyboard.press("Escape")
     c.mock.set(fail_next="TOO_MANY_FILES@/api/zip")
     c.act("Projekte", "dl")
     ok = c.wait_dlg("Download as ZIP", 9000)
@@ -3618,12 +3802,19 @@ def t10k_v5_english_and_layout(c: Ctx):
     c.dlg_yes()
     c.wait_dlg_closed()
     to_sec(c, "#alItem", "() => !document.querySelector('#alItem').hidden && !document.querySelector('#timeItem').hidden")
-    r = c.ev(JS_UNTRANSLATED)
+    bad = []
+    for k in ("usb", "sys", "net", "gen"):
+        open_card(c, k)
+        bad += c.ev(JS_UNTRANSLATED)["bad"]
+    c.tap("#langX")
+    note = c.pop()["text"]
+    c.page.keyboard.press("Escape")
     o = c.ev("() => [...document.querySelectorAll('#alSel option')].map(x => x.textContent)")
-    c.check("English settings v5: automatic lock, clock, network drive, display note; no German leftovers or raw keys",
-            c.text("#alItem h3") == "Lock automatically" and o == ["Off", "after 5 minutes", "after 15 minutes", "after 30 minutes", "after 60 minutes", "Custom time …"]
-            and c.text("#sysTime").endswith(" · from the network") and c.text("#langX") == "Also applies to the display on the stick."
-            and "Connect as a network drive" in c.text("#s-net") and c.text("#timeItem h3") == "Time zone" and not r["bad"], f"{o} {c.text('#sysTime')} {r['bad']}")
+    c.check("English settings v5: automatic lock, clock, network drive, display note (ⓘ); no German leftovers or raw keys",
+            c.text("#alItem h3").strip() == "Lock automatically" and o == ["Off", "after 5 minutes", "after 15 minutes", "after 30 minutes", "after 60 minutes", "Custom time …"]
+            and c.text("#sysTime").endswith(" · from the network") and note == "Also applies to the display on the stick."
+            and "Connect as a network drive" in c.text("#s-net") and c.text("#timeItem h3").strip() == "Time zone" and not bad, f"{o} {c.text('#sysTime')} {bad}")
+    open_card(c, "usb")
     c.shot("v5_settings_en", full=True)
     c.page.select_option("#alSel", "c")
     ok = c.wait_dlg("Lock automatically")
@@ -3667,7 +3858,7 @@ def t10k_v5_english_and_layout(c: Ctx):
     c.reset("files")
     c.open(query="?captive=1", locale="en-GB")
     r = c.ev(JS_UNTRANSLATED)
-    c.check("English captive hint on the sign-in view", c.text("#cpLogin").startswith("You’re in the phone’s sign-in window.") and not r["bad"], f"{c.text('#cpLogin')[:50]} {r['bad']}")
+    c.check("English captive hint on the sign-in view", c.text("#cpLogin").startswith("Phone sign-in window — only the Wi-Fi setup works here.") and not r["bad"], f"{c.text('#cpLogin')[:50]} {r['bad']}")
     # narrow windows
     for vw, vh in ((390, 844), (320, 568)):
         c.reset("crypt_enabled", crypt_kdf_ms=50, wifi_count=1)
@@ -3686,10 +3877,13 @@ def t10k_v5_english_and_layout(c: Ctx):
         c.page.keyboard.press("Escape")
         to_sec(c, "#alItem", "() => !document.querySelector('#alItem').hidden && !document.querySelector('#timeItem').hidden")
         c.overflow_check(f"{vw} px wide: settings (automatic lock)")
+        open_card(c, "net")
         c.ev("() => document.querySelector('#s-net').scrollIntoView()")
         c.overflow_check(f"{vw} px wide: settings (network drive)")
+        open_card(c, "sys")
         c.ev("() => document.querySelector('#timeItem').scrollIntoView()")
         c.overflow_check(f"{vw} px wide: settings (clock and time zone)")
+        open_card(c, "usb")
         c.shot(f"w{vw}_v5_settings")
         c.page.select_option("#alSel", "c")
         c.wait_dlg("Automatisch sperren")
@@ -3703,6 +3897,170 @@ def t10k_v5_english_and_layout(c: Ctx):
         c.overflow_check(f"{vw} px wide: captive file view")
         c.shot(f"w{vw}_v5_captive")
     c.no_console_errors(net=True)
+
+
+# ================================================================== 11. redesign (0.5.x UI): ⓘ popovers, help page, no doubles, motion
+
+@test
+def t11a_info_popovers(c: Ctx):
+    c.start("files")
+    pop = c.pop()
+    c.check("no popover open at first; every visible (i) is a button with aria-expanded=false and aria-controls=pop",
+            not pop["open"] and c.ev("() => [...document.querySelectorAll('.ib')].filter(b => b.getClientRects().length).every(b => b.tagName === 'BUTTON' && b.getAttribute('aria-expanded') === 'false' && b.getAttribute('aria-controls') === 'pop' && b.getAttribute('aria-label'))"))
+    c.tap("#modeInfo")
+    c.page.wait_for_timeout(350)
+    pop = c.pop()
+    c.check("tap on the mode card's ⓘ: popover with 1-3 sentences and 'Anleitung öffnen', aria-expanded=true, inside the viewport",
+            pop["open"] and pop["text"].startswith("Das USB-Gerät sieht das Laufwerk im Moment nicht.") and 1 <= pop["text"].count(".") <= 3
+            and pop["linkTxt"] == "Anleitung öffnen" and pop["link"] == "#!hilfe/betriebsart" and pop["expanded"] == ["modeInfo"]
+            and pop["l"] >= 0 and pop["r"] <= pop["vw"] and pop["t"] >= 0 and pop["b"] <= pop["vh"], pop)
+    c.shot("popover_mode")
+    c.check("the popover follows its button in the DOM (keyboard order)", c.ev("() => document.querySelector('#modeInfo').nextElementSibling === document.querySelector('#pop')"))
+    c.ev("() => document.querySelector('#encInfo').click()")
+    pop = c.pop()
+    c.check("another ⓘ: one popover at a time (the first one closes)", pop["open"] and pop["expanded"] == ["encInfo"] and pop["text"].startswith("Wer die Speicherkarte entnimmt"), pop)
+    c.ev("() => document.querySelector('#encInfo').click()")
+    c.check("tapping the same ⓘ again closes it", not c.pop()["open"] and not c.pop()["expanded"])
+    c.tap("#encInfo")
+    c.tap("#stoCell")                                     # plain text above the popover (a target below could be covered by it)
+    c.check("a tap outside closes the popover (and goes nowhere)", c.wait("() => document.querySelector('#pop').hidden", None, 2000) and not c.pop()["expanded"] and c.ev("() => document.querySelector('#vHelp').hidden"))
+    c.tap("#encInfo")
+    c.page.keyboard.press("Escape")
+    pop = c.pop()
+    c.check("Escape closes it and gives the focus back to its (i)", not pop["open"] and pop["focus"] == "encInfo", pop)
+    c.page.keyboard.press("Enter")
+    c.check("keyboard: Enter on the focused (i) opens it again", c.wait("() => !document.querySelector('#pop').hidden", None, 2000))
+    c.page.keyboard.press("Escape")
+    # 'Anleitung öffnen' lands on the right section of the help page
+    c.tap("#modeInfo")
+    c.tap("#popA")
+    ok = c.wait("() => !document.querySelector('#vHelp').hidden && location.hash === '#!hilfe/betriebsart'", None, 4000)
+    c.page.wait_for_timeout(400)
+    top = c.ev("() => document.querySelector('#hilfe-betriebsart').getBoundingClientRect().top")
+    c.check("'Anleitung öffnen' opens the help page at 'Betriebsart und Drucker' (scrolled to it), popover closed", ok and 0 <= top < 160 and not c.pop()["open"]
+            and c.text("#hilfe-betriebsart h2") == "Betriebsart und Drucker", top)
+    c.shot("help_betriebsart")
+    c.check("help page: back link to where it came from, title, table of contents with every topic", c.ev("() => document.querySelector('#helpBack').getAttribute('href')") == "#/"
+            and c.text("#vHelp h1") == "Hilfe & Anleitungen" and c.ev("() => document.querySelectorAll('#helpToc a').length") == 12, c.ev("() => document.querySelector('#helpBack').getAttribute('href')"))
+    c.overflow_check("help page")
+    nm = c.ev(JS_NAMES)
+    c.check("help page: every link has an accessible name", not nm["bad"], nm["bad"][:3])
+    c.tap("#helpToc a[href='#!hilfe/netzlaufwerk']")
+    ok = c.wait("() => location.hash === '#!hilfe/netzlaufwerk'", None, 3000)
+    c.page.wait_for_timeout(300)
+    c.check("table of contents: jumps to the topic", ok and 0 <= c.ev("() => document.querySelector('#hilfe-netzlaufwerk').getBoundingClientRect().top") < 160)
+    c.tap("#helpBack")
+    c.check("back link: file view again", c.wait("() => document.querySelector('#vHelp').hidden && !document.querySelector('#vFiles').hidden", None, 4000))
+    # settings: the ⓘ of an item, inside an open card
+    c.go("#einstellungen")
+    open_card(c, "sys")
+    c.ev("() => document.querySelector('#b-sys [data-i=otaX]').scrollIntoView({block: 'center'})")
+    c.tap("#b-sys [data-i=otaX]")
+    pop = c.pop()
+    c.check("settings item ⓘ (Gerätesoftware): explanation and guide 'update', inside the viewport", pop["open"] and "printdrive.bin" in pop["text"] and pop["link"] == "#!hilfe/update"
+            and pop["l"] >= 0 and pop["r"] <= pop["vw"] and pop["b"] <= pop["vh"], pop)
+    c.check("no description paragraphs in the settings items (only labels, values, buttons)",
+            not c.ev("() => [...document.querySelectorAll('.secbody .item .txt p')].some(p => p.textContent.length > 70)"),
+            c.ev("() => [...document.querySelectorAll('.secbody .item .txt p')].map(p => p.textContent).filter(t => t.length > 70)"))
+    c.page.keyboard.press("Escape")
+    c.go("#!hilfe/verschluesselung")
+    c.check("a deep link '#!hilfe/verschluesselung' opens that section", c.wait("() => !document.querySelector('#vHelp').hidden", None, 3000)
+            and c.text("#hilfe-verschluesselung h2") == "Verschlüsselung")
+    c.check("from the settings the back link returns to the settings", c.ev("() => document.querySelector('#helpBack').getAttribute('href')") == "#einstellungen")
+    c.go("#/hilfe")
+    c.check("a folder called 'hilfe' (#/hilfe) is a folder route, not the help page", c.wait("() => document.querySelector('#vHelp').hidden && !document.querySelector('#vFiles').hidden", None, 4000))
+    # inside a dialog: Escape closes the popover only
+    c.go("#/")
+    c.wait_dir("")
+    c.tap("#encSetup")
+    c.wait_dlg("Laufwerk verschlüsseln?")
+    c.tap("#dInfo")
+    pop = c.pop()
+    c.check("dialog ⓘ: popover inside the dialog with the longer explanation", pop["open"] and "nur noch in diesem Stick lesbar" in pop["text"]
+            and c.ev("() => document.querySelector('#dlg').contains(document.querySelector('#pop'))"), pop)
+    c.shot("popover_dialog")
+    c.page.keyboard.press("Escape")
+    c.check("Escape in the dialog: first the popover closes, the dialog stays", not c.pop()["open"] and c.dlg()["open"])
+    c.page.keyboard.press("Escape")
+    c.check("second Escape closes the dialog", c.wait_dlg_closed())
+    c.no_console_errors()
+    # narrow phone: the popover stays inside 320 px
+    if c.phone:
+        c.reset("files")
+        c.open("", viewport={"width": 320, "height": 568})
+        c.login(ADMIN)
+        for sel in ("#modeInfo", "#encInfo"):
+            c.tap(sel)
+            c.page.wait_for_timeout(300)
+            pop = c.pop()
+            c.check(f"320 px: popover of {sel} inside the viewport", pop["open"] and pop["l"] >= 0 and pop["r"] <= 320 and pop["b"] <= pop["vh"], pop)
+            c.page.keyboard.press("Escape")
+
+
+@test
+def t11b_help_signed_out_and_doubles(c: Ctx):
+    c.reset("two_users")
+    c.open()
+    c.check("sign-in view: no lead text; the password reset hint is behind an ⓘ", not c.ev("() => !!document.querySelector('#loginForm p.muted, #loginForm p.small')")
+            and c.ev("() => !!document.querySelector('#loginForm [data-i=loginHelp]')"))
+    c.tap("#loginForm [data-i=loginHelp]")
+    pop = c.pop()
+    c.check("sign-in ⓘ: '10 Sekunden … admin / admin', guide 'Taste und Display'", pop["open"] and "10 Sekunden" in pop["text"] and pop["link"] == "#!hilfe/stick", pop)
+    c.tap("#popA")
+    ok = c.wait("() => !document.querySelector('#vHelp').hidden && document.querySelector('#vLogin').getClientRects().length === 0", None, 4000)
+    c.check("help page reachable signed out (static texts), back link to the sign-in", ok and c.text("#hilfe-stick h2") == "Taste und Display am Stick"
+            and c.ev("() => document.querySelector('#helpBack').getAttribute('href')") == "#", c.ui()["auth"])
+    c.overflow_check("help page signed out")
+    c.shot("help_signed_out")
+    c.tap("#helpBack")
+    c.check("back: sign-in view again", c.wait("() => document.querySelector('#vLogin').getClientRects().length > 0 && document.querySelector('#vHelp').hidden", None, 4000))
+    c.tap("#loginForm [data-lang]")
+    c.wait("() => lang === 'en'")
+    c.go("#!hilfe")
+    c.wait("() => !document.querySelector('#vHelp').hidden")
+    r = c.ev(JS_UNTRANSLATED)
+    c.check("English help page: English titles, no German leftovers", c.text("#vHelp h1") == "Help & guides" and c.text("#hilfe-https h2") == "HTTPS and certificate" and not r["bad"], r["bad"])
+    c.no_console_errors()
+    # no doubles: 'Sperren' only in the encryption card (and the settings' encryption management), not in the user menu
+    c.start("crypt_enabled", crypt_kdf_ms=50)
+    c.tap("#userBtn")
+    c.wait("() => !document.querySelector('#menu').hidden")
+    m = c.menu()
+    c.check("user menu: no 'Sperren' (only password and sign-out)", m["items"] == ["Passwort ändern", "Abmelden"], m["items"])
+    c.page.keyboard.press("Escape")
+    n = c.ev("() => [...document.querySelectorAll('#app button, #app a')].filter(e => e.getClientRects().length && /sperren$/i.test(e.textContent.trim()) && !/entsperren/i.test(e.textContent)).length")
+    c.check("file view: exactly one 'Sperren' (the encryption card)", n == 1, n)
+    c.check("phone and desktop: no floating upload button and no separate '+' next to the title", not c.ev("() => !!document.querySelector('#fab')")
+            and not c.ev("() => [...document.querySelectorAll('#toolbar h1 ~ button')].some(b => b.getClientRects().length && !b.textContent.trim())"))
+    c.no_console_errors()
+
+
+@test
+def t11c_reduced_motion(c: Ctx):
+    c.reset("usb_no_host")
+    c.open(reduced_motion="reduce")
+    c.login(ADMIN)
+    tr = c.ev("() => getComputedStyle(document.querySelector('#pop')).transitionProperty + ' | ' + getComputedStyle(document.querySelector('.seg2'), '::before').transitionProperty")
+    c.check("reduced motion: transitions only cross-fade (no transform)", "transform" not in tr, tr)
+    c.switch()
+    ok = c.wait("() => S.st.drive.owner === 'app' && document.querySelector('#segApp').getAttribute('aria-pressed') === 'true'", None, 9000)
+    c.check("reduced motion: switching the mode works", ok and c.ui()["thumb"] == "app")
+    c.tap("#modeInfo")
+    c.check("reduced motion: popover opens", c.wait("() => !document.querySelector('#pop').hidden", None, 2000))
+    c.page.keyboard.press("Escape")
+    c.tap("#upBtn")
+    c.check("reduced motion: upload menu opens", c.wait("() => !document.querySelector('#menu').hidden", None, 2000))
+    c.page.keyboard.press("Escape")
+    c.new_folder()
+    c.check("reduced motion: dialog opens", c.wait_dlg("Neuer Ordner"))
+    c.dlg_no()
+    c.wait_dlg_closed()
+    c.go("#einstellungen")
+    open_card(c, "gen")
+    c.check("reduced motion: settings card opens", vis(c, "#theme"))
+    c.go("#!hilfe")
+    c.check("reduced motion: help page opens", c.wait("() => !document.querySelector('#vHelp').hidden", None, 3000))
+    c.no_console_errors()
 
 
 # ================================================================== main
