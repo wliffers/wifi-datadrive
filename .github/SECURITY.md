@@ -53,7 +53,8 @@ Sie schützt nicht oder nur eingeschränkt:
   nicht (Mindestlänge 12 Zeichen; der Wiederherstellungsschlüssel hat 160 Bit).
 - Die **Wartezeit nach falschen Eingaben** bremst nur das Raten über das Netzwerk am laufenden Gerät;
   ein Neustart setzt sie zurück.
-- **Solange das Laufwerk entsperrt ist**, sehen Drucker und PC die Dateien im Klartext.
+- **Solange das Laufwerk entsperrt ist**, sieht das angeschlossene USB-Gerät (zum Beispiel Drucker
+  oder PC) die Dateien im Klartext.
 - Das Verfahren **erkennt keine gezielten Änderungen** an den verschlüsselten Daten.
 - **Wer Administratorzugriff hat, könnte geänderte Firmware aufspielen**, die das Passwort beim
   nächsten Entsperren mitliest (Stand 0.5.0: Updates sind nicht signiert). Der Schutz gilt gegen
@@ -70,7 +71,8 @@ Sie schützt nicht oder nur eingeschränkt:
 - **Zurücksetzen per Taste:** BOOT 10 Sekunden halten setzt die Benutzer auf `admin` / `admin`
   zurück (physischer Zugriff; das Laufwerks-Passwort öffnet das nicht).
 - Das **Passwort des Einrichtungs-WLANs** steht auf dem Display.
-- Der Stick nimmt **jeden Dateityp** an; eine Inhaltsprüfung gibt es nicht.
+- Der Stick nimmt **jeden Dateityp** an; eine Prüfung auf schädliche Inhalte gibt es nicht (nur
+  `.3mf`-Dateien werden beim Hochladen auf Vollständigkeit geprüft).
 - **HTTPS** arbeitet mit einer eigenen CA des Geräts (Name Constraints auf `*.local`, den
   Gerätenamen und private IP-Bereiche); Browser warnen, bis sie installiert ist. Nur TLS 1.2, kein
   HSTS, eine TLS-Verbindung gleichzeitig.
@@ -98,8 +100,8 @@ ESP-IDF, TinyUSB or other third-party components (report them upstream).
 **What the drive encryption protects:** someone who gets the microSD card or the stick without
 the drive password sees only random-looking data. **What it does not protect:** a weak password
 (offline guessing against a removed card is not rate-limited); the wait time after wrong
-passwords only slows guessing over the network and resets on reboot; while unlocked, printer and
-PC see plain files; no detection of targeted modification of the ciphertext; an `admin` user
+passwords only slows guessing over the network and resets on reboot; while unlocked, the connected
+USB host (for example a printer or PC) sees plain files; no detection of targeted modification of the ciphertext; an `admin` user
 could install modified firmware that captures the password on the next unlock (as of 0.5.0
 updates are not signed); without HTTPS, passwords cross the Wi-Fi in clear text (HTTPS is built
 in but off by default). Sources: `docs/12_api_v4.md` section 2.5 and `docs/06_risiken.md`

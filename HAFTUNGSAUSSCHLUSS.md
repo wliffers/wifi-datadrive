@@ -12,16 +12,18 @@ Support-Anspruch, keine zugesicherten Reaktionszeiten und keine Pflicht zur Pfle
 
 Die Software wird **so bereitgestellt, wie sie ist** („as is“), ohne jede ausdrückliche oder
 stillschweigende Gewährleistung – insbesondere ohne Zusicherung der Fehlerfreiheit, der Eignung für einen
-bestimmten Zweck, der Verträglichkeit mit einem bestimmten Drucker, Rechner oder Programm oder mit
-künftigen Versionen von ESP-IDF oder der Drucker-Firmware. Getestet ist nur, was in der README und in
+bestimmten Zweck, der Verträglichkeit mit einem bestimmten USB-Gerät (etwa einem Drucker, Rechner oder
+Fernseher) oder Programm oder mit künftigen Versionen von ESP-IDF oder der Firmware des angeschlossenen
+Geräts. Getestet ist nur, was in der README und in
 [docs/05_testprotokoll.md](docs/05_testprotokoll.md) als geprüft steht. Maßgeblich ist der Lizenztext in
 [LICENSE](LICENSE).
 
 ## Keine Haftung
 
 Soweit gesetzlich zulässig, haftet der Urheber nicht für Schäden, die aus der Nutzung oder der
-Unmöglichkeit der Nutzung entstehen – weder für Datenverlust, missglückte oder abgebrochene Drucke,
-Materialverbrauch, Schäden an Drucker, Rechner, Speicherkarte oder Dongle noch für Folgeschäden jeder Art.
+Unmöglichkeit der Nutzung entstehen – weder für Datenverlust, Fehlfunktionen oder abgebrochene Vorgänge
+am angeschlossenen Gerät (etwa missglückte oder abgebrochene Drucke), Materialverbrauch, Schäden am
+angeschlossenen Gerät, an Rechner, Speicherkarte oder Dongle noch für Folgeschäden jeder Art.
 Unberührt bleibt eine Haftung, die sich nach zwingendem Recht nicht ausschließen lässt (etwa bei Vorsatz).
 
 ## Benutzung auf eigene Gefahr
@@ -32,10 +34,12 @@ Unberührt bleibt eine Haftung, die sich nach zwingendem Recht nicht ausschließ
 - **Passwort und Wiederherstellungsschlüssel.** Gehen bei einem verschlüsselten Laufwerk das
   Laufwerks-Passwort **und** der Wiederherstellungsschlüssel verloren, sind die Daten **endgültig
   verloren**. Niemand, auch nicht der Urheber, kann sie wiederherstellen.
-- **Prüfe, was du druckst.** Der Stick steckt in einem 3D-Drucker. Kontrolliere Datei, Druckerprofil und
-  den Beginn des Drucks. Wer während eines Drucks auf die Dateiverwaltung umschaltet oder das Laufwerk
-  sperren lässt, nimmt dem Drucker das Laufwerk weg; liest er gerade davon, bricht der Druck ab. Für den
-  Betrieb des Druckers gelten die Hinweise seines Herstellers.
+- **Prüfe, was das angeschlossene Gerät mit den Dateien macht.** Der Stick steckt in einem anderen Gerät,
+  das die Dateien liest und verarbeitet. Kontrolliere die Datei und das Ergebnis am Gerät, an einem
+  3D-Drucker zum Beispiel Datei, Druckerprofil und den Beginn des Drucks. Wer auf die Dateiverwaltung
+  umschaltet oder das Laufwerk sperren lässt, nimmt dem Gerät das Laufwerk weg; liest es gerade davon,
+  bricht der Vorgang ab, am Drucker etwa der Druck. Für den Betrieb des Geräts gelten die Hinweise seines
+  Herstellers. Geprüft sind nur die Geräte, die in der README als geprüft stehen.
 - **Sicherheitsfunktionen ohne Zusicherung.** Anmeldung, Verschlüsselung, HTTPS und signierte Updates sind
   nach bestem Wissen gebaut, aber von keiner unabhängigen Stelle geprüft oder zertifiziert. Ihre Grenzen
   stehen in der README, in [docs/06_risiken.md](docs/06_risiken.md) und in
@@ -81,15 +85,17 @@ no promised response time and no obligation to maintain or extend it.
 
 The software is provided **"as is"**, without warranty of any kind, express or implied – in particular
 without any assurance of being free of defects, fit for a particular purpose, compatible with a particular
-printer, computer or program, or with future versions of ESP-IDF or printer firmware. Only what the README
+USB host (such as a printer, computer or TV) or program, or with future versions of ESP-IDF or of the
+connected device's firmware. Only what the README
 and [docs/05_testprotokoll.md](docs/05_testprotokoll.md) list as tested has been tested. The licence text
 in [LICENSE](LICENSE) governs.
 
 ## No liability
 
 To the extent permitted by law, the author is not liable for any damage arising from the use or the
-inability to use the software – including loss of data, failed or aborted prints, material consumption,
-damage to the printer, computer, memory card or dongle, or consequential damage of any kind. Liability
+inability to use the software – including loss of data, malfunctions or aborted operations on the
+connected device (such as failed or aborted prints), material consumption, damage to the connected device,
+computer, memory card or dongle, or consequential damage of any kind. Liability
 that cannot be excluded under mandatory law (for example for intent) remains unaffected.
 
 ## Use at your own risk
@@ -99,10 +105,12 @@ that cannot be excluded under mandatory law (for example for intent) remains una
   important files elsewhere as well.
 - **Password and recovery key.** If both the drive password **and** the recovery key of an encrypted drive
   are lost, the data is **gone for good**. Nobody, including the author, can recover it.
-- **Check what you print.** The stick sits in a 3D printer. Check the file, the printer profile and the
-  start of the print. Switching to the file manager or letting the drive lock during a print takes the
-  drive away from the printer; if it is reading, the print stops. The printer manufacturer's
-  instructions apply to operating the printer.
+- **Check what the connected device does with the files.** The stick sits in another device that reads
+  and processes the files. Check the file and the result on the device, on a 3D printer for example
+  the file, the printer profile and the start of the print. Switching to the file manager or letting the
+  drive lock takes the drive away from the device; if it is reading, the operation stops, on a printer the
+  print, for example. The device manufacturer's instructions apply to operating the device. Only the
+  devices the README lists as tested have been tested.
 - **Security features without guarantee.** Login, encryption, HTTPS and signed updates are built to the
   best of the author's knowledge but have not been reviewed or certified by any independent party. Their
   limits are described in the README, in [docs/06_risiken.md](docs/06_risiken.md) and in

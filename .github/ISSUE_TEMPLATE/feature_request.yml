@@ -31,7 +31,7 @@ body:
     id: setup
     attributes:
       label: Umgebung / Setup
-      description: Drucker oder Rechner, Board-Variante, Firmware-Version / printer or host, board variant, firmware version
+      description: USB-Gerät (z. B. Druckermodell, PC, Fernseher), Board-Variante, Firmware-Version / USB host device (e.g. printer model, PC, TV), board variant, firmware version
   - type: checkboxes
     id: test
     attributes:

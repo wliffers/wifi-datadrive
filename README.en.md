@@ -6,13 +6,16 @@
 
 <p align="center">
   <strong>WiFi DataDrive turns a LILYGO T-Dongle-S3 into a USB stick with Wi-Fi.</strong><br>
-  Files reach the stick from a browser while it sits in the 3D printer.
+  The device it is plugged into sees a normal drive. You manage the files on it from a browser or as a
+  network drive, without unplugging the stick.
 </p>
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0-2563eb">
   <img alt="Board" src="https://img.shields.io/badge/Board-LILYGO%20T--Dongle--S3-0f766e">
   <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.6-6b7280">
+  <img alt="Function" src="https://img.shields.io/badge/USB%20drive-with%20Wi--Fi-0f766e">
+  <img alt="Tested with Windows 11 and Bambu Lab X2D" src="https://img.shields.io/badge/tested%20with-Windows%2011%20%7C%20Bambu%20Lab%20X2D-6b7280">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-16a34a"></a>
   <img alt="Project" src="https://img.shields.io/badge/Project-private%2C%20no%20warranty-f59e0b">
 </p>
@@ -25,10 +28,11 @@
 
 <p align="center">
   <a href="#features">Features</a> ·
+  <a href="#use-cases">Use cases</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#first-setup">Setup</a> ·
-  <a href="#using-it-at-the-printer">At the printer</a> ·
-  <a href="#setting-up-encryption-and-using-it-at-the-printer">Encryption</a> ·
+  <a href="#using-it-with-a-usb-host">With a USB host</a> ·
+  <a href="#setting-up-and-using-encryption">Encryption</a> ·
   <a href="#network-drive-and-https">Network drive &amp; HTTPS</a> ·
   <a href="#tested-and-untested">Test status</a> ·
   <a href="#limitations">Limitations</a> ·
@@ -44,10 +48,14 @@
 <p align="center"><sub>On a phone: unlock, browse files, upload, settings. Recorded against the mock server with sample files,
 German interface; the interface also comes in English.</sub></p>
 
-The dongle plugs into a printer or PC and shows up there as a normal USB drive. Over Wi-Fi you open a
-built-in file manager in your browser. There you upload and download files, rename, move and delete them,
-without unplugging the stick. The project was built for the Bambu Lab X2D, which recognised the stick and
-printed from it (without encryption).
+The dongle plugs into a device with a USB port and shows up there as a normal USB drive. Over Wi-Fi you
+open a built-in file manager in your browser. There you upload and download files, rename, move and delete
+them, without unplugging the stick. The same files are also reachable as a network drive, and if you want,
+the stick encrypts the memory card.
+
+The USB hosts tested are a Windows PC and a 3D printer: the Bambu Lab X2D recognised the stick and printed
+from it (without encryption). The project started out for this printer; today it is one use case. Other
+devices are possible but untested, see [Use cases](#use-cases).
 
 The web interface comes in German and English and works on phones and PCs. It needs no internet
 connection and no app.
@@ -65,11 +73,11 @@ connection and no app.
 ## Features
 
 **One stick, two ways in.**
-At the printer the dongle is an ordinary USB drive. Over Wi-Fi you manage the same files in a browser.
+At the USB host the dongle is an ordinary USB drive. Over Wi-Fi you manage the same files in a browser.
 
 **Only one side at a time.**
 At any moment the drive belongs either to the USB host or to the file manager in the browser. The stick
-switches in a controlled way and asks first if the printer is still using the drive.
+switches in a controlled way and asks first if the USB host is still using the drive.
 
 **Files and folders.**
 Upload with a button or by drag and drop, any file type, up to 4 GB per file. Create, rename, move, copy
@@ -117,6 +125,26 @@ internet.
 connecting to Wi-Fi, no Wi-Fi, locked, error. Preview rendered from the animation data, not a photo. LIO is
 the author's mascot and is not covered by the MIT licence, see <a href="LICENSE-LIO.md">LICENSE-LIO.md</a>.</sub></p>
 
+## Use cases
+
+Wherever a device reads files from a USB stick, WiFi DataDrive saves you the trip to the device: the files
+reach the stick over Wi-Fi, and the stick stays plugged in.
+
+**Tested: 3D printer (Bambu Lab X2D).** The sliced file, for example a `.gcode.3mf`, goes from a PC or
+phone to the stick through the browser. The printer shows it and prints it. Tested without encryption
+(firmware 0.2.0 and 0.3.0); printing from an encrypted stick is untested. The steps are under
+[Using it with a USB host](#using-it-with-a-usb-host).
+
+**Tested: Windows PC.** On Windows 11 the stick is a normal drive: copy, eject, re-plug.
+
+**Possible, but untested:** other 3D printers, laser engravers and CNC controllers, paper printers with a
+USB port for sticks, TVs and media players, car radios, embroidery machines, computers running macOS or
+Linux. There is no claim for any of these. The stick presents itself as an ordinary USB mass-storage device
+at Full Speed (12 Mbit/s), with FAT32 on the microSD card. Only a try shows whether a device copes with
+that. Keep in mind as well: while you work in the browser, the drive is as good as unplugged for the
+device. How a device reacts to that is untested too. Results with other devices are welcome as
+[feedback](#feedback).
+
 ## What you need
 
 - **LILYGO T-Dongle-S3 with LCD** (ESP32-S3, 16 MB flash, microSD slot, one button). Only this variant is
@@ -124,6 +152,8 @@ the author's mascot and is not covered by the MIT licence, see <a href="LICENSE-
 - **A microSD card**, FAT32 recommended. A 64 GB card is tested. Without a card the stick uses its internal
   flash: about 11 MB, writing at about 46 KB/s.
 - **A 2.4 GHz Wi-Fi network.** The ESP32-S3 cannot do 5 GHz.
+- **A device that reads USB sticks**, with a USB-A port. Tested are a PC with Windows 11 and the Bambu Lab
+  X2D, see [Use cases](#use-cases).
 - **Chrome or Edge** on a PC or Mac if you want to flash in the browser.
 
 ## Installation
@@ -190,30 +220,43 @@ the network settings as well. Your files stay, and an encrypted drive stays lock
 The button behaviour follows the source code and is **untested** on the device. All button functions are
 listed in [docs/09_api_v3.md](docs/09_api_v3.md) section 9 (German).
 
-## Using it at the printer
+## Using it with a USB host
 
-The drive always has exactly one owner: the USB host (printer or PC) or the file manager in the browser.
-While you work in the browser, the printer sees no drive; once you hand it back, it sees the new files.
+The drive always has exactly one owner: the USB host the stick is plugged into, or the file manager in the
+browser. While you work in the browser, the USB host sees no drive; once you hand it back, it sees the new
+files.
 
-1. Plug the stick into the printer's USB port. At the top of the interface **USB-Gerät** (USB host) is
+1. Plug the stick into the device's USB port. At the top of the interface **USB-Gerät** (USB device) is
    selected.
-2. Upload your sliced file in the browser, for example a `.gcode.3mf`. The interface takes the drive for
-   this, asks first if the printer is still using it, and hands it back after the upload.
-3. Pick the file on the printer and start the print.
+2. Upload your files in the browser. The interface takes the drive for this, asks first if the device is
+   still using it, and hands it back after the upload.
+3. Open the file on the device.
 
 <p align="center">
   <img src="docs/images/handy-usb-geraet.png" alt="Web interface on a phone (German) while the drive belongs to the USB host: the files currently belong to the USB host, below the button to upload files" width="300">
 </p>
 
-**Do not switch during a print.** "Dateiverwaltung" (file manager) takes the drive away from the printer.
-If it is reading, the print stops. Whether the X2D reads a file completely at the start or keeps reading
-from the stick is not known. It is safer to eject the drive on the printer first.
+**Do not switch while the device is reading.** "Dateiverwaltung" (file manager) takes the drive away from
+the USB host. If it is reading, that stops. It is safer to eject the drive on the device first.
+
+On a PC the stick works as a normal drive under Windows 11.
+
+### Example: 3D printer
+
+1. Plug the stick into the printer's USB port.
+2. Upload your sliced file in the browser, for example a `.gcode.3mf`. Files ending in `.3mf` are checked
+   for completeness when uploaded.
+3. Pick the file on the printer and start the print.
+
+**Do not switch during a print.** If the printer is reading from the stick, the print stops. Whether the
+X2D reads a file completely at the start or keeps reading from the stick is not known. It is safer to eject
+the drive on the printer first.
 
 Tested by the author on the Bambu Lab X2D: drive recognised, `.gcode.3mf` uploaded from the browser shown
-and printed (firmware 0.2.0 and 0.3.0, microSD 64 GB FAT32, without encryption). Nothing was measured. On a
-PC the stick works as a normal drive under Windows 11.
+and printed (firmware 0.2.0 and 0.3.0, microSD 64 GB FAT32, without encryption). Nothing was measured.
+Other printers are untested.
 
-## Setting up encryption and using it at the printer
+## Setting up and using encryption
 
 Encryption is optional and off by default. It protects your files if someone gets the card or the stick
 without the drive password. While the drive is unlocked it does not protect.
@@ -229,21 +272,21 @@ without the drive password. While the drive is unlocked it does not protect.
 3. Type `LÖSCHEN` and confirm. On a 64 GB card this took 51 seconds. Do not unplug the stick meanwhile.
 4. Write down the **recovery key** and keep it apart from the stick. It is shown only once.
 
-### Encrypted at the printer
+### Encrypted at the USB host
 
-1. After every plug-in and every power loss the drive is locked. The printer then sees no drive.
-2. Open the interface on your phone, enter the drive password and tap **Entsperren** (unlock). The printer
-   gets the drive afterwards.
-3. Pick the file on the printer and print.
+1. After every plug-in and every power loss the drive is locked. The USB host then sees no drive.
+2. Open the interface on your phone, enter the drive password and tap **Entsperren** (unlock). The USB
+   host gets the drive afterwards.
+3. Open the file on the device, on a printer for example to print it.
 
-Printing on the X2D from an encrypted stick unlocked by phone is **untested**. Do a test print before an
-important one.
+On the 3D printer: printing on the X2D from an encrypted stick unlocked by phone is **untested**. Do a test
+print before an important one.
 
 **Automatic lock** (Settings › Speicher & USB, off by default): the drive locks itself after the chosen
 time without access and, if you want, as soon as the USB host disconnects. From 0.6.0 the time only runs
-in the file manager: while the drive is provided to the printer or PC it never locks by time, so no print
-is interrupted; switching back to the file manager starts the time again. While an upload runs, it
-waits. The start page shows the time left; "Zeit zurücksetzen" (reset time) starts it again. The
+in the file manager: while the drive is provided to the USB host it never locks by time, so the device
+does not lose it in the middle of its work (during a print, for example); switching back to the file
+manager starts the time again. While an upload runs, it waits. The start page shows the time left; "Zeit zurücksetzen" (reset time) starts it again. The
 settings and the time left are tested on the device (with 15 minutes: 895 s after a few seconds, 900 s
 after the reset), and so is the "file manager only" rule (5 minutes: countdown in the file manager, none in
 USB mode, full period again after switching back). The lock itself after the timeout is **untested**.
@@ -277,7 +320,7 @@ At `http://<stick>/dav/` the stick is a network drive (WebDAV). You sign in with
 browser.
 
 - The network drive only works while the file manager is active. It never takes the drive away from the
-  printer.
+  USB host.
 - An encrypted drive must be unlocked.
 - You can switch it off under Settings › WLAN.
 
@@ -351,7 +394,8 @@ built or runs against the mock server.
 | microSD 64 GB FAT32 | tested (one card) |
 | Bambu Lab X2D without encryption: drive recognised, file shown, printed | reported by the author (0.2.0 and 0.3.0), no measurements |
 | Printing on the X2D from an encrypted, unlocked stick | untested |
-| Long prints, switching during a print, read-only mode, other printers | untested |
+| Long prints, switching during a print, read-only mode | untested |
+| Other USB hosts: other printers, laser engravers, CNC controllers, TVs, media players, car radios, computers running macOS or Linux | untested |
 | Login, users, folders, several Wi-Fi networks (0.3.0) | tested by the API test on the device (182/182) |
 | Encryption: set up, lock, unlock, recovery, switch off (0.4.0) | tested by the API test on the device (334/334) |
 | Encryption on the internal flash, power loss during setup | untested |
@@ -396,6 +440,7 @@ Measured with microSD 64 GB: USB write 832 KB/s, browser upload 1.3 to 1.6 MB/s.
 ## Limitations
 
 - Built and tested only for the LILYGO T-Dongle-S3 with LCD.
+- The only USB hosts tested are a PC with Windows 11 and the Bambu Lab X2D.
 - Meant for trusted networks. By default the stick speaks plain HTTP; passwords then cross the Wi-Fi
   readably.
 - The stick handles one request after the other. During an upload, other devices wait. With HTTPS a long
@@ -405,19 +450,19 @@ Measured with microSD 64 GB: USB write 832 KB/s, browser upload 1.3 to 1.6 MB/s.
 - Change the card only while the stick is unplugged.
 - USB runs at Full Speed (12 Mbit/s). Measured on a PC: writing about 0.8 MB/s, reading about 0.75 MB/s.
   Without a card the internal flash is small and slow.
-- The stick accepts every file type and checks no content.
+- The stick accepts every file type. Only files ending in `.3mf` are checked for completeness when
+  uploaded; other content is not checked.
 - Holding the button for 10 seconds resets the login to `admin` / `admin`. It does not open an encrypted
   drive.
 - Without internet the browser sets the clock. After a power loss it is unknown until the network or a
   browser sets it again.
-- The project folder `firmware/printdrive`, the header `X-PrintDrive` and the prefix `pd_` date from the time
-  the project was called "WiFi PrintDrive".
 
 ## Feedback
 
-Bug reports, results from real hardware and suggestions are welcome as issues. Helpful are firmware
-version, board, storage (microSD or internal flash, encrypted yes/no), printer or computer on USB and the
-last lines of the log, without passwords and Wi-Fi names. Please report security vulnerabilities
+Bug reports, results from real hardware and suggestions are welcome as issues, results with USB hosts that
+are not tested yet in particular. Helpful are firmware version, board, storage (microSD or internal flash,
+encrypted yes/no), the USB host (for example printer model, PC with operating system, TV) and the last
+lines of the log, without passwords and Wi-Fi names. Please report security vulnerabilities
 privately, see [.github/SECURITY.md](.github/SECURITY.md).
 
 WiFi DataDrive is maintained in my spare time. I answer as soon as I can, but cannot promise response
@@ -447,6 +492,10 @@ python tools/mock_server.py --port 8090                     # then http://127.0.
 python tools/api_test.py 127.0.0.1:8090 --user admin --password admin123
 python tools/ui_test.py --base http://localhost:8090        # for changes to the web interface
 ```
+
+The project folder `firmware/printdrive`, the header `X-PrintDrive` and the prefixes `pd_` and `PD_` date
+from the time the project was called "WiFi PrintDrive" and was meant for the 3D printer only; they stay so
+that builds, scripts and settings keep working.
 
 The core of the project is the drive's single-owner rule; it is summarised in
 [docs/00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md) and described in detail in
@@ -493,7 +542,8 @@ in [CHANGELOG.md](CHANGELOG.md) (all German).
   the author. If you publish your own version of the firmware, replace the artwork.
   [LICENSE-LIO.md](LICENSE-LIO.md)
 - **Disclaimer:** use at your own risk. Back up your files, keep password and recovery key apart from the
-  stick and check your prints. [HAFTUNGSAUSSCHLUSS.md](HAFTUNGSAUSSCHLUSS.md)
+  stick and check what the connected device does with the files, on a printer the print, for example.
+  [HAFTUNGSAUSSCHLUSS.md](HAFTUNGSAUSSCHLUSS.md)
 - **Third-party parts:** ST7735 driver from LILYGO (MIT), 5×7 font from Adafruit GFX (BSD), plus ESP-IDF,
   TinyUSB and further components under their own licences. Everything else, including the duties when
   passing on firmware files, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

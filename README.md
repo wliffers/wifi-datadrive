@@ -6,13 +6,16 @@
 
 <p align="center">
   <strong>WiFi DataDrive macht aus einem LILYGO T-Dongle-S3 einen USB-Stick mit WLAN.</strong><br>
-  Dateien kommen per Browser auf den Stick, während er im 3D-Drucker steckt.
+  Das Gerät, in dem er steckt, sieht ein normales Laufwerk. Die Dateien darauf verwaltest du per Browser
+  oder als Netzlaufwerk, ohne den Stick abzuziehen.
 </p>
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0-2563eb">
   <img alt="Board" src="https://img.shields.io/badge/Board-LILYGO%20T--Dongle--S3-0f766e">
   <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.6-6b7280">
+  <img alt="Funktion" src="https://img.shields.io/badge/USB--Laufwerk-mit%20WLAN-0f766e">
+  <img alt="Geprüft an Windows 11 und Bambu Lab X2D" src="https://img.shields.io/badge/gepr%C3%BCft%20an-Windows%2011%20%7C%20Bambu%20Lab%20X2D-6b7280">
   <a href="LICENSE"><img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-16a34a"></a>
   <img alt="Projekt" src="https://img.shields.io/badge/Projekt-privat%2C%20ohne%20Gew%C3%A4hr-f59e0b">
 </p>
@@ -25,10 +28,11 @@
 
 <p align="center">
   <a href="#funktionen">Funktionen</a> ·
+  <a href="#anwendungsbeispiele">Anwendungsbeispiele</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#erste-einrichtung">Einrichtung</a> ·
-  <a href="#am-drucker-benutzen">Am Drucker</a> ·
-  <a href="#verschlüsselung-einrichten-und-am-drucker-benutzen">Verschlüsselung</a> ·
+  <a href="#am-usb-gerät-benutzen">Am USB-Gerät</a> ·
+  <a href="#verschlüsselung-einrichten-und-benutzen">Verschlüsselung</a> ·
   <a href="#netzlaufwerk-und-https">Netzlaufwerk &amp; HTTPS</a> ·
   <a href="#geprüft-und-nicht-geprüft">Prüfstand</a> ·
   <a href="#grenzen">Grenzen</a> ·
@@ -43,10 +47,15 @@
 </p>
 <p align="center"><sub>Am Handy: entsperren, Dateien ansehen, hochladen, Einstellungen. Aufgenommen am Testserver mit Beispieldateien.</sub></p>
 
-Der Dongle steckt am Drucker oder PC und erscheint dort als normales USB-Laufwerk. Über WLAN öffnest
-du im Browser eine eingebaute Dateiverwaltung. Dort lädst du Dateien hoch und herunter, benennst sie um,
-verschiebst und löschst sie, ohne den Stick abzuziehen. Gebaut ist das Projekt für den Bambu Lab X2D;
-der hat den Stick erkannt und davon gedruckt (ohne Verschlüsselung).
+Der Dongle steckt in einem Gerät mit USB-Anschluss und erscheint dort als normales USB-Laufwerk. Über
+WLAN öffnest du im Browser eine eingebaute Dateiverwaltung. Dort lädst du Dateien hoch und herunter,
+benennst sie um, verschiebst und löschst sie, ohne den Stick abzuziehen. Dieselben Dateien erreichst du
+auch als Netzlaufwerk, und auf Wunsch verschlüsselt der Stick die Speicherkarte.
+
+Als USB-Gerät geprüft sind ein Windows-PC und ein 3D-Drucker: Der Bambu Lab X2D hat den Stick erkannt und
+davon gedruckt (ohne Verschlüsselung). Für diesen Drucker ist das Projekt entstanden; heute ist er ein
+Anwendungsbeispiel. Andere Geräte sind denkbar, aber nicht geprüft, siehe
+[Anwendungsbeispiele](#anwendungsbeispiele).
 
 Die Weboberfläche gibt es auf Deutsch und Englisch, am Handy wie am PC. Sie braucht kein Internet und
 keine App.
@@ -64,12 +73,12 @@ keine App.
 ## Funktionen
 
 **Ein Stick, zwei Wege.**
-Am Drucker ist der Dongle ein gewöhnliches USB-Laufwerk. Über WLAN verwaltest du dieselben Dateien im
+Am USB-Gerät ist der Dongle ein gewöhnliches USB-Laufwerk. Über WLAN verwaltest du dieselben Dateien im
 Browser.
 
 **Immer nur einer greift zu.**
 Das Laufwerk gehört zu jedem Zeitpunkt entweder dem USB-Gerät oder der Dateiverwaltung im Browser. Der
-Stick schaltet kontrolliert um und fragt nach, wenn der Drucker das Laufwerk noch benutzt.
+Stick schaltet kontrolliert um und fragt nach, wenn das USB-Gerät das Laufwerk noch benutzt.
 
 **Dateien und Ordner.**
 Hochladen per Knopf oder Drag & Drop, beliebige Dateitypen bis 4 GB pro Datei. Ordner anlegen,
@@ -118,6 +127,27 @@ Die i-Symbole und die Seite „Hilfe & Anleitungen“ erklären jede Einstellung
 WLAN verbinden, kein WLAN, gesperrt, Fehler. Vorschau aus den Animationsdaten, kein Foto. LIO ist das
 Maskottchen des Autors und steht nicht unter der MIT-Lizenz, siehe <a href="LICENSE-LIO.md">LICENSE-LIO.md</a>.</sub></p>
 
+## Anwendungsbeispiele
+
+Wo ein Gerät Dateien von einem USB-Stick liest, erspart WiFi DataDrive das Umstecken: Die Dateien kommen
+per WLAN auf den Stick, und der Stick bleibt im Gerät.
+
+**Geprüft: 3D-Drucker (Bambu Lab X2D).** Die geslicte Datei, zum Beispiel eine `.gcode.3mf`, kommt per
+Browser vom PC oder Handy auf den Stick. Der Drucker zeigt sie an und druckt sie. Geprüft ohne
+Verschlüsselung (Firmware 0.2.0 und 0.3.0); Drucken von einem verschlüsselten Stick ist nicht geprüft.
+Die Schritte stehen unter [Am USB-Gerät benutzen](#am-usb-gerät-benutzen).
+
+**Geprüft: Windows-PC.** Unter Windows 11 ist der Stick ein normales Laufwerk: kopieren, auswerfen, neu
+einstecken.
+
+**Denkbar, aber nicht geprüft:** andere 3D-Drucker, Lasergravierer und CNC-Steuerungen, Papierdrucker mit
+USB-Anschluss für Sticks, Fernseher und Mediaplayer, Autoradios, Stickmaschinen, Rechner mit macOS oder
+Linux. Für keines dieser Geräte gibt es eine Aussage. Der Stick meldet sich als gewöhnlicher
+USB-Massenspeicher mit Full Speed (12 Mbit/s), auf der microSD-Karte mit FAT32. Ob ein Gerät damit
+zurechtkommt, zeigt nur ein Versuch. Bedenke auch: Solange du im Browser arbeitest, ist das Laufwerk für
+das Gerät wie abgezogen. Wie ein Gerät darauf reagiert, ist ebenfalls nicht geprüft. Ergebnisse mit
+anderen Geräten sind als [Rückmeldung](#rückmeldungen) willkommen.
+
 ## Was du brauchst
 
 - **LILYGO T-Dongle-S3 mit LCD** (ESP32-S3, 16 MB Flash, microSD-Slot, eine Taste). Nur diese Variante
@@ -125,6 +155,8 @@ Maskottchen des Autors und steht nicht unter der MIT-Lizenz, siehe <a href="LICE
 - **microSD-Karte**, FAT32 empfohlen. Getestet ist eine 64-GB-Karte. Ohne Karte nutzt der Stick seinen
   internen Flash: etwa 11 MB, Schreiben etwa 46 KB/s.
 - **Ein WLAN mit 2,4 GHz.** Der ESP32-S3 kann kein 5 GHz.
+- **Ein Gerät, das USB-Sticks liest**, mit USB-A-Anschluss. Geprüft sind ein PC mit Windows 11 und der
+  Bambu Lab X2D, siehe [Anwendungsbeispiele](#anwendungsbeispiele).
 - **Chrome oder Edge** am PC oder Mac, wenn du im Browser flashen willst.
 
 ## Installation
@@ -194,30 +226,42 @@ Laufwerk bleibt zu.
 Die Bedienung an der Taste folgt dem Quelltext und ist am Gerät **noch nicht geprüft**. Alle
 Tastenfunktionen stehen in [docs/09_api_v3.md](docs/09_api_v3.md) Abschnitt 9.
 
-## Am Drucker benutzen
+## Am USB-Gerät benutzen
 
-Das Laufwerk hat immer genau einen Besitzer: das USB-Gerät (Drucker oder PC) oder die Dateiverwaltung im
-Browser. Solange du im Browser arbeitest, sieht der Drucker kein Laufwerk; gibst du es zurück, sieht er
-die neuen Dateien.
+Das Laufwerk hat immer genau einen Besitzer: das USB-Gerät, in dem der Stick steckt, oder die
+Dateiverwaltung im Browser. Solange du im Browser arbeitest, sieht das USB-Gerät kein Laufwerk; gibst du
+es zurück, sieht es die neuen Dateien.
 
-1. Steck den Stick in den USB-Anschluss des Druckers. Oben in der Oberfläche ist **USB-Gerät** gewählt.
-2. Lade im Browser deine geslicte Datei hoch, zum Beispiel eine `.gcode.3mf`. Die Oberfläche holt sich
-   das Laufwerk dafür, fragt nach, wenn der Drucker es noch benutzt, und gibt es nach dem Hochladen zurück.
-3. Wähle die Datei am Drucker und starte den Druck.
+1. Steck den Stick in den USB-Anschluss des Geräts. Oben in der Oberfläche ist **USB-Gerät** gewählt.
+2. Lade im Browser deine Dateien hoch. Die Oberfläche holt sich das Laufwerk dafür, fragt nach, wenn das
+   Gerät es noch benutzt, und gibt es nach dem Hochladen zurück.
+3. Öffne die Datei am Gerät.
 
 <p align="center">
   <img src="docs/images/handy-usb-geraet.png" alt="Weboberfläche am Handy, während das Laufwerk dem USB-Gerät gehört: Die Dateien gehören gerade dem USB-Gerät, darunter der Knopf Dateien hochladen" width="300">
 </p>
 
-**Nicht während eines Drucks umschalten.** „Dateiverwaltung“ nimmt dem Drucker das Laufwerk weg. Liest er
-gerade, bricht der Druck ab. Ob der X2D eine Datei beim Start ganz einliest oder währenddessen weiter vom
-Stick liest, ist nicht bekannt. Sicherer ist es, das Laufwerk vorher am Drucker auszuwerfen.
+**Nicht umschalten, während das Gerät liest.** „Dateiverwaltung“ nimmt dem USB-Gerät das Laufwerk weg.
+Liest es gerade, bricht das ab. Sicherer ist es, das Laufwerk vorher am Gerät auszuwerfen.
+
+Am PC funktioniert der Stick unter Windows 11 als normales Laufwerk.
+
+### Beispiel: 3D-Drucker
+
+1. Steck den Stick in den USB-Anschluss des Druckers.
+2. Lade im Browser deine geslicte Datei hoch, zum Beispiel eine `.gcode.3mf`. Dateien mit der Endung
+   `.3mf` prüft der Stick beim Hochladen auf Vollständigkeit.
+3. Wähle die Datei am Drucker und starte den Druck.
+
+**Nicht während eines Drucks umschalten.** Liest der Drucker gerade vom Stick, bricht der Druck ab. Ob der
+X2D eine Datei beim Start ganz einliest oder währenddessen weiter vom Stick liest, ist nicht bekannt.
+Sicherer ist es, das Laufwerk vorher am Drucker auszuwerfen.
 
 Am Bambu Lab X2D hat der Autor geprüft: Laufwerk erkannt, per Browser hochgeladene `.gcode.3mf` angezeigt
 und gedruckt (Firmware 0.2.0 und 0.3.0, microSD 64 GB FAT32, ohne Verschlüsselung). Gemessen wurde dabei
-nichts. Am PC funktioniert der Stick unter Windows 11 als normales Laufwerk.
+nichts. Andere Drucker sind nicht geprüft.
 
-## Verschlüsselung einrichten und am Drucker benutzen
+## Verschlüsselung einrichten und benutzen
 
 Die Verschlüsselung ist optional und in der Voreinstellung aus. Sie schützt deine Dateien, wenn jemand die
 Karte oder den Stick ohne das Laufwerks-Passwort in die Hand bekommt. Solange das Laufwerk entsperrt ist,
@@ -236,22 +280,22 @@ schützt sie nicht.
 4. Schreib den **Wiederherstellungsschlüssel** auf und bewahre ihn getrennt vom Stick auf. Er wird nur
    einmal angezeigt.
 
-### Verschlüsselt am Drucker
+### Verschlüsselt am USB-Gerät
 
-1. Nach jedem Einstecken und nach jedem Stromausfall ist das Laufwerk gesperrt. Der Drucker sieht dann
+1. Nach jedem Einstecken und nach jedem Stromausfall ist das Laufwerk gesperrt. Das USB-Gerät sieht dann
    kein Laufwerk.
-2. Öffne die Oberfläche am Handy, gib das Laufwerks-Passwort ein und tippe auf **Entsperren**. Der Drucker
-   bekommt das Laufwerk danach.
-3. Wähle die Datei am Drucker und drucke.
+2. Öffne die Oberfläche am Handy, gib das Laufwerks-Passwort ein und tippe auf **Entsperren**. Das
+   USB-Gerät bekommt das Laufwerk danach.
+3. Öffne die Datei am Gerät, am Drucker zum Beispiel zum Drucken.
 
-Dass der X2D von einem verschlüsselten, per Handy entsperrten Stick druckt, ist **noch nicht geprüft**.
-Mach vor einem wichtigen Druck einen Probedruck.
+Am 3D-Drucker: Dass der X2D von einem verschlüsselten, per Handy entsperrten Stick druckt, ist **noch
+nicht geprüft**. Mach vor einem wichtigen Druck einen Probedruck.
 
 **Automatisch sperren** (Einstellungen › Speicher & USB, Voreinstellung aus): Das Laufwerk sperrt sich
 nach der gewählten Zeit ohne Zugriff und, wenn du willst, sobald das USB-Gerät getrennt wird. Die Zeit
-läuft ab 0.6.0 nur in der Dateiverwaltung: Ist das Laufwerk dem Drucker oder PC bereitgestellt, sperrt es
-nicht nach Zeit, damit kein Druck abbricht; der Wechsel zurück in die Dateiverwaltung startet die Zeit
-neu. Während ein Upload läuft, wartet es. Die Startseite zeigt die Restzeit; „Zeit zurücksetzen“ startet
+läuft ab 0.6.0 nur in der Dateiverwaltung: Ist das Laufwerk dem USB-Gerät bereitgestellt, sperrt es
+nicht nach Zeit, damit das Gerät es nicht mitten in der Arbeit verliert (etwa während eines Drucks);
+der Wechsel zurück in die Dateiverwaltung startet die Zeit neu. Während ein Upload läuft, wartet es. Die Startseite zeigt die Restzeit; „Zeit zurücksetzen“ startet
 sie neu. Die Einstellungen und die Restzeit sind am Gerät geprüft (bei 15 Minuten nach wenigen Sekunden
 895 s, nach dem Zurücksetzen 900 s), die Regel „nur in der Dateiverwaltung“ ebenfalls (5 Minuten: Countdown in der Dateiverwaltung, im
 USB-Modus keiner, nach dem Zurückschalten volle Zeit). Das Sperren nach Ablauf der Zeit selbst ist
@@ -286,8 +330,8 @@ Abschnitt 8.
 Unter `http://<Stick>/dav/` ist der Stick ein Netzlaufwerk (WebDAV). Du meldest dich mit demselben
 Benutzer an wie im Browser.
 
-- Das Netzlaufwerk geht nur, solange die Dateiverwaltung aktiv ist. Dem Drucker nimmt es das Laufwerk nie
-  weg.
+- Das Netzlaufwerk geht nur, solange die Dateiverwaltung aktiv ist. Dem USB-Gerät nimmt es das Laufwerk
+  nie weg.
 - Ein verschlüsseltes Laufwerk muss entsperrt sein.
 - Abschalten kannst du es unter Einstellungen › WLAN.
 
@@ -364,7 +408,8 @@ gebaut ist oder am Testserver läuft.
 | microSD 64 GB FAT32 | geprüft (eine Karte) |
 | Bambu Lab X2D ohne Verschlüsselung: Laufwerk erkannt, Datei angezeigt, gedruckt | Rückmeldung des Autors (0.2.0 und 0.3.0), keine Messung |
 | Drucken am X2D von einem verschlüsselten, entsperrten Stick | nicht geprüft |
-| Lange Drucke, Umschalten während eines Drucks, Nur-Lese-Modus, andere Drucker | nicht geprüft |
+| Lange Drucke, Umschalten während eines Drucks, Nur-Lese-Modus | nicht geprüft |
+| Andere USB-Geräte: andere Drucker, Lasergravierer, CNC-Steuerungen, Fernseher, Mediaplayer, Autoradios, Rechner mit macOS oder Linux | nicht geprüft |
 | Anmeldung, Benutzer, Ordner, mehrere WLANs (0.3.0) | geprüft per API-Test am Gerät (182/182) |
 | Verschlüsselung: einrichten, sperren, entsperren, Wiederherstellung, ausschalten (0.4.0) | geprüft per API-Test am Gerät (334/334) |
 | Verschlüsselung auf dem internen Flash, Stromausfall beim Einrichten | nicht geprüft |
@@ -410,6 +455,7 @@ USB schreiben 820 KB/s, lesen 659 KB/s, Upload 1,0 MB/s. Offene Risiken und Anna
 ## Grenzen
 
 - Gebaut und getestet nur für den LILYGO T-Dongle-S3 mit LCD.
+- Als USB-Gerät geprüft sind nur ein PC mit Windows 11 und der Bambu Lab X2D.
 - Gedacht für vertrauenswürdige Netze. In der Voreinstellung spricht der Stick nur HTTP; Passwörter gehen
   dann lesbar durchs WLAN.
 - Der Stick bearbeitet eine Anfrage nach der anderen. Während eines Uploads warten andere Geräte. Mit
@@ -419,19 +465,19 @@ USB schreiben 820 KB/s, lesen 659 KB/s, Upload 1,0 MB/s. Offene Risiken und Anna
 - Die Karte wechselst du nur bei ausgestecktem Stick.
 - USB läuft mit Full Speed (12 Mbit/s). Am PC gemessen: Schreiben etwa 0,8 MB/s, Lesen etwa 0,75 MB/s.
   Ohne Karte ist der interne Flash klein und langsam.
-- Der Stick nimmt jeden Dateityp an und prüft keine Inhalte.
+- Der Stick nimmt jeden Dateityp an. Nur Dateien mit der Endung `.3mf` prüft er beim Hochladen auf
+  Vollständigkeit; andere Inhalte prüft er nicht.
 - Wer die Taste 10 Sekunden hält, setzt die Anmeldung auf `admin` / `admin` zurück. Ein verschlüsseltes
   Laufwerk öffnet das nicht.
 - Ohne Internet stellt der Browser die Uhr. Nach einem Stromausfall ist sie unbekannt, bis Netz oder
   Browser sie wieder stellen.
-- Der Projektordner `firmware/printdrive`, der Header `X-PrintDrive` und das Präfix `pd_` stammen aus der
-  Zeit, als das Projekt „WiFi PrintDrive“ hieß.
 
 ## Rückmeldungen
 
-Fehlerberichte, Testergebnisse von echter Hardware und Vorschläge sind als Issue willkommen. Hilfreich
-sind Firmware-Version, Board, Speicher (microSD oder interner Flash, verschlüsselt ja/nein), Drucker oder
-Rechner am USB und die letzten Zeilen aus dem Protokoll, ohne Passwörter und WLAN-Namen.
+Fehlerberichte, Testergebnisse von echter Hardware und Vorschläge sind als Issue willkommen, besonders
+Ergebnisse mit USB-Geräten, die noch nicht geprüft sind. Hilfreich sind Firmware-Version, Board, Speicher
+(microSD oder interner Flash, verschlüsselt ja/nein), das USB-Gerät (zum Beispiel Druckermodell, PC mit
+Betriebssystem, Fernseher) und die letzten Zeilen aus dem Protokoll, ohne Passwörter und WLAN-Namen.
 Sicherheitslücken meldest du bitte vertraulich, siehe [.github/SECURITY.md](.github/SECURITY.md).
 
 WiFi DataDrive wird in der Freizeit gepflegt. Ich antworte, sobald ich kann, kann aber keine
@@ -461,6 +507,10 @@ python tools/mock_server.py --port 8090                     # dann http://127.0.
 python tools/api_test.py 127.0.0.1:8090 --user admin --password admin123
 python tools/ui_test.py --base http://localhost:8090        # bei Änderungen an der Weboberfläche
 ```
+
+Der Projektordner `firmware/printdrive`, der Header `X-PrintDrive` und die Präfixe `pd_` und `PD_` stammen
+aus der Zeit, als das Projekt „WiFi PrintDrive“ hieß und nur für den 3D-Drucker gedacht war; sie bleiben,
+damit Builds, Skripte und Einstellungen weiter funktionieren.
 
 Der Kern des Projekts ist die Ein-Besitzer-Regel des Laufwerks; sie steht in Kurzform in
 [docs/00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md) und ausführlich in
@@ -507,7 +557,8 @@ die Änderungen je Version in [CHANGELOG.md](CHANGELOG.md).
   Autor. Wer eine eigene Fassung der Firmware veröffentlicht, ersetzt die Grafiken.
   [LICENSE-LIO.md](LICENSE-LIO.md)
 - **Haftungsausschluss:** Benutzung auf eigene Gefahr. Sichere deine Dateien, bewahre Passwort und
-  Wiederherstellungsschlüssel getrennt auf und prüfe deine Drucke. [HAFTUNGSAUSSCHLUSS.md](HAFTUNGSAUSSCHLUSS.md)
+  Wiederherstellungsschlüssel getrennt auf und prüfe, was das angeschlossene Gerät mit den Dateien macht,
+  am Drucker zum Beispiel den Druck. [HAFTUNGSAUSSCHLUSS.md](HAFTUNGSAUSSCHLUSS.md)
 - **Fremdanteile:** ST7735-Treiber von LILYGO (MIT), 5×7-Schrift aus Adafruit GFX (BSD), dazu ESP-IDF,
   TinyUSB und weitere Komponenten mit ihren eigenen Lizenzen. Alles Weitere, auch die Pflichten bei der
   Weitergabe von Firmware-Dateien, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

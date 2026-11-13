@@ -145,7 +145,8 @@ Erst danach veröffentlichen. Ein Gerät mit 0.5.0 oder einer unsignierten Firmw
 
 - Signieren und Ersetzen der Dateien im Entwurf (Abschnitt 5).
 - Veröffentlichen jedes Releases; der Workflow legt nur Entwürfe an.
-- Tests am echten Gerät und am Drucker. GitHub Actions testet nur gegen den Testserver.
+- Tests am echten Gerät und an USB-Geräten (bisher Windows-PC und 3D-Drucker). GitHub Actions testet nur
+  gegen den Testserver.
 
 ## Was nie ins Repository gehört
 

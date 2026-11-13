@@ -14,7 +14,8 @@ Bitte als Issue (die Vorlage fragt die Punkte ab) mit:
    stammt: Release, Browser-Flasher oder selbst gebaut.
 2. **Board-Variante.** Getestet ist nur der LILYGO T-Dongle-S3 mit LCD.
 3. **Speicher:** microSD (Größe, FAT32 oder exFAT) oder interner Flash; verschlüsselt ja oder nein.
-4. **Drucker oder Rechner am USB**, möglichst mit Firmware- bzw. Betriebssystem-Version.
+4. **Das USB-Gerät**, an dem der Stick steckt (zum Beispiel Druckermodell, PC, Fernseher), möglichst mit
+   Firmware- bzw. Betriebssystem-Version.
 5. **Was du getan hast** (Schritte) und **was stattdessen passiert ist.**
 6. Die letzten Zeilen aus dem Protokoll (Einstellungen › System). Bitte vorher Passwörter,
    Wiederherstellungsschlüssel, WLAN-Namen und alles entfernen, was du nicht veröffentlichen willst.
@@ -23,8 +24,9 @@ Bitte als Issue (die Vorlage fragt die Punkte ab) mit:
 
 ## Testergebnisse von echter Hardware
 
-Besonders hilfreich, denn vieles ist nur am Testserver geprüft: Ergebnisse mit anderen Druckern, Karten,
-Handys oder WebDAV-Programmen. Bitte mit Datum, Firmware-Version, Board, Speicher, Gerät und Ergebnis –
+Besonders hilfreich, denn vieles ist nur am Testserver geprüft und als USB-Gerät sind nur ein Windows-PC
+und ein 3D-Drucker geprüft: Ergebnisse mit anderen USB-Geräten (Drucker, Fernseher, Mediaplayer, andere
+Rechner und so weiter), Karten, Handys oder WebDAV-Programmen. Bitte mit Datum, Firmware-Version, Board, Speicher, Gerät und Ergebnis –
 auch wenn etwas nicht geklappt hat. Was noch offen ist, steht in [docs/14_vormerkliste.md](docs/14_vormerkliste.md)
 und in der Tabelle „Geprüft und nicht geprüft“ der [README](README.md).
 
@@ -38,11 +40,11 @@ Gern als Issue mit dem Anwendungsfall: Was willst du erreichen, und was fehlt di
    [docs/05_testprotokoll.md](docs/05_testprotokoll.md). Alles andere heißt „noch nicht geprüft“ – gebaut,
    im Quelltext vorhanden, nur am Testserver gelaufen oder nur recherchiert. Das gilt für README, Doku,
    Pull Requests und Release-Texte.
-2. **Keine Kompatibilitätsaussage ohne echten Test.** Ein Drucker, ein Betriebssystem, ein Browser oder ein
-   WebDAV-Programm gilt erst als unterstützt, wenn es damit ausprobiert wurde, mit Version, Speicher und
+2. **Keine Kompatibilitätsaussage ohne echten Test.** Ein USB-Gerät (Drucker, Fernseher, Rechner …), ein
+   Betriebssystem, ein Browser oder ein WebDAV-Programm gilt erst als unterstützt, wenn es damit ausprobiert wurde, mit Version, Speicher und
    Ergebnis. Recherche wird als Recherche gekennzeichnet.
 3. **Die Ein-Besitzer-Regel des Laufwerks bleibt.** Das Dateisystem hat zu jedem Zeitpunkt genau einen
-   Besitzer: das USB-Gerät (Drucker oder PC) oder die Firmware (Weboberfläche, WebDAV). Kein gleichzeitiger
+   Besitzer: das USB-Gerät, an dem der Stick steckt, oder die Firmware (Weboberfläche, WebDAV). Kein gleichzeitiger
    Zugriff, kein „nur schnell lesen“ am Besitzer vorbei, kein Wechsel ohne die Sicherungen in `drive.c`
    ([docs/00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md), [docs/02_architektur.md](docs/02_architektur.md)).
    Änderungen an diesen Stellen brauchen eine Begründung und Tests am Gerät.
@@ -150,13 +152,14 @@ or fixes cannot be promised. Documentation is German; code comments and log mess
 
 **Bug reports** (as an issue, the template asks for this): firmware version and source (release, web
 flasher, own build), board variant, storage (microSD size and file system or internal flash, encrypted or
-not), printer or computer on USB, steps and what happened instead, the last lines of the log without
+not), the USB host (for example printer model, PC, TV), steps and what happened instead, the last lines of the log without
 passwords, recovery keys or Wi-Fi names. **Security vulnerabilities** go privately through
 [.github/SECURITY.md](.github/SECURITY.md), not into an issue.
 
 **Project rules:** (1) nothing untested is claimed: *tested* means checked on a real device with the result
 in `docs/05_testprotokoll.md`, everything else is *untested*; (2) no compatibility claim without a real test
-(printer, OS, browser, WebDAV client: name version, storage and result); (3) the single-owner rule of the
+(USB host such as a printer, TV or computer, OS, browser, WebDAV client: name version, storage and
+result); (3) the single-owner rule of the
 drive stays: the file system always has exactly one owner, the USB host or the firmware; (4) API changes go
 into the API contract in `docs/`, then the firmware, the mock server and `tools/api_test.py`; (5) no
 secrets, keys, flash dumps or build output in the repository; (6) third-party code only under an

@@ -18,7 +18,7 @@
 ## Checkliste / Checklist
 
 - [ ] Die Ein-Besitzer-Regel des Laufwerks bleibt unangetastet (genau ein Besitzer: USB-Gerät oder Firmware). / The single-owner rule of the drive is unchanged.
-- [ ] Keine Kompatibilitätsaussage ohne echten Test (Drucker, Programme, Browser). / No compatibility claim without a real test.
+- [ ] Keine Kompatibilitätsaussage ohne echten Test (USB-Geräte wie Drucker, PC oder Fernseher, Programme, Browser). / No compatibility claim without a real test (USB hosts such as printers, PCs or TVs, programs, browsers).
 - [ ] API-Änderungen sind im API-Vertrag in `docs/` und in `tools/mock_server.py` nachgezogen. / API changes are reflected in the API contract in `docs/` and in `tools/mock_server.py`.
 - [ ] README, `docs/05_testprotokoll.md` und `docs/06_risiken.md` sind angepasst, wo nötig. / README and docs are updated where needed.
 - [ ] Keine Zugangsdaten, Schlüssel, persönlichen Daten oder Build-Ausgaben im Commit. / No credentials, keys, personal data or build output in the commit.

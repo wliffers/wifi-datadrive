@@ -44,8 +44,8 @@ body:
   - type: input
     id: host
     attributes:
-      label: Drucker oder Rechner am USB / Printer or host on USB
-      description: z. B. Bambu Lab X2D (Firmware-Version), Windows 11, macOS, Linux / e.g. Bambu Lab X2D (firmware version), Windows 11, macOS, Linux
+      label: USB-Gerät, an dem der Stick steckt / USB host device
+      description: z. B. Druckermodell (Firmware-Version), PC mit Betriebssystem (Windows 11, macOS, Linux), Fernseher / e.g. printer model (firmware version), PC with operating system (Windows 11, macOS, Linux), TV
     validations:
       required: true
   - type: input
