@@ -548,3 +548,5 @@ echten Test, die Ein-Besitzer-Regel des Laufwerks bleibt unangetastet) und die T
 Der eigene Code steht unter der [MIT-Lizenz](LICENSE). Fremdcode, Komponenten aus ESP-IDF und dem
 ESP Component Registry sowie die Pflichten bei der Weitergabe von Firmware-Dateien:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Das Maskottchen „LIO“ (Name, Figur, Grafiken) gehört nicht zur MIT-Lizenz. Die Rechte bleiben beim Urheber, siehe [LICENSE-LIO.md](LICENSE-LIO.md).

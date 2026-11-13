@@ -133,3 +133,5 @@ Details: [.github/SECURITY.md](.github/SECURITY.md) (how to report vulnerabiliti
 
 See [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). The project is licensed under the
 [MIT License](LICENSE). Third-party code and its licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+The mascot "LIO" (name, character, artwork) is not covered by the MIT licence. All rights reserved, see [LICENSE-LIO.md](LICENSE-LIO.md).
