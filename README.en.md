@@ -1,137 +1,486 @@
-# WiFi DataDrive
+<p align="center">
+  <img src="assets/logo.png" alt="WiFi DataDrive" width="128">
+</p>
 
-*Deutsche Fassung: [README.md](README.md). The detailed documentation in `docs/` is German.*
+<h1 align="center">WiFi DataDrive</h1>
 
-Firmware for the **LILYGO T-Dongle-S3 (LCD variant)** that turns the dongle into a USB stick
-with Wi-Fi access. The dongle plugs into a USB host (PC, 3D printer; target printer: Bambu Lab
-X2D) and shows up as a normal USB drive. Files are uploaded, downloaded, renamed, moved and
-deleted from a browser over Wi-Fi in a built-in file manager, without unplugging the stick.
+<p align="center">
+  <strong>WiFi DataDrive turns a LILYGO T-Dongle-S3 into a USB stick with Wi-Fi.</strong><br>
+  Files reach the stick from a browser while it sits in the 3D printer.
+</p>
 
-Features: user login with roles, folders, several saved Wi-Fi networks, optional drive
-encryption (AES-256-XTS), WebDAV network drive, NTP clock, resumable uploads, folder ZIP
-download, optional HTTPS, German and English web UI, firmware update from the web UI, status
-animation on the LCD.
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0%20in%20progress-2563eb">
+  <img alt="Board" src="https://img.shields.io/badge/Board-LILYGO%20T--Dongle--S3-0f766e">
+  <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.6-6b7280">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-16a34a"></a>
+  <img alt="Project" src="https://img.shields.io/badge/Project-private%2C%20no%20warranty-f59e0b">
+</p>
 
-**Core rule:** the FAT file system (on a microSD card, otherwise in the internal 16 MB flash) has
-exactly **one** owner at any time: either the USB host ("USB drive active") or the firmware ("file
-management active"). Switching is controlled ([docs/02_architektur.md](docs/02_architektur.md)).
+<p align="center">
+  <a href="https://wliffers.github.io/wifi-datadrive/"><img alt="Flash in the browser" src="https://img.shields.io/badge/Flash-in%20the%20browser-0f766e?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTEzLjUgMiA0LjUgMTMuNWg2TDkuNSAyMmw5LTExLjVoLTZ6Ii8%2BPC9zdmc%2B"></a>
+  <a href="../../releases/latest"><img alt="Download (latest release)" src="https://img.shields.io/badge/Firmware-Download-2563eb?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTEwLjggM2gyLjR2OS4xbDMuMy0zLjMgMS43IDEuNy02LjIgNi4yLTYuMi02LjIgMS43LTEuNyAzLjMgMy4zeiIvPjxyZWN0IHg9IjQiIHk9IjE4LjUiIHdpZHRoPSIxNiIgaGVpZ2h0PSIyLjUiLz48L3N2Zz4%3D"></a>
+  <a href="https://www.linkedin.com/in/willi-liffers-71660b319/"><img alt="Willi Liffers on LinkedIn" src="https://img.shields.io/badge/LinkedIn-Willi%20Liffers-0a66c2?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPGNpcmNsZSBjeD0iNS41IiBjeT0iNSIgcj0iMi4zIi8%2BPHJlY3QgeD0iMy40IiB5PSI4LjgiIHdpZHRoPSI0LjIiIGhlaWdodD0iMTIuNyIvPjxwYXRoIGQ9Ik0xMCA4LjhoNHYxLjljLjYtMS4xIDIuMS0yLjIgNC4yLTIuMiA0LjIgMCA1IDIuNyA1IDYuM3Y2LjdoLTQuMnYtNS45YzAtMS40IDAtMy4yLTItMy4ycy0yLjMgMS41LTIuMyAzLjF2NkgxMHoiLz48L3N2Zz4%3D"></a>
+</p>
 
-## Hardware
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#first-setup">Setup</a> ·
+  <a href="#using-it-at-the-printer">At the printer</a> ·
+  <a href="#setting-up-encryption-and-using-it-at-the-printer">Encryption</a> ·
+  <a href="#network-drive-and-https">Network drive &amp; HTTPS</a> ·
+  <a href="#tested-and-untested">Test status</a> ·
+  <a href="#limitations">Limitations</a> ·
+  <a href="#liability-and-licence">Liability &amp; licence</a> ·
+  <a href="README.md">Deutsch</a>
+</p>
 
-- **LILYGO T-Dongle-S3 with LCD** (ESP32-S3 rev v0.2, 16 MB flash, no PSRAM, ST7735 LCD, microSD
-  slot, one button). Built and tested only with this variant.
-- Other LILYGO models (T-Dongle-S3 Plus, Dual) are **not tested**.
-- microSD card recommended (FAT32). Without a card, the internal flash is used (about 11 MB,
-  slow: about 46 KB/s for writes).
+---
 
-## Status (firmware 0.5.0)
+<p align="center">
+  <img src="docs/images/datadrive-ablauf.gif" alt="The workflow in 10 seconds on a phone: the encrypted drive is locked, after unlocking the file list appears, the upload menu opens, finally the settings with the security section (German interface)" width="320">
+</p>
+<p align="center"><sub>On a phone: unlock, browse files, upload, settings. Recorded against the mock server with sample files,
+German interface; the interface also comes in English.</sub></p>
 
-**verified** = checked on the real device, result recorded in
-[docs/05_testprotokoll.md](docs/05_testprotokoll.md). **untested** = built or present in the
-source, but not tested on the device or not in this form.
+The dongle plugs into a printer or PC and shows up there as a normal USB drive. Over Wi-Fi you open a
+built-in file manager in your browser. There you upload and download files, rename, move and delete them,
+without unplugging the stick. The project was built for the Bambu Lab X2D, which recognised the stick and
+printed from it (without encryption).
 
-| Area | Status |
-|---|---|
-| USB drive on Windows 11 (copy, eject, re-plug) | **verified** |
-| microSD (64 GB, FAT32) | **verified** (basic function; only one card tested) |
-| Login with users and roles, default account with forced password change, lockout (0.3.0) | **verified**: API test 182/182 on the device |
-| Folders, rename, move, copy, delete (0.3.0) | **verified** (API test) |
-| Several Wi-Fi networks (0.3.0) | **verified** (API test) |
-| Drive encryption, AES-256-XTS (0.4.0) | **verified**: API run 334/334 on the device incl. destructive encryption test |
-| API test version 5 on the device (0.5.0) | **verified**: 354/354, 6 checks skipped |
-| NTP clock with time zone (0.5.0) | **verified** |
-| Resumable upload, folder as ZIP (0.5.0) | **verified** by the API test |
-| HTTPS (0.5.0, switch in the settings, off by default) | **verified** on the device: 30 MB upload, download, file list. **Untested:** iPhone with installed certificate, WebDAV over HTTPS, long-term operation |
-| WebDAV network drive (0.5.0) | on the device only through the API test; with real clients (Windows Explorer, Finder, phone apps) **untested** |
-| Automatic lock of the encrypted drive (0.5.0) | settings **verified**; the lock itself after the timeout **untested** |
-| Captive portal (setup page opens by itself, 0.5.0) | **untested** with a real phone |
-| Firmware update through the web UI | **untested** (all versions so far flashed over USB) |
-| Button: click for QR code, double click to switch mode, maintenance mode, user reset | **untested** as a separate test |
-| Web UI browser test for 0.5.0 (`tools/ui_test.py`) | not recorded in the test protocol (T9.15) |
-| Web UI on a real phone (iOS Safari), real drag and drop | **untested** (browser tests run against the mock server with Chromium) |
-| Read-only mode of the USB drive | implemented, **untested** |
-| Bambu Lab X2D (unencrypted, versions 0.2.0 and 0.3.0) | **basic compatibility** reported by the owner: drive detected, uploaded `.gcode.3mf` shown and printed (microSD 64 GB FAT32). No measurements. Open: long prints, read-only mode, take-over during a print, power draw, internal flash, other printers |
-| Printing from an encrypted, unlocked stick on the X2D | **untested** |
-| Encryption on the internal flash; power loss during encryption setup | **untested** |
-| Browser flasher (`web-flasher/`) | **untested** with a real device |
+The web interface comes in German and English and works on phones and PCs. It needs no internet
+connection and no app.
 
-Measured rates (microSD 64 GB): USB write 832 KB/s, web upload 1335 to 1578 KB/s; encrypted:
-USB write 820 KB/s, USB read 659 KB/s, web upload 1.0 MB/s. Internal flash: USB write 47 KB/s,
-web upload 46 KB/s.
+> **Private project.** WiFi DataDrive is a spare-time project with no affiliation to LILYGO, Espressif or
+> Bambu Lab. The software is provided without warranty and without liability. Details are in the
+> [disclaimer](HAFTUNGSAUSSCHLUSS.md) (German and English).
 
-## Quick start
+> **Status 2026-11-13.** The source carries version 0.6.0. It is in progress: built and tested against the
+> mock server, but not yet run on the device. The last version tested on the device is 0.5.0. No release
+> has been published yet. What exactly is tested is listed under [Tested and untested](#tested-and-untested).
 
-### Flash in the browser
+## Features
 
-Open the web flasher (GitHub Pages of this repository: `https://wliffers.github.io/wifi-datadrive/`) in
-Chrome or Edge, hold the dongle's button while plugging it in, click "Install". Instructions are
-on the page. Flashing the full image resets users, Wi-Fi and settings; files on the microSD card
-are not touched.
+**One stick, two ways in.**
+At the printer the dongle is an ordinary USB drive. Over Wi-Fi you manage the same files in a browser.
 
-### Build it yourself
+**Only one side at a time.**
+At any moment the drive belongs either to the USB host or to the file manager in the browser. The stick
+switches in a controlled way and asks first if the printer is still using the drive.
 
-Requires **ESP-IDF v5.5.6**.
+**Files and folders.**
+Upload with a button or by drag and drop, any file type, up to 4 GB per file. Create, rename, move, copy
+and delete folders, also several files at once. Folders download as ZIP. An interrupted upload resumes
+where it stopped.
+
+**Login with roles.**
+Up to 8 users with the roles `admin` and `user`. Devices you trust stay signed in.
+
+**Encryption if you want it.**
+AES-256-XTS on the memory card, off by default. After each plug-in you unlock the drive in the browser.
+If you like, it locks itself after a time without access; from 0.6.0 the interface shows the remaining
+time.
+
+**Several Wi-Fi networks.**
+Up to 5 networks; the stick connects to the strongest. When you add one, it lists the networks in range.
+From 0.6.0 there is a static IP address and your own network name (`name.local`).
+
+**Network drive and HTTPS.**
+The stick is also reachable as a network drive (WebDAV). An encrypted connection (HTTPS) can be switched on.
+
+**Time from the network.**
+Files get a correct date. The time zone can be chosen.
+
+**Display and button.**
+The LCD shows address, state and storage, plus the mascot LIO. One click on the button shows the address
+as a QR code.
+
+**Updates in the browser.**
+You install new firmware through the web interface. If it does not start cleanly, the stick returns to the
+previous version. From 0.6.0 the firmware can be built to accept signed updates only.
+
+**Help on the device.**
+The i icons and the page "Hilfe & Anleitungen" (help and guides) explain every setting, also without
+internet.
+
+<p align="center">
+  <img src="docs/images/desktop-dateien.png" alt="Web interface on a PC (German): at the top the switch between file manager and USB host with storage use, below the encryption card and the list of files with folders and print files" width="800">
+</p>
+
+<p align="center">
+  <img src="docs/images/lio-zustaende.gif" alt="The mascot LIO in nine states, each with the colour of the display's status bar" width="640">
+</p>
+<p align="center"><sub>LIO shows the state on the display: ready, upload, USB host reading, copying, unlocked,
+connecting to Wi-Fi, no Wi-Fi, locked, error. Preview rendered from the animation data, not a photo. LIO is
+the author's mascot and is not covered by the MIT licence, see <a href="LICENSE-LIO.md">LICENSE-LIO.md</a>.</sub></p>
+
+## What you need
+
+- **LILYGO T-Dongle-S3 with LCD** (ESP32-S3, 16 MB flash, microSD slot, one button). Only this variant is
+  built and tested. T-Dongle-S3 Plus and Dual are not tested.
+- **A microSD card**, FAT32 recommended. A 64 GB card is tested. Without a card the stick uses its internal
+  flash: about 11 MB, writing at about 46 KB/s.
+- **A 2.4 GHz Wi-Fi network.** The ESP32-S3 cannot do 5 GHz.
+- **Chrome or Edge** on a PC or Mac if you want to flash in the browser.
+
+## Installation
+
+**Requirement:** Chrome or Edge on a PC or Mac and a USB-A port for the dongle.
+
+1. Open the [web flasher](https://wliffers.github.io/wifi-datadrive/).
+2. Hold the button on the dongle, plug it in and release the button after about 2 seconds. The dongle is
+   now in download mode.
+3. Click **Install** and choose the dongle's port. On the first installation answer "Erase device" with yes.
+4. Unplug the dongle once after flashing and plug it back in.
+
+The full image resets users, saved Wi-Fi networks and settings. The microSD card is not written. The
+flasher page is **untested** with a real device, and as long as no release is published there is nothing
+to install.
+
+Without a browser, use esptool:
+`python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin`
+
+<details>
+<summary>Building it yourself with ESP-IDF</summary>
+
+You need **ESP-IDF 5.5.6** (exactly this version; the components are pinned in
+`firmware/printdrive/dependencies.lock`).
 
 ```sh
 idf.py -C firmware/printdrive build
 idf.py -C firmware/printdrive -p PORT flash
 ```
 
-On Windows the scripts in `tools/` load ESP-IDF themselves:
-`.\tools\flash.ps1 -Project printdrive -Build -Monitor`. Details:
-[docs/04_build_und_flash.md](docs/04_build_und_flash.md). If the dongle does not enter download
-mode by itself, hold the button while plugging it in; unplug and replug after flashing.
+On Windows the scripts in `tools/` load the ESP-IDF environment themselves:
 
-### First start
-
-1. Without a saved Wi-Fi network the dongle opens the setup network `DataDrive-XXXX`; the password
-   is shown on the LCD. Open `http://192.168.4.1`.
-2. Sign in with **`admin` / `admin`**. A new password is required right away.
-3. Add your Wi-Fi under Settings → Network. Afterwards the stick is reachable at
-   `http://datadrive.local` or at the IP on the LCD.
-4. Optional: copy `firmware/pd_secrets.h.example` to `firmware/pd_secrets.h` to build in default
-   Wi-Fi credentials (git-ignored; never publish binaries built with it).
-
-### Develop without hardware
-
-```sh
-python -m pip install -r requirements-dev.txt
-python tools/mock_server.py --port 8090          # then open http://127.0.0.1:8090/ (admin / admin123)
-python tools/api_test.py 127.0.0.1:8090 --user admin --password admin123
+```powershell
+.\tools\flash.ps1 -Project printdrive -Build -Monitor
 ```
 
-## Security notes
+`flash.ps1` finds the port and sends a running stick into download mode by software. If that fails, hold
+the button while plugging in and unplug the dongle once after flashing. Run only one build at a time.
 
-- Meant for **trusted networks**. By default the stick speaks plain HTTP: passwords (login, drive
-  password, WebDAV) travel unencrypted over Wi-Fi. HTTPS can be switched on in the settings (own
-  device CA; browsers warn until it is installed).
-- **Drive encryption** protects the files on a lost or stolen card or stick, as long as the drive
-  is locked and the password is strong. It does not protect against offline guessing of weak
-  passwords, against an `admin` who installs modified firmware (updates are not signed as of
-  0.5.0), and it does not detect tampering. While unlocked, the printer sees plain files.
-- Wi-Fi credentials are stored unencrypted in the flash (no flash encryption, no secure boot).
-- Holding the button for 10 seconds resets the users to `admin` / `admin` (the drive password is
-  not affected).
+You can build in your own Wi-Fi credentials: copy `firmware/pd_secrets.h.example` to
+`firmware/pd_secrets.h` (git-ignored). Never pass on binaries built that way.
 
-Details: [.github/SECURITY.md](.github/SECURITY.md) (how to report vulnerabilities),
-[docs/12_api_v4.md](docs/12_api_v4.md) section 2.5, [docs/06_risiken.md](docs/06_risiken.md).
+Installing ESP-IDF, restoring the factory firmware and all options:
+[docs/04_build_und_flash.md](docs/04_build_und_flash.md) (German).
+</details>
 
-## Documentation (German)
+## First setup
+
+1. Without a saved Wi-Fi network the stick opens its own network `DataDrive-XXXX`. The password is on the
+   display. Connect your phone to it.
+2. The setup page should open by itself (**untested** with a real phone). Otherwise enter
+   `http://192.168.4.1` in the browser. The phone's sign-in window only handles the Wi-Fi setup. For files,
+   close it (iPhone: "Use Without Internet") and use the browser.
+3. Sign in with `admin` / `admin`. The interface asks for a new password right away; nothing else works
+   before that.
+4. Add your Wi-Fi under **Settings › WLAN**. Afterwards the stick is reachable at `http://datadrive.local`
+   or at the address on the display.
+
+**Forgot the address?** One click on the button shows it as a QR code for 20 seconds. Point your phone at
+it and open the link.
+
+**Forgot the password?** Hold the button for 10 seconds. The users go back to `admin` / `admin`, from 0.6.0
+the network settings as well. Your files stay, and an encrypted drive stays locked.
+
+The button behaviour follows the source code and is **untested** on the device. All button functions are
+listed in [docs/09_api_v3.md](docs/09_api_v3.md) section 9 (German).
+
+## Using it at the printer
+
+The drive always has exactly one owner: the USB host (printer or PC) or the file manager in the browser.
+While you work in the browser, the printer sees no drive; once you hand it back, it sees the new files.
+
+1. Plug the stick into the printer's USB port. At the top of the interface **USB-Gerät** (USB host) is
+   selected.
+2. Upload your sliced file in the browser, for example a `.gcode.3mf`. The interface takes the drive for
+   this, asks first if the printer is still using it, and hands it back after the upload.
+3. Pick the file on the printer and start the print.
+
+<p align="center">
+  <img src="docs/images/handy-usb-geraet.png" alt="Web interface on a phone (German) while the drive belongs to the USB host: the files currently belong to the USB host, below the button to upload files" width="300">
+</p>
+
+**Do not switch during a print.** "Dateiverwaltung" (file manager) takes the drive away from the printer.
+If it is reading, the print stops. Whether the X2D reads a file completely at the start or keeps reading
+from the stick is not known. It is safer to eject the drive on the printer first.
+
+Tested by the author on the Bambu Lab X2D: drive recognised, `.gcode.3mf` uploaded from the browser shown
+and printed (firmware 0.2.0 and 0.3.0, microSD 64 GB FAT32, without encryption). Nothing was measured. On a
+PC the stick works as a normal drive under Windows 11.
+
+## Setting up encryption and using it at the printer
+
+Encryption is optional and off by default. It protects your files if someone gets the card or the stick
+without the drive password. While the drive is unlocked it does not protect.
+
+**Before you start:** setting up encryption erases all files. Copy them to your PC first.
+
+### Set up
+
+1. Sign in as `admin` and choose **Verschlüsselung einrichten** (set up encryption) on the start page or
+   under **Settings › Sicherheit** (security).
+2. Choose a drive password with at least 12 characters. It is not your login password. A sentence of
+   several words works best.
+3. Type `LÖSCHEN` and confirm. On a 64 GB card this took 51 seconds. Do not unplug the stick meanwhile.
+4. Write down the **recovery key** and keep it apart from the stick. It is shown only once.
+
+### Encrypted at the printer
+
+1. After every plug-in and every power loss the drive is locked. The printer then sees no drive.
+2. Open the interface on your phone, enter the drive password and tap **Entsperren** (unlock). The printer
+   gets the drive afterwards.
+3. Pick the file on the printer and print.
+
+Printing on the X2D from an encrypted stick unlocked by phone is **untested**. Do a test print before an
+important one.
+
+**Automatic lock** (Settings › Speicher & USB, off by default): the drive locks itself after the chosen
+time without access and, if you want, as soon as the USB host disconnects. While the USB host is writing
+or an upload runs, it waits. For long prints choose "off" or a generous time. The settings are tested on
+the device by the API test; the lock itself after the timeout is **untested**.
+
+**Forgot the drive password:** unlock with the recovery key, then set a new drive password under
+**Settings › Sicherheit › Verschlüsselung**. If both password and recovery key are lost, the data is gone.
+All that is left is to erase the drive and set it up again. The button reset does not help here.
+
+**Switching encryption off** also erases all files.
+
+<p align="center">
+  <img src="docs/images/handy-sicherheit.png" alt="Settings on a phone (German), security section: encryption on and unlocked with buttons to lock the drive, change the password, create a new recovery key and switch off; below the HTTPS switch, the stick's certificate and the trusted devices" width="300">
+</p>
+
+What encryption does not do:
+
+- **The password's strength is the real protection.** Anyone with the card can try passwords on a PC. A
+  short password does not protect.
+- The wait time after wrong passwords only slows guessing over the network.
+- The method does not detect targeted changes to the encrypted data.
+- Without HTTPS the drive password crosses the Wi-Fi readably when you unlock.
+
+More in [docs/12_api_v4.md](docs/12_api_v4.md) section 2.5 and [docs/06_risiken.md](docs/06_risiken.md)
+section 8 (German).
+
+## Network drive and HTTPS
+
+### Connect as a network drive
+
+At `http://<stick>/dav/` the stick is a network drive (WebDAV). You sign in with the same user as in the
+browser.
+
+- The network drive only works while the file manager is active. It never takes the drive away from the
+  printer.
+- An encrypted drive must be unlocked.
+- You can switch it off under Settings › WLAN.
+
+On the device the network drive is only tested by the API test. With real programs it is **untested**. The
+conditions in the table come from research, not from own tests:
+
+| Program | Condition |
+|---|---|
+| Windows Explorer | Connects over `http` only after a one-time registry setting that applies to all WebDAV servers. The script `tools\webdav\Connect-DataDrive.ps1` asks first and sets it. |
+| iPhone and iPad | The Files app cannot do WebDAV. You need an extra app. |
+| macOS Finder | Browsing and downloading work, copying files in does not. |
+
+Steps and error messages: [tools/webdav/README.md](tools/webdav/README.md) (German).
+
+### Switch on HTTPS
+
+Without HTTPS, passwords and files cross the Wi-Fi readably. HTTPS is built in, but the switch is off.
+
+1. Sign in as `admin` and switch on "Verschlüsselte Verbindung (HTTPS)" under **Settings › Sicherheit**.
+2. Confirm the restart. A connected USB host briefly loses the drive.
+3. Afterwards the stick is reachable at `https://<stick>/`. Requests to `http://` are redirected.
+4. Every browser warns until the stick's certificate is installed. Download it under
+   **Settings › Sicherheit › Zertifikat herunterladen** and install it once on every device:
+   - **Windows:** open the file › Install Certificate › Local Machine › store "Trusted Root
+     Certification Authorities".
+   - **iPhone:** download in Safari, Settings › Profile Downloaded › Install, then General › About ›
+     Certificate Trust Settings: switch trust on.
+
+Afterwards scripts ("Send to", Shortcuts, your own scripts) must use `https://`, and you add a home screen
+icon again. The stick serves only one HTTPS connection at a time. From 0.6.0: a new network name creates a
+new certificate for the stick, which you install again.
+
+Measured on the device (0.5.0, drive encrypted and unlocked): 30 MB upload at 864 kB/s, the file was
+bit-identical afterwards; download 389 kB/s. **Untested:** installing the certificate on iPhone and
+Windows, network drive and scripts over `https`, running for many hours.
+
+## Updates
+
+**In the browser:** Settings › System › "Datei auswählen …" (choose file), then pick the file `…-app.bin`
+from the release. The new version first runs on probation; if it does not run stably, the stick returns
+to the previous one. Files and settings stay. This path is **untested** on the device; so far every
+version reached the stick over USB.
+
+**Signed updates (from 0.6.0):** firmware built with the option `CONFIG_PD_OTA_SIGNED` installs only files
+signed with the author's key through the browser. Then even an administrator with the right password
+cannot install modified firmware over the network. Signing happens only on the author's computer; the
+private key never goes to GitHub. The confirmation before an update shows "Nur signierte Updates" (signed
+updates only) and the key ID. This is **untested** on the device.
+
+**Forks and own builds:** by default the repository builds without a signature. Such firmware accepts any
+valid update, like 0.5.0. Your own build reaches a stick with signed firmware only over USB. Own signed
+builds with your own key, and what the signature does not protect (USB access, no secure boot):
+[docs/17_signierte_updates.md](docs/17_signierte_updates.md) (German).
+
+## Tested and untested
+
+**Tested** means here: tried on the real device, with the result in
+[docs/05_testprotokoll.md](docs/05_testprotokoll.md). Everything else is listed as untested, even if it is
+built or runs against the mock server.
+
+| Area | Status |
+|---|---|
+| USB drive on Windows 11: copy, eject, re-plug | tested |
+| microSD 64 GB FAT32 | tested (one card) |
+| Bambu Lab X2D without encryption: drive recognised, file shown, printed | reported by the author (0.2.0 and 0.3.0), no measurements |
+| Printing on the X2D from an encrypted, unlocked stick | untested |
+| Long prints, switching during a print, read-only mode, other printers | untested |
+| Login, users, folders, several Wi-Fi networks (0.3.0) | tested by the API test on the device (182/182) |
+| Encryption: set up, lock, unlock, recovery, switch off (0.4.0) | tested by the API test on the device (334/334) |
+| Encryption on the internal flash, power loss during setup | untested |
+| Network drive basics, time, resumable upload, ZIP, lock settings (0.5.0) | tested by the API test on the device (354/354) |
+| HTTPS (0.5.0) | basic function measured on the device; iPhone with certificate, WebDAV over `https`, long-term operation untested |
+| Network drive with Explorer, Finder or phone apps | untested |
+| Automatic lock after the timeout | untested |
+| Setup page opening by itself, Wi-Fi scan on the setup network | untested |
+| Button (QR code, switching, reset), home screen icon, "Send to", iPhone shortcut | untested |
+| Firmware update in the browser, web flasher | untested |
+| Web interface | browser test against the mock server (Chromium, PC and phone profile); untested on a real phone |
+| New in 0.6.0: time left until lock, static address and network name, signed updates, new interface | tested against the mock server (API test 373/373, browser test PC 786/786 and phone 803/803); untested on the device |
+
+Measured with microSD 64 GB: USB write 832 KB/s, browser upload 1.3 to 1.6 MB/s. Encrypted: USB write
+820 KB/s, read 659 KB/s, upload 1.0 MB/s. Open risks and assumptions are in
+[docs/06_risiken.md](docs/06_risiken.md) (German).
+
+## Stored and read data
+
+- **On the memory card** (without a card in the internal flash): your files. With encryption also a header
+  holding the encrypted drive key. The drive password itself is never stored.
+- **In the stick's settings storage:** the users with role and salted password hash, never the plain
+  password; trusted devices as a hash; the saved Wi-Fi networks with their passwords, **unencrypted**;
+  network and device settings; with HTTPS the stick's certificate and key. Anyone holding the stick can
+  read this storage over USB.
+- **In the browser:** appearance, the setting "Nach dem Hochladen wieder bereitstellen" (hand back after
+  upload) and the session cookie.
+- **Log:** the last 8 KB of messages for troubleshooting, readable under Settings › System.
+- **Internet:** no cloud, no account, no telemetry. The only outside connection is the time via NTP
+  (`pool.ntp.org` or the time server your router announces). The web interface loads nothing from other
+  servers. On the local network the stick announces itself via mDNS as `datadrive.local`.
+- **Web flasher:** the flasher page loads ESP Web Tools from unpkg.com and the firmware image from the
+  release on GitHub.
+
+## Limitations
+
+- Built and tested only for the LILYGO T-Dongle-S3 with LCD.
+- Meant for trusted networks. By default the stick speaks plain HTTP; passwords then cross the Wi-Fi
+  readably.
+- The stick handles one request after the other. During an upload, other devices wait.
+- No exFAT. Many cards above 32 GB come with exFAT and must be formatted to FAT32 in the browser, which
+  erases them. At most 4 GB per file.
+- Change the card only while the stick is unplugged.
+- USB runs at Full Speed (12 Mbit/s). Measured on a PC: writing about 0.8 MB/s, reading about 0.75 MB/s.
+  Without a card the internal flash is small and slow.
+- The stick accepts every file type and checks no content.
+- Holding the button for 10 seconds resets the login to `admin` / `admin`. It does not open an encrypted
+  drive.
+- Without internet the browser sets the clock. After a power loss it is unknown until the network or a
+  browser sets it again.
+- The project folder `firmware/printdrive`, the header `X-PrintDrive` and the prefix `pd_` date from the time
+  the project was called "WiFi PrintDrive".
+
+## Feedback
+
+Bug reports, results from real hardware and suggestions are welcome as issues. Helpful are firmware
+version, board, storage (microSD or internal flash, encrypted yes/no), printer or computer on USB and the
+last lines of the log, without passwords and Wi-Fi names. Please report security vulnerabilities
+privately, see [.github/SECURITY.md](.github/SECURITY.md).
+
+WiFi DataDrive is maintained in my spare time. I answer as soon as I can, but cannot promise response
+times or fixes. More in [CONTRIBUTING.md](CONTRIBUTING.md) (German and English).
+
+## For developers
+
+```
+firmware/printdrive/       main firmware: drive, USB, login, web API, WebDAV, ZIP, update, HTTPS, display
+  main/web/index.html      web interface; embedded gzip-compressed at build time
+firmware/components/       board, st7735, display, pd_wifi, pd_crypt, pd_time, applog
+firmware/smoke_test/       hardware test: LCD, LED, button, flash, Wi-Fi
+tools/flash.ps1, idf.ps1   build and flash on Windows; finds port and download mode itself
+tools/mock_server.py       mock server: emulates the device API without hardware
+tools/api_test.py          API test against the mock server or the real device
+tools/ui_test.py           browser test of the web interface (Playwright with Edge or Chrome)
+tools/signing/             create keys, build signed, verify signatures
+tools/sendto/, webdav/     "Send to" and network drive on Windows
+web-flasher/               web flasher for GitHub Pages
+docs/                      project documentation (German)
+```
+
+```bash
+python -m pip install -r requirements-dev.txt               # Python 3.10 or newer
+idf.py -C firmware/printdrive build                         # ESP-IDF 5.5.6
+python tools/mock_server.py --port 8090                     # then http://127.0.0.1:8090/ (admin / admin123)
+python tools/api_test.py 127.0.0.1:8090 --user admin --password admin123
+python tools/ui_test.py --base http://localhost:8090        # for changes to the web interface
+```
+
+The core of the project is the drive's single-owner rule; it is summarised in
+[docs/00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md) and described in detail in
+[docs/02_architektur.md](docs/02_architektur.md). API changes go into the API contract first (latest
+[docs/16_api_v6.md](docs/16_api_v6.md)), then into firmware, mock server and API test. GitHub Actions builds
+every push with ESP-IDF 5.5.6 and tests against the mock server; the workflows are written but have not
+run on GitHub yet. The release process is in [docs/RELEASING.md](docs/RELEASING.md), the changes per version
+in [CHANGELOG.md](CHANGELOG.md) (all German).
+
+<details>
+<summary>All documents in docs/ (German)</summary>
 
 | File | Content |
 |---|---|
-| [README.md](README.md) | full German README: features, quick start, encryption, WebDAV, HTTPS |
-| [docs/00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md) | the core in short: owner principle, safeguards |
-| [docs/02_architektur.md](docs/02_architektur.md) | architecture |
-| [docs/04_build_und_flash.md](docs/04_build_und_flash.md) | install ESP-IDF, build, flash, recover, tests, mock server |
-| [docs/05_testprotokoll.md](docs/05_testprotokoll.md) | test procedures and results per version |
-| [docs/06_risiken.md](docs/06_risiken.md) | open risks, untested points, assumptions |
-| [docs/09_api_v3.md](docs/09_api_v3.md), [docs/12_api_v4.md](docs/12_api_v4.md), [docs/15_api_v5.md](docs/15_api_v5.md) | HTTP API versions 3 to 5 |
-| [docs/18_veroeffentlichung.md](docs/18_veroeffentlichung.md) | publishing checklist |
+| [00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md) | the core in short: owner principle, safeguards, key data |
+| [01_bestandsaufnahme.md](docs/01_bestandsaufnahme.md) | hardware, verified data, technology choice |
+| [02_architektur.md](docs/02_architektur.md) | modules, owner state machine, upload, web interface, login, encryption |
+| [03_umsetzungsplan.md](docs/03_umsetzungsplan.md) | phases 0 to 8, acceptance criteria |
+| [04_build_und_flash.md](docs/04_build_und_flash.md) | ESP-IDF, build, flash, recovery, configuration, tests, mock server |
+| [05_testprotokoll.md](docs/05_testprotokoll.md) | test procedures and results per version |
+| [06_risiken.md](docs/06_risiken.md) | open risks, untested points, assumptions |
+| [07_api.md](docs/07_api.md) | HTTP API version 2 (historical) |
+| [08_plan_v03.md](docs/08_plan_v03.md) | plan for version 0.3.0 |
+| [09_api_v3.md](docs/09_api_v3.md) | HTTP API version 3: login, roles, files, folders, Wi-Fi, button |
+| [10_senden.md](docs/10_senden.md) | sending from an iPhone (Shortcuts), home screen icon |
+| [11_plan_v04.md](docs/11_plan_v04.md) | plan for version 0.4.0 |
+| [12_api_v4.md](docs/12_api_v4.md) | HTTP API version 4: Wi-Fi scan, encryption, HTTPS; protection in section 2.5 |
+| [13_display_animation_briefing.md](docs/13_display_animation_briefing.md) | brief for the display animation "LIO" |
+| [14_vormerkliste.md](docs/14_vormerkliste.md) | backlog: done, open, undecided |
+| [15_api_v5.md](docs/15_api_v5.md) | HTTP API version 5: time, automatic lock, resumable upload, ZIP, WebDAV |
+| [16_api_v6.md](docs/16_api_v6.md) | HTTP API version 6: time left until lock, network settings, signed updates |
+| [17_signierte_updates.md](docs/17_signierte_updates.md) | signed updates: protection, setup, key loss, test steps |
+| [18_veroeffentlichung.md](docs/18_veroeffentlichung.md) | one-time checklist for publishing on GitHub |
+| [RELEASING.md](docs/RELEASING.md) | release process |
+| [tools/webdav/README.md](tools/webdav/README.md) | connecting the network drive: Windows, iPhone, Android, macOS, Linux |
+| [tools/sendto/README.md](tools/sendto/README.md) | "Send to" for Windows |
+| [tools/signing/README.md](tools/signing/README.md) | tools for signed updates |
+</details>
 
-## Contributing and licence
+## Liability and licence
 
-See [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). The project is licensed under the
-[MIT License](LICENSE). Third-party code and its licences: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Licence:** [MIT](LICENSE) – free to use, also in production, without warranty.
+- **Mascot LIO:** name, character and artwork are not covered by the MIT licence; all rights remain with
+  the author. If you publish your own version of the firmware, replace the artwork.
+  [LICENSE-LIO.md](LICENSE-LIO.md)
+- **Disclaimer:** use at your own risk. Back up your files, keep password and recovery key apart from the
+  stick and check your prints. [HAFTUNGSAUSSCHLUSS.md](HAFTUNGSAUSSCHLUSS.md)
+- **Third-party parts:** ST7735 driver from LILYGO (MIT), 5×7 font from Adafruit GFX (BSD), plus ESP-IDF,
+  TinyUSB and further components under their own licences. Everything else, including the duties when
+  passing on firmware files, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Trademarks:** LILYGO is a trademark of its owner. Espressif and ESP32 are trademarks of Espressif
+  Systems. Bambu Lab is a trademark of Bambu Lab. WiFi DataDrive is an independent project and not
+  affiliated with any of them.
 
-The mascot "LIO" (name, character, artwork) is not covered by the MIT licence. All rights reserved, see [LICENSE-LIO.md](LICENSE-LIO.md).
+---
+
+<p align="center">Version 0.6.0 (in progress, not released) · status 2026-11-13</p>

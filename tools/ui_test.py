@@ -19,8 +19,9 @@ Usage
                             [--only TEXT] [--no-shots] [--list]
 
     --only TEXT   run only the tests whose name contains TEXT (e.g. --only clipboard)
-    --shots DIR   screenshot folder; every significant state is saved in the light and in
-                  the dark colour scheme as <profile>_<scheme>_<state>.png
+    --shots DIR   screenshot folder (default: environment variable DATADRIVE_UI_SHOTS, else
+                  <system temp>/datadrive-ui-test/shots); every significant state is saved in the
+                  light and in the dark colour scheme as <profile>_<scheme>_<state>.png
 
 What it does
 ------------
@@ -57,6 +58,11 @@ running switch is carried out afterwards), the encryption card, the collapsible 
 open a card with open_card() / to_sec() first), the ⓘ popovers (tap, outside tap, Escape with focus return, one at a
 time, "Anleitung öffnen") and the local help page (#!hilfe/<topic>, also signed out), the rules against doubled actions
 (one "Hochladen" with a menu, no floating button, "Entsperren" once, "Sperren" not in the user menu) and reduced motion.
+API v6 (docs/16_api_v6.md): one request at a time (DEVICE_JS models the device with HTTPS: one connection, a second one
+closes the first; regression test for the lost auto-lock setting), one quiet retry of requests that are safe to repeat,
+the auto-lock countdown in the encryption card (ticking, reset, warning colour, waiting, lock at 0), the address and
+network name items (DHCP / fixed with validation at the fields, the "now reachable at" notice with the reachability
+check), signed updates (key line, BAD_SIGNATURE / UNSIGNED) and a folder upload whose name is taken by a file.
 
 The page is instrumented only by an init script that records toasts and dialog openings;
 index.html itself is not modified. "Failed to load resource" lines of the browser console for
@@ -89,8 +95,7 @@ except ImportError:                                   # pragma: no cover
     print("ui_test: Playwright is missing - run `pip install playwright`", file=sys.stderr)
     sys.exit(2)
 
-_SCRATCH_SHOTS = Path(tempfile.gettempdir()) / "datadrive-ui-test" / "shots"
-DEFAULT_SHOTS = _SCRATCH_SHOTS if _SCRATCH_SHOTS.parent.is_dir() else Path(tempfile.gettempdir()) / "datadrive_ui_shots"
+DEFAULT_SHOTS = Path(os.environ.get("DATADRIVE_UI_SHOTS") or Path(tempfile.gettempdir()) / "datadrive-ui-test" / "shots")
 
 PHONE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 "
             "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1")
@@ -403,14 +408,17 @@ class Ctx:
         if sets:
             self.mock.set(**sets)
 
-    def open(self, hash_: str = "", query: str = "", **ctx_kw):
-        """Open the page and wait until the sign-in view (or the app, with a trusted cookie) is there."""
+    def open(self, hash_: str = "", query: str = "", init: str = "", **ctx_kw):
+        """Open the page and wait until the sign-in view (or the app, with a trusted cookie) is there.
+        init: an extra init script (e.g. DEVICE_JS, the one-connection model of the device)."""
         self.close()
         opts = dict(PROFILES[self.prof])
         opts.update(color_scheme="light", locale="de-DE", accept_downloads=True)
         opts.update(ctx_kw)
         self.context = self.browser.new_context(**opts)
         self.context.add_init_script(INIT_JS)
+        if init:
+            self.context.add_init_script(init)
         p = self.page = self.context.new_page()
         p.set_default_timeout(8000)
         self.console, self.requests = [], []
@@ -3444,12 +3452,13 @@ def t10d_folder_upload(c: Ctx):
     # the folder name belongs to a file (docs/15_api_v5.md section 9: the UI should check with GET /api/files)
     c.clear_toasts()
     c.page.set_input_files("#dirPicker", str(c.run.f["tree_file"]))
-    ok = c.wait("() => !S.working && S.ups.length === 1 && S.ups[0].state === 'err'", None, 20000)
-    msg = c.ev("() => S.ups.length ? S.ups[0].msg : ''")
-    c.check("folder name taken by a file (README): nothing stored, the summary reports the failure", ok and c.wait_toast("„README“: 1 von 1 Dateien nicht gespeichert.")
-            and c.mock.ls("")["README"]["type"] == "file", f"{msg} {c.toast_texts()}")
-    c.run.info(f"{c.prof}: folder 'README' over a file of that name: mkdir 409 EXISTS is taken as 'folder exists' (no GET /api/files check as "
-               f"docs/15_api_v5.md section 9 describes), per-file message {msg!r}")
+    ok = c.wait("() => !S.working && S.ups.length === 1 && S.ups[0].state === 'skip'", None, 20000)
+    ok = c.wait_toast("„README“: Ein gleichnamiges Element ist eine Datei.") and ok
+    msgs = c.toast_texts()
+    c.check("folder name taken by a FILE (README; mkdir 409 EXISTS): the listing tells it apart, one message for the folder "
+            "'„README“: Ein gleichnamiges Element ist eine Datei.', not 'Der Zielordner existiert nicht mehr', no upload tried",
+            ok and not any("Zielordner" in x or "nicht gespeichert" in x for x in msgs) and c.mock.ls("")["README"]["type"] == "file"
+            and not [q for q in reqs(c, "POST", "/api/upload") if q.get("path", "").startswith("README/")], msgs)
     close_panel(c)
     c.no_console_errors()
 
@@ -4060,6 +4069,434 @@ def t11c_reduced_motion(c: Ctx):
     c.check("reduced motion: settings card opens", vis(c, "#theme"))
     c.go("#!hilfe")
     c.check("reduced motion: help page opens", c.wait("() => !document.querySelector('#vHelp').hidden", None, 3000))
+    c.no_console_errors()
+
+
+# ================================================================== 12. one request at a time, auto-lock countdown, network, signed updates
+
+# The device with HTTPS keeps ONE connection: a new connection closes the older one, and a request that dies with its
+# connection is gone (the browser does not repeat a POST). Modelled inside the page: every /api/ fetch is one connection;
+# one that starts while another is open kills it (rejected like a reset; not sent at all if it was still in its 150 ms
+# "handshake"). XHR uploads count as open connections too. __net.max = the most requests that were open at once.
+DEVICE_JS = r"""
+window.__net = {max: 0, killed: [], n: 0};
+(() => {
+  const real = window.fetch.bind(window), live = new Set(), N = window.__net;
+  const open = me => { N.max = Math.max(N.max, live.size + 1); N.n++; for (const o of live) { o.dead = true; N.killed.push(o.url); } live.add(me); };
+  window.fetch = function(input, init){
+    const url = typeof input === 'string' ? input : input.url;
+    if (!/\/api\//.test(url)) return real(input, init);
+    const me = {url, dead: false};
+    open(me);
+    return new Promise((res, rej) => {
+      const fail = () => { live.delete(me); rej(new TypeError('Failed to fetch')); };
+      setTimeout(() => {
+        if (me.dead) return fail();
+        real(input, init).then(r => { if (me.dead) return fail(); live.delete(me); res(r); }, e => { live.delete(me); rej(e); });
+      }, 150);
+    });
+  };
+  const send = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function(){
+    const me = {url: 'xhr', dead: false};
+    open(me);
+    this.addEventListener('readystatechange', () => { if (this.readyState === 4) live.delete(me); });   // before load: the answer is complete
+    return send.apply(this, arguments);
+  };
+})();
+"""
+
+
+def cd_secs(c: Ctx) -> int:
+    """Seconds shown by the countdown ('Sperrt in 4:48' / 'Locks in 1:02:03'), -1 if none."""
+    m = re.search(r"(\d+(?::\d\d)+)$", c.text("#alCd") or "")
+    if not m:
+        return -1
+    s = 0
+    for part in m.group(1).split(":"):
+        s = s * 60 + int(part)
+    return s
+
+
+def net_state(c: Ctx) -> dict:
+    return c.ev("() => ({max: __net.max, killed: __net.killed.slice(), n: __net.n})")
+
+
+@test
+def t12a_one_request_at_a_time(c: Ctx):
+    c.reset("crypt_enabled", crypt_kdf_ms=50)
+    c.open(init=DEVICE_JS)
+    c.login(ADMIN)
+    to_sec(c, "#alItem", "() => !document.querySelector('#alItem').hidden && S.wifi !== null")
+    c.page.wait_for_timeout(1200)
+    for v in ("15", "30", "60"):
+        c.clear_toasts()
+        # the change and a status poll at the same moment (the race that lost the owner's setting on the device)
+        c.ev("v => { const s = document.querySelector('#alSel'); s.value = v; s.dispatchEvent(new Event('change')); poll(); refresh(); }", v)
+        ok = c.wait_toast("Gespeichert.", 9000)
+        c.check(f"one-connection device: auto-lock {v} min saved although a status poll was due at the same moment (toast, mock stores it, no error)",
+                ok and c.mock.state()["autolock"]["minutes"] == int(v) and not any(t["err"] for t in c.toasts()), f"{c.toast_texts()} {c.mock.state()['autolock']}")
+    c.clear_toasts()
+    c.tap("label.switch:has(#swDet)")
+    ok = c.wait_toast("Gespeichert.", 9000) and c.wait("() => S.st.autolock.on_detach === true", None, 9000)
+    c.check("one-connection device: the USB switch is saved too", ok and c.mock.state()["autolock"]["on_detach"] is True, c.mock.state()["autolock"])
+    # settings opened again (4 loads), folders entered, an upload while the page reloads its list
+    c.go("#/")
+    c.wait("() => S.entries !== null", None, 9000)
+    c.go("#/Projekte")
+    c.wait_dir("Projekte", 9000)
+    c.go("#einstellungen")
+    c.wait("() => S.users !== null", None, 9000)
+    c.go("#/")
+    c.wait_dir("", 9000)
+    c.mock.set(upload_kbps=120)
+    c.page.set_input_files("#picker", str(c.run.f["txt"]))
+    c.wait("() => S.ups.length && S.ups[0].state === 'up'", None, 9000)
+    c.ev("() => { loadFiles(); refresh(true); }")
+    done = up_done(c, 1, 20000)
+    c.mock.set(upload_kbps=0)
+    n = net_state(c)
+    c.check("never more than one request open at a time (polls, settings loads, saves, folder changes, an upload with list reloads); nothing was cut off",
+            done and n["max"] == 1 and not n["killed"], n)
+    c.check("no 'not reachable' notice", not c.ui()["notice"], c.ui()["notice"])
+    c.no_console_errors()
+    # a single dropped connection: requests that are safe to repeat go again once, quietly
+    c.start("crypt_enabled", crypt_kdf_ms=50)
+    to_sec(c, "#alItem", "() => !document.querySelector('#alItem').hidden")
+    hits = {"status": 0, "al": 0, "mk": 0}
+
+    def drop_first(key):
+        def h(route):
+            hits[key] += 1
+            if hits[key] == 1:
+                route.abort("connectionreset")
+            else:
+                route.continue_()
+        return h
+    is_st = lambda u: url_path(u) == "/api/status"
+    c.page.route(is_st, drop_first("status"))
+    c.ev("() => refresh()")
+    c.page.wait_for_timeout(1500)
+    c.check("status request reset once: repeated at once, counts as success (no failure, no notice)",
+            hits["status"] >= 2 and c.ev("() => S.fails") == 0 and not c.ui()["notice"], f"{hits} fails={c.ev('() => S.fails')}")
+    c.page.unroute(is_st)
+    c.page.route(lambda u: url_path(u) == "/api/settings/autolock", drop_first("al"))
+    c.clear_toasts()
+    c.page.select_option("#alSel", "30")
+    ok = c.wait_toast("Gespeichert.", 9000)
+    c.check("settings POST reset once: sent again (setting a value twice is harmless), saved, no error toast",
+            ok and hits["al"] == 2 and c.mock.state()["autolock"]["minutes"] == 30 and not any(t["err"] for t in c.toasts()), f"{hits} {c.toast_texts()}")
+    c.go("#/")
+    c.wait_dir("", 9000)
+    c.page.route(lambda u: url_path(u) == "/api/mkdir", drop_first("mk"))
+    c.new_folder()
+    c.wait_dlg("Neuer Ordner")
+    c.fill_dlg("Nur einmal")
+    c.dlg_yes()
+    ok = c.wait_derr()
+    c.check("a POST that is not safe to repeat (mkdir) is not sent twice: one try, 'Keine Antwort vom Laufwerk.' in the dialog",
+            ok and hits["mk"] == 1 and c.dlg()["err"] == "Keine Antwort vom Laufwerk.", f"{hits} {c.dlg()['err']}")
+    c.dlg_no()
+    c.wait_dlg_closed()
+    c.no_console_errors(net=True)
+
+
+@test
+def t12b_autolock_countdown(c: Ctx):
+    c.start("crypt_enabled", crypt_kdf_ms=50)
+    c.check("timer off: no countdown in the encryption card", not vis(c, "#alBox"))
+    c.mock.post("/api/settings/autolock?minutes=5&on_detach=0")
+    c.page.wait_for_timeout(500)
+    c.mock.set(autolock_remaining=125)
+    ok = c.wait("() => !document.querySelector('#alBox').hidden && /^Sperrt in 2:0\\d$/.test(document.querySelector('#alCd').textContent)", None, 9000)
+    c.check("timer 5 min, 125 s left: 'Sperrt in 2:0x' in the card 'Verschlüsselt · Entsperrt', next to 'Sperren'", ok and c.text("#encSub") == "Entsperrt"
+            and c.ev("() => document.querySelector('#alBox').parentNode === document.querySelector('#lockBtn').parentNode"), c.text("#alCd"))
+    c.shot("v6_countdown")
+    c.overflow_check("encryption card with countdown")
+    s0 = cd_secs(c)
+    c.page.wait_for_timeout(2300)
+    s1 = cd_secs(c)
+    c.check("ticks every second between the polls", 1 <= s0 - s1 <= 4, f"{s0} -> {s1}")
+    b = c.ev("() => { const b = document.querySelector('#alReset'); return {tag: b.tagName, label: b.getAttribute('aria-label'), n: document.querySelectorAll('#alBox button').length}; }")
+    c.check("one compact reset control: icon button 'Zeit zurücksetzen'", b == {"tag": "BUTTON", "label": "Zeit zurücksetzen", "n": 1}, b)
+    n_touch = len(reqs(c, "POST", "/api/autolock/touch"))
+    c.page.wait_for_timeout(6500)
+    rem = c.mock.state()["autolock"]["remaining_s"]
+    c.check("the page's own polling does not reset the timer (no touch sent, the device's time keeps running)",
+            len(reqs(c, "POST", "/api/autolock/touch")) == n_touch == 0 and rem < 120, rem)
+    c.tap("#alReset")
+    ok = c.wait("() => /^Sperrt in (5:00|4:5\\d)$/.test(document.querySelector('#alCd').textContent)", None, 6000)
+    c.check("'Zeit zurücksetzen': POST /api/autolock/touch, countdown back at the full 5:00", ok and len(reqs(c, "POST", "/api/autolock/touch")) == 1
+            and c.mock.state()["autolock"]["remaining_s"] >= 290, c.text("#alCd"))
+    c.tap("#encInfo")
+    pop = c.pop()
+    c.check("the card's ⓘ explains the countdown and leads to 'Automatisch sperren'", pop["open"] and "Zeit zurücksetzen" in pop["text"] and pop["link"] == "#!hilfe/sperren", pop)
+    c.page.keyboard.press("Escape")
+    how = c.ev("() => [...L.de.helpDoc].find(x => x[0] === 'sperren')[2]")
+    c.check("help 'Automatisch sperren' describes the countdown, the reset and the wait for the USB device", "Countdown" in how and "Zeit zurücksetzen" in how
+            and "Sperrt, sobald das USB-Gerät fertig ist" in how, how[-120:])
+    # a file action restarts the period on the device: the page shows it after the action
+    c.mock.set(autolock_remaining=100)
+    c.wait("() => /^Sperrt in 1:/.test(document.querySelector('#alCd').textContent)", None, 9000)
+    c.new_folder()
+    c.wait_dlg("Neuer Ordner")
+    c.fill_dlg("Countdown Test")
+    c.dlg_yes()
+    ok = c.wait_dlg_closed() and c.wait("() => /^Sperrt in (5:00|4:5\\d)$/.test(document.querySelector('#alCd').textContent)", None, 6000)
+    c.check("after a real file action (new folder) the countdown is resynchronised at once (full time again)", ok, c.text("#alCd"))
+    # last minute: warning colour
+    c.mock.set(autolock_remaining=45)
+    ok = c.wait("() => document.querySelector('#alBox').classList.contains('warn')", None, 9000)
+    col = c.ev("() => [getComputedStyle(document.querySelector('#alCd')).color, getComputedStyle(document.documentElement).getPropertyValue('--warn').trim()]")
+    c.check("below one minute the countdown turns to the warning colour", ok and cd_secs(c) < 60, f"{c.text('#alCd')} {col}")
+    c.shot("v6_countdown_warn")
+    # time is up: the page asks at once and shows the locked view
+    c.clear_toasts()
+    c.mock.set(autolock_remaining=3)
+    ok = wait_unlock_view(c, True, 9000)
+    c.check("countdown reaches 0: status checked at once, the unlock view is shown, countdown gone", ok and not vis(c, "#alBox") and c.wait_toast("gesperrt", 5000), c.toast_texts())
+    c.no_console_errors()
+    # postponed while the USB device works
+    c.start("crypt_enabled", crypt_kdf_ms=50)
+    c.mock.post("/api/settings/autolock?minutes=5&on_detach=0")
+    c.mock.set(autolock_waiting=1)
+    c.mock.set(autolock_remaining=0)
+    ok = c.wait("() => document.querySelector('#alCd').textContent === 'Sperrt, sobald das USB-Gerät fertig ist'", None, 9000)
+    c.check("waiting: 'Sperrt, sobald das USB-Gerät fertig ist' (warning colour), still unlocked, the reset stays", ok and vis(c, "#alReset")
+            and c.ev("() => document.querySelector('#alBox').classList.contains('warn')") and not c.ev("() => isLocked()"), c.text("#alCd"))
+    c.shot("v6_countdown_waiting")
+    c.overflow_check("encryption card while the lock waits")
+    c.tap("#alReset")
+    ok = c.wait("() => /^Sperrt in (5:00|4:5\\d)$/.test(document.querySelector('#alCd').textContent)", None, 6000)
+    c.check("reset while waiting: back to a running countdown", ok, c.text("#alCd"))
+    # English
+    to_sec(c, "#langSeg")
+    c.tap('#langSeg button[data-v="en"]')
+    c.go("#/")
+    ok = c.wait("() => /^Locks in \\d+:\\d\\d$/.test(document.querySelector('#alCd').textContent)", None, 6000)
+    c.check("English: 'Locks in m:ss', reset labelled 'Reset time'", ok and c.ev("() => document.querySelector('#alReset').getAttribute('aria-label')") == "Reset time", c.text("#alCd"))
+    r = c.ev(JS_UNTRANSLATED)
+    c.check("English file view with countdown: no German leftovers", not r["bad"], r["bad"])
+    c.no_console_errors()
+    # role user sees the countdown and may reset it
+    c.start("crypt_enabled", who=GUEST, crypt_kdf_ms=50)
+    c.mock.post("/api/settings/autolock?minutes=10&on_detach=0")
+    ok = c.wait("() => !document.querySelector('#alBox').hidden", None, 9000)
+    c.tap("#alReset")
+    c.check("role user: countdown shown, reset allowed", ok and wait_req(c, "POST", "/api/autolock/touch") and c.wait("() => /^Sperrt in (10:00|9:5\\d)$/.test(document.querySelector('#alCd').textContent)", None, 6000),
+            c.text("#alCd"))
+    c.no_console_errors()
+
+
+@test
+def t12c_network_settings(c: Ctx):
+    c.start("two_users", wifi_count=1)
+    to_sec(c, "#ipItem", "() => !document.querySelector('#ipItem').hidden")
+    o = c.ev("""() => ({val: document.querySelector('#ipVal').textContent, host: document.querySelector('#hostVal').textContent,
+      pressed: [...document.querySelectorAll('#ipSeg button')].map(b => [b.textContent, b.getAttribute('aria-pressed')]), form: !document.querySelector('#ipForm').hidden,
+      h3: [...document.querySelectorAll('#b-net h3, #b-net .kv')].filter(e => e.getClientRects().length).map(e => e.textContent.trim())})""")
+    c.check("WLAN card: item 'Adresse' (current address, 'Automatisch (DHCP) | Fest', DHCP pressed), item 'Name im Netzwerk' (datadrive-mock.local)",
+            o["val"] == "http://192.0.2.152" and o["host"] == "datadrive-mock.local" and o["pressed"] == [["Automatisch (DHCP)", "true"], ["Fest", "false"]] and not o["form"], o)
+    c.check("no doubled values: 'Adresse' and 'Name im Netzwerk' once each", sum(x.startswith("Adresse") for x in o["h3"]) == 1
+            and sum(x.startswith("Name im Netzwerk") for x in o["h3"]) == 1, o["h3"])
+    c.tap('#ipSeg button[data-v="0"]')
+    vals = c.ev("() => ['ipA','ipM','ipG','ipD'].map(i => document.querySelector('#' + i).value)")
+    c.check("'Fest': four fields, prefilled with what DHCP assigned (current)", vals == ["192.0.2.152", "255.255.255.0", "192.0.2.1", "192.0.2.1"], vals)
+    c.shot("v6_net_static_form")
+    c.overflow_check("static address form")
+    cases = (
+        (("192.0.2.300", "255.255.255.0", "192.0.2.1", ""), "ipAe", "Bitte eine IPv4-Adresse wie 192.168.1.50 eingeben."),
+        (("192.0.02.7", "255.255.255.0", "192.0.2.1", ""), "ipAe", "Bitte eine IPv4-Adresse wie 192.168.1.50 eingeben."),
+        (("192.0.2.7", "255.0.255.0", "192.0.2.1", ""), "ipMe", "Ungültige Subnetzmaske"),
+        (("192.0.2.7", "255.255.255.255", "192.0.2.1", ""), "ipMe", "Ungültige Subnetzmaske"),
+        (("10.0.0.7", "254.0.0.0", "10.0.0.1", ""), "ipMe", "Ungültige Subnetzmaske"),
+        (("192.0.2.0", "255.255.255.0", "192.0.2.1", ""), "ipAe", "Das ist die Netz- oder Broadcast-Adresse"),
+        (("192.0.2.255", "255.255.255.0", "192.0.2.1", ""), "ipAe", "Das ist die Netz- oder Broadcast-Adresse"),
+        (("192.0.2.7", "255.255.255.0", "192.0.3.1", ""), "ipGe", "Das Gateway liegt nicht im Netz der IP-Adresse."),
+        (("192.0.2.7", "255.255.255.0", "192.0.2.7", ""), "ipGe", "Gateway und IP-Adresse müssen sich unterscheiden."),
+        (("192.168.4.1", "255.255.255.0", "192.168.4.2", ""), "ipAe", "Diese Adresse gehört dem Einrichtungs-WLAN des Sticks."),
+        (("192.0.2.7", "255.255.255.0", "192.0.2.1", "dns.example"), "ipDe", "Bitte eine IPv4-Adresse"),
+    )
+    for v, fid, msg in cases:
+        for i, x in enumerate(v):
+            c.page.fill(f"#{('ipA', 'ipM', 'ipG', 'ipD')[i]}", x)
+        c.tap("#ipSave")
+        got = c.text(f"#{fid}")
+        c.check(f"validation {v}: message at the field ({fid}): {msg[:40]}", got.startswith(msg) and not c.dlg()["open"]
+                and c.ev("i => document.querySelector('#' + i.slice(0, 3)).getAttribute('aria-invalid')", fid) == "true", got)
+    c.check("invalid input sent nothing", not reqs(c, "POST", "/api/settings/network"))
+    c.shot("v6_net_field_error")
+    c.overflow_check("static address form with a field message")
+    for i, x in enumerate(("192.0.2.77", "255.255.255.0", "192.0.2.1", "")):
+        c.page.fill(f"#{('ipA', 'ipM', 'ipG', 'ipD')[i]}", x)
+    port = urllib.parse.urlsplit(c.run.base).port
+    new = f"http://192.0.2.77:{port}"
+    # the new address answers through the browser (the probe image and the page itself come from the mock)
+    is_new = lambda u: u.startswith(new + "/")
+    c.page.route(is_new, lambda route: route.fulfill(response=route.fetch(url=route.request.url.replace(new, c.run.base))))
+    c.tap("#ipSave")
+    ok = c.wait_dlg("Feste Adresse übernehmen?")
+    d = c.dlg()
+    c.check("confirmation names the new address", ok and new in d["body"] and d["yes"] == "Übernehmen", d["body"])
+    c.shot("v6_net_confirm")
+    c.dlg_yes()
+    ok = c.wait_dlg("Neue Adresse", 9000)
+    d = c.dlg()
+    q = reqs(c, "POST", "/api/settings/network")
+    c.check("POST /api/settings/network dhcp=0 with ip, mask, gateway, dns (empty); then the blocking notice 'Der Stick ist jetzt unter … erreichbar' with a link",
+            ok and q and q[-1] == {"dhcp": "0", "ip": "192.0.2.77", "mask": "255.255.255.0", "gateway": "192.0.2.1", "dns": ""}
+            and d["body"].startswith(f"Der Stick ist jetzt unter {new} erreichbar.") and c.ev("() => document.querySelector('#dBody a').getAttribute('href')") == new + "/"
+            and c.ev("() => document.querySelector('#dNo').hidden"), f"{q} {d['body']}")
+    c.shot("v6_net_moved")
+    st = c.mock.state()["network"]
+    c.check("the mock stores the static address", st["dhcp"] is False and st["ip"] == "192.0.2.77", st)
+    end = time.time() + 15
+    while time.time() < end and not c.page.url.startswith(new + "/"):
+        c.page.wait_for_timeout(200)
+    c.check("the page checks that the new address answers (image probe) and then moves there", c.page.url.startswith(new + "/"), c.page.url)
+    c.page.unroute(is_new)
+    # back to DHCP; the new name cannot be reached here: the notice stays with its link
+    c.start("two_users", wifi_count=1, net_dhcp=0)
+    to_sec(c, "#ipItem", "() => !document.querySelector('#ipItem').hidden")
+    vals = c.ev("() => [!document.querySelector('#ipForm').hidden, ...['ipA','ipM','ipG','ipD'].map(i => document.querySelector('#' + i).value)]")
+    c.check("stored static address: 'Fest' pressed, form with the stored values", vals[0] and vals[1] == c.mock.state()["network"]["ip"], vals)
+    c.tap('#ipSeg button[data-v="1"]')
+    ok = c.wait_dlg("Adresse automatisch beziehen?")
+    host = f"http://datadrive-mock.local:{port}"
+    c.check("'Automatisch (DHCP)': confirmation names name.local", ok and host in c.dlg()["body"], c.dlg()["body"])
+    is_name = lambda u: "datadrive-mock.local" in u
+    c.page.route(is_name, lambda route: route.abort("namenotresolved"))
+    c.dlg_yes()
+    ok = c.wait_dlg("Neue Adresse", 9000)
+    c.check("DHCP saved (dhcp=1): notice with name.local, 'Wird gesucht …', button 'Jetzt öffnen'", ok and reqs(c, "POST", "/api/settings/network")[-1] == {"dhcp": "1"}
+            and c.mock.state()["network"]["dhcp"] is True and host in c.dlg()["body"] and "Wird gesucht …" in c.dlg()["body"] and c.dlg()["yes"] == "Jetzt öffnen", c.dlg()["body"])
+    c.page.wait_for_timeout(5000)
+    c.check("not reachable (yet): the page stays, polling stopped, no 'not reachable' notice, the link is there", c.dlg()["open"] and not c.ui()["notice"]
+            and c.ev("() => location.hostname") == urllib.parse.urlsplit(c.run.base).hostname, c.ui()["notice"])
+    c.page.unroute(is_name)
+    c.no_console_errors(net=True)
+    # network name
+    c.start("two_users", wifi_count=1)
+    to_sec(c, "#hostItem", "() => !document.querySelector('#hostItem').hidden")
+    c.tap("#hostBtn")
+    ok = c.wait_dlg("Name im Netzwerk")
+    d = c.dlg()
+    c.check("'Ändern …': dialog with the current name, no certificate line while HTTPS is off", ok and d["fields"][0]["value"] == "datadrive-mock"
+            and d["fields"][0]["label"] == "Name (a–z, 0–9, Bindestrich)" and "Zertifikat" not in d["body"], d)
+    c.shot("v6_host_dialog")
+    c.overflow_check("network name dialog")
+    c.check("the name field takes at most 31 characters", c.ev("() => document.querySelector('#dF0').maxLength") == 31)
+    for bad in ("-werk", "werk-", "werk_statt", "wörk", "werk statt", ""):
+        c.fill_dlg(bad)
+        c.dlg_yes()
+        c.wait_derr()
+        c.check(f"name {bad!r}: rule shown", c.dlg()["err"] == "1 bis 31 Zeichen: a–z, 0–9 und Bindestrich, nicht am Anfang oder Ende." and c.dlg()["open"], c.dlg()["err"])
+    c.check("invalid names sent nothing", not reqs(c, "POST", "/api/settings/network"))
+    c.fill_dlg("Werkstatt-1")
+    c.dlg_yes()
+    ok = c.wait_dlg("Neue Adresse", 9000)
+    q = reqs(c, "POST", "/api/settings/network")
+    c.check("valid name (upper case allowed, sent lower case with dhcp=1); notice names werkstatt-1.local; opened by address: only 'OK', no search",
+            ok and q and q[-1] == {"dhcp": "1", "hostname": "werkstatt-1"} and f"http://werkstatt-1.local:{port}" in c.dlg()["body"]
+            and c.dlg()["yes"] == "OK" and "Wird gesucht" not in c.dlg()["body"], f"{q} {c.dlg()['body']}")
+    c.dlg_yes()
+    ok = c.wait_dlg_closed() and c.wait("() => document.querySelector('#hostVal').textContent === 'werkstatt-1.local'", None, 9000)
+    c.check("the page keeps working and shows the new name", ok and c.ui()["auth"] == "ok" and not c.ev("() => !!S.moved"), c.text("#hostVal"))
+    # HTTPS set up: a new name means a new certificate authority
+    c.mock.set(https=1)
+    c.wait("() => S.st.https === true", None, 9000)
+    c.tap("#hostBtn")
+    c.wait_dlg("Name im Netzwerk")
+    c.check("HTTPS on: the name dialog says in one line that the certificate must be installed again", "Danach muss das Zertifikat des Sticks auf jedem Gerät neu installiert werden." in c.dlg()["body"]
+            and c.ev("() => document.querySelector('#dInfo').dataset.h") == "https", c.dlg()["body"])
+    # the device renews the certificate for the next start (https_restart); the mock does not report that: rewritten in the browser
+    def restart_due(route):
+        try:
+            resp = route.fetch()
+            j = resp.json()
+            j["https_restart"] = True
+            route.fulfill(response=resp, json=j)
+        except Exception:
+            try:
+                route.abort()
+            except Exception:
+                pass
+    is_st = lambda u: url_path(u) == "/api/status"
+    c.page.route(is_st, restart_due)
+    c.fill_dlg("werkstatt-2")
+    c.dlg_yes()
+    c.wait_dlg("Neue Adresse", 9000)
+    c.dlg_yes()
+    ok = c.wait_dlg("Jetzt neu starten?", 9000)
+    c.check("after the change with HTTPS set up (https_restart): the restart is offered", ok and c.dlg()["no"] == "Später", c.dlg()["title"])
+    c.dlg_no()
+    c.wait_dlg_closed()
+    c.page.unroute(is_st)
+    how = c.ev("() => [...L.de.helpDoc].find(x => x[0] === 'wlan')[2]") + c.ev("() => [...L.de.helpDoc].find(x => x[0] === 'https')[2]")
+    c.check("help: fixed address, network name, recovery with the 10-s button (not the setup network), certificate after a new name",
+            "Feste Adresse" in how and "Name im Netzwerk" in how and "10 Sekunden" in how and "neue Zertifizierungsstelle" in how, how[:60])
+    c.tap("#b-net [data-i=ipX]")
+    pop = c.pop()
+    c.check("the address ⓘ carries the recovery hint (10-s button)", pop["open"] and "10 Sekunden" in pop["text"] and pop["link"] == "#!hilfe/wlan", pop)
+    c.page.keyboard.press("Escape")
+    c.no_console_errors(net=True)
+    # firmware without the network API: the plain values stay, no controls
+    c.reset("two_users", wifi_count=1)
+    c.open()
+    c.page.route(lambda u: url_path(u) == "/api/network", lambda route: route.fulfill(status=404, content_type="application/json", body='{"ok":false,"code":"NOT_FOUND"}'))
+    c.login(ADMIN)
+    to_sec(c, "#netHost", "() => S.wifi !== null")
+    c.page.wait_for_timeout(800)
+    c.check("no GET /api/network (older firmware): address and name as plain values, no choice, no 'Ändern …'", not vis(c, "#ipItem") and not vis(c, "#hostItem")
+            and vis(c, "#netHost") and c.text("#netHost").endswith(".local"))
+    # English
+    c.reset("two_users", wifi_count=1)
+    c.open(locale="en-GB")
+    c.login(ADMIN)
+    to_sec(c, "#ipItem", "() => !document.querySelector('#ipItem').hidden")
+    c.tap('#ipSeg button[data-v="0"]')
+    c.page.fill("#ipA", "192.0.2.0")
+    c.tap("#ipSave")
+    r = c.ev(JS_UNTRANSLATED)
+    c.check("English network items and field message, no German leftovers", c.text("#ipAe") == "That is the network or broadcast address — please choose another one."
+            and c.ev("() => [...document.querySelectorAll('#ipSeg button')].map(b => b.textContent)") == ["Automatic (DHCP)", "Fixed"] and not r["bad"], f"{c.text('#ipAe')} {r['bad']}")
+    c.no_console_errors()
+
+
+@test
+def t12d_signed_update(c: Ctx):
+    p = c.start("two_users", wifi_count=1)
+    to_sec(c, "#otaBtn")
+    p.set_input_files("#otaPick", str(c.run.f["fw"]))
+    c.wait_dlg("Gerätesoftware aktualisieren?")
+    c.check("unsigned updates allowed: no signature line in the dialog", "signierte" not in c.dlg()["body"], c.dlg()["body"])
+    c.dlg_no()
+    c.wait_dlg_closed()
+    c.mock.set(ota_signed=1)
+    c.wait("() => S.st.ota.signed_required === true", None, 9000)
+    ver = c.mock.state()["version"]
+    p.set_input_files("#otaPick", str(c.run.f["fw"]))
+    ok = c.wait_dlg("Gerätesoftware aktualisieren?")
+    c.check("signed updates required: value line 'Nur signierte Updates · Schlüssel 4d6f636b' in the dialog", ok and c.text("#otaSig") == "Nur signierte Updates · Schlüssel 4d6f636b", c.dlg()["body"])
+    c.shot("v6_ota_signed")
+    c.overflow_check("update dialog with signature line")
+    for sig, want in (("bad", "Die Signatur der Datei passt nicht zum Schlüssel dieses Laufwerks."), ("none", "Dieses Laufwerk nimmt nur signierte Updates an")):
+        c.mock.set(ota_sig=sig)
+        c.ev("() => { document.querySelector('#otaMsg').textContent = ''; }")
+        if not c.dlg()["open"]:
+            p.set_input_files("#otaPick", str(c.run.f["fw"]))
+            c.wait_dlg("Gerätesoftware aktualisieren?")
+        c.dlg_yes()
+        ok = c.wait("() => document.querySelector('#otaMsg').textContent !== ''", None, 15000)
+        c.check(f"422 {'BAD_SIGNATURE' if sig == 'bad' else 'UNSIGNED'}: own message under the button, no restart", ok and c.text("#otaMsg").startswith(want)
+                and c.mock.state()["version"] == ver and not c.ui()["notice"], c.text("#otaMsg"))
+    how = c.ev("() => [...L.de.helpDoc].find(x => x[0] === 'update')[2]")
+    c.check("help 'Update' explains signed updates", "Signierte Updates" in how, how[-100:])
+    c.ev("() => { pref.set('lang', 'en'); setLang('en'); }")
+    c.check("English texts of both refusals", c.ev("() => [errText({code: 'BAD_SIGNATURE'}, 'ota'), errText({code: 'UNSIGNED'}, 'ota'), t('otaSig', 'abcd1234')]")
+            == ["The file’s signature does not match this drive’s key. The current version stays active.",
+                "This drive only accepts signed updates — the file is not signed. The current version stays active.", "Signed updates only · key abcd1234"])
+    c.ev("() => { pref.set('lang', 'de'); setLang('de'); }")
     c.no_console_errors()
 
 

@@ -1,552 +1,500 @@
-# WiFi DataDrive
+<p align="center">
+  <img src="assets/logo.png" alt="WiFi DataDrive" width="128">
+</p>
 
-Firmware für den **LILYGO T-Dongle-S3 (LCD-Variante)**, die den Dongle in einen
-USB-Stick mit WLAN-Zugang verwandelt: Der Dongle steckt an einem USB-Gerät (PC, 3D-Drucker;
-Ziel: Bambu Lab X2D) und erscheint dort als normales USB-Laufwerk. Dateien werden per
-Browser über WLAN in einer eingebauten Dateiverwaltung hochgeladen, heruntergeladen,
-umbenannt, verschoben und gelöscht, ohne den Stick abzuziehen.
+<h1 align="center">WiFi DataDrive</h1>
 
-Seit Version 0.3.0 gibt es Benutzer mit Anmeldung und Ordner. Seit Version 0.4.0 kann das
-Laufwerk verschlüsselt werden (optional, Voreinstellung aus). Version 0.5.0 bringt das
-Netzlaufwerk (WebDAV), die Uhrzeit aus dem Netz, automatisches Sperren, fortsetzbare Uploads,
-Ordner als ZIP und HTTPS als Schalter (Voreinstellung aus).
+<p align="center">
+  <strong>WiFi DataDrive macht aus einem LILYGO T-Dongle-S3 einen USB-Stick mit WLAN.</strong><br>
+  Dateien kommen per Browser auf den Stick, während er im 3D-Drucker steckt.
+</p>
 
-Hardware: Gebaut und getestet nur mit dem **LILYGO T-Dongle-S3 in der Variante mit LCD**
-(ESP32-S3 rev v0.2, 16 MB Flash, kein PSRAM, microSD-Slot). Andere LILYGO-Modelle
-(T-Dongle-S3 Plus, Dual) sind **nicht getestet**.
+<p align="center">
+  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0%20in%20Arbeit-2563eb">
+  <img alt="Board" src="https://img.shields.io/badge/Board-LILYGO%20T--Dongle--S3-0f766e">
+  <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.6-6b7280">
+  <a href="LICENSE"><img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-16a34a"></a>
+  <img alt="Projekt" src="https://img.shields.io/badge/Projekt-privat%2C%20ohne%20Gew%C3%A4hr-f59e0b">
+</p>
 
-Das Projekt hieß bis Version 0.1.0 „WiFi PrintDrive“; der Ordner `firmware/printdrive`, der
-HTTP-Header `X-PrintDrive` und das Code-Präfix `pd_` behalten den alten Namen.
+<p align="center">
+  <a href="https://wliffers.github.io/wifi-datadrive/"><img alt="Im Browser flashen" src="https://img.shields.io/badge/Im%20Browser-flashen-0f766e?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTEzLjUgMiA0LjUgMTMuNWg2TDkuNSAyMmw5LTExLjVoLTZ6Ii8%2BPC9zdmc%2B"></a>
+  <a href="../../releases/latest"><img alt="Download (neueste Version)" src="https://img.shields.io/badge/Firmware-Download-2563eb?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTEwLjggM2gyLjR2OS4xbDMuMy0zLjMgMS43IDEuNy02LjIgNi4yLTYuMi02LjIgMS43LTEuNyAzLjMgMy4zeiIvPjxyZWN0IHg9IjQiIHk9IjE4LjUiIHdpZHRoPSIxNiIgaGVpZ2h0PSIyLjUiLz48L3N2Zz4%3D"></a>
+  <a href="https://www.linkedin.com/in/willi-liffers-71660b319/"><img alt="LinkedIn von Willi Liffers" src="https://img.shields.io/badge/LinkedIn-Willi%20Liffers-0a66c2?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2ZmZiI%2BPGNpcmNsZSBjeD0iNS41IiBjeT0iNSIgcj0iMi4zIi8%2BPHJlY3QgeD0iMy40IiB5PSI4LjgiIHdpZHRoPSI0LjIiIGhlaWdodD0iMTIuNyIvPjxwYXRoIGQ9Ik0xMCA4LjhoNHYxLjljLjYtMS4xIDIuMS0yLjIgNC4yLTIuMiA0LjIgMCA1IDIuNyA1IDYuM3Y2LjdoLTQuMnYtNS45YzAtMS40IDAtMy4yLTItMy4ycy0yLjMgMS41LTIuMyAzLjF2NkgxMHoiLz48L3N2Zz4%3D"></a>
+</p>
 
-Grundprinzip: Das FAT-Dateisystem – auf einer eingesteckten **microSD-Karte**, sonst im
-internen 16-MB-Flash – hat zu jedem Zeitpunkt genau **einen** Besitzer – entweder das
-USB-Gerät (Drucker/PC, Anzeige „USB-Laufwerk aktiv“) oder die Firmware (Weboberfläche,
-Anzeige „Dateiverwaltung aktiv“). Umgeschaltet wird nur kontrolliert
-(Details: [docs/02_architektur.md](docs/02_architektur.md)).
+<p align="center">
+  <a href="#funktionen">Funktionen</a> ·
+  <a href="#installation">Installation</a> ·
+  <a href="#erste-einrichtung">Einrichtung</a> ·
+  <a href="#am-drucker-benutzen">Am Drucker</a> ·
+  <a href="#verschlüsselung-einrichten-und-am-drucker-benutzen">Verschlüsselung</a> ·
+  <a href="#netzlaufwerk-und-https">Netzlaufwerk &amp; HTTPS</a> ·
+  <a href="#geprüft-und-nicht-geprüft">Prüfstand</a> ·
+  <a href="#grenzen">Grenzen</a> ·
+  <a href="#haftung-und-lizenz">Haftung &amp; Lizenz</a> ·
+  <a href="README.en.md">English</a>
+</p>
 
-## Stand (2026-11-12, Firmware 0.5.0)
+---
 
-Jede Zeile trägt eine Markierung. **verifiziert** heißt: am echten Gerät geprüft, mit
-Ergebnis in [docs/05_testprotokoll.md](docs/05_testprotokoll.md). **noch nicht geprüft**
-heißt: gebaut oder im Quelltext vorhanden, aber nicht am Gerät oder nicht in dieser Form
-getestet.
+<p align="center">
+  <img src="docs/images/datadrive-ablauf.gif" alt="Ablauf in 10 Sekunden am Handy: Das verschlüsselte Laufwerk ist gesperrt, nach dem Entsperren erscheint die Dateiliste, das Menü Hochladen öffnet sich, zum Schluss die Einstellungen mit dem Bereich Sicherheit" width="320">
+</p>
+<p align="center"><sub>Am Handy: entsperren, Dateien ansehen, hochladen, Einstellungen. Aufgenommen am Testserver mit Beispieldateien.</sub></p>
 
-| Bereich | Stand |
-|---|---|
-| Hardware-Bestandsaufnahme (Chip, Flash, USB-ID) | **verifiziert** per esptool am echten Gerät |
-| Smoke-Test (LCD, LED, Taste, Flash, Setup-AP), WLAN STA | **verifiziert** |
-| USB-Laufwerk unter Windows 11 (Kopieren, Auswerfen, Re-Plug) | **verifiziert** |
-| Flashen per 1200-Baud-Touch, Dateien überleben Updates | **verifiziert**, Update-Schleife vollautomatisch |
-| Anmeldung mit Benutzern und Rollen (`admin`, `user`), Standardkonto mit Passwortwechsel, vertraute Geräte, Anmeldesperre (0.3.0) | **verifiziert**: API-Test 182/182 am Gerät; Weboberfläche vom Besitzer im Browser geprüft |
-| Ordner, Umbenennen, Verschieben, Kopieren, Löschen; Mehrfachauswahl und Zwischenablage (0.3.0) | **verifiziert**: API-Test 182/182; Weboberfläche vom Besitzer geprüft |
-| Mehrere WLANs, bis 5 Netze (0.3.0) | **verifiziert**: API-Test 182/182 |
-| Taste: Klick zeigt QR-Code, Doppelklick wechselt Betriebsart, Wartungsmodus, Benutzer-Reset (0.3.0) | **noch nicht geprüft** (Bedienung am Gerät nicht als eigener Test protokolliert) |
-| Weboberfläche auf Deutsch und Englisch, App-Icon für den Home-Bildschirm (0.3.0) | Sprachumschaltung vom Besitzer im Browser geprüft; App-Icon am Handy **noch nicht geprüft** |
-| „Senden an“ für Windows (`tools/sendto`) | **noch nicht geprüft** |
-| iPhone-Kurzbefehl (`docs/10_senden.md`) | **noch nicht geprüft** auf einem echten iPhone |
-| Firmware-Update über die Weboberfläche (0.3.0) | **noch nicht geprüft**; alle Versionen bisher per USB aufgespielt |
-| Verschlüsselung des Laufwerks, AES-256-XTS (0.4.0) | **verifiziert**: API-Lauf am Gerät 334/334 (mit `--crypt-test`), Messungen auf 64-GB-microSD, siehe unten |
-| WLAN-Suche beim Hinzufügen eines Netzes (0.4.0) | **verifiziert** bei bestehender WLAN-Verbindung (5 Netze in 2,9 s); im Einrichtungsmodus **noch nicht geprüft** |
-| Animierte Anzeige „LIO“ auf dem Display (0.4.0) | Besitzer: Aussehen gut; kein Messprotokoll |
-| HTTPS (0.4.0) | in 0.4.0 im Build abgeschaltet, weil Uploads mit TLS auf diesem Board scheiterten; in 0.5.0 umgebaut, siehe nächste Zeilen |
-| API-Test Version 5 am Gerät (0.5.0) | **verifiziert**: 354/354, 6 Prüfungen übersprungen (siehe [docs/05_testprotokoll.md](docs/05_testprotokoll.md) Phase 9) |
-| Netzlaufwerk (WebDAV) unter `http://<Stick>/dav/` (0.5.0) | am Gerät nur per API-Test geprüft (Liste, Hochladen, Verschieben, Löschen, Anmeldung nötig, abgewiesen bei gesperrtem Laufwerk); mit echten Programmen (Windows-Explorer, Finder, Handy-Apps) **noch nicht geprüft** |
-| Uhrzeit aus dem Netz (NTP) mit Zeitzone (0.5.0) | **verifiziert**: Uhr nach dem Start gestellt |
-| Automatisches Sperren des verschlüsselten Laufwerks (0.5.0) | Einstellungen **verifiziert** per API-Test; das Sperren nach Ablauf der Zeit selbst **noch nicht geprüft** |
-| Display folgt der Sprache der Weboberfläche (0.5.0) | Einstellung **verifiziert** per API-Test; Aussehen der englischen Texte auf dem LCD **noch nicht geprüft** |
-| Einrichtungsseite öffnet sich von selbst (Captive Portal, 0.5.0) | gebaut, mit einem echten Handy **noch nicht geprüft** |
-| Abgebrochene Uploads fortsetzen (0.5.0) | **verifiziert** per API-Test (Abbruch, Fortsetzen, falscher Stand) |
-| Ordner als ZIP herunterladen (0.5.0) | **verifiziert** per API-Test (verschachtelte Ordner, Umlaute, Inhalt und Prüfsummen) |
-| Ganze Ordner hochladen in der Weboberfläche (0.5.0) | nur gegen den Testserver geprüft; am Gerät **noch nicht geprüft** |
-| HTTPS (0.5.0, Schalter in den Einstellungen, Voreinstellung aus) | **verifiziert** am Gerät mit entsperrtem, verschlüsseltem Laufwerk: Upload 30 MB, Download, Dateiliste, Seitenaufruf (Messwerte unten). **Noch nicht geprüft:** iPhone mit installiertem Zertifikat, Home-Bildschirm-Symbol und Kurzbefehl über https, WebDAV über https, Dauerbetrieb |
-| Browser-Test der Weboberfläche für 0.5.0 (`tools/ui_test.py`) | **noch nicht geprüft** |
-| Unabhängige Sicherheitsprüfung der Neuerungen von 0.5.0 | läuft; Ergebnis steht noch aus |
-| LCD-Statusbild | **verifiziert** (Foto), außer Nuancen der LED-Farben |
-| microSD (Phase 5) | **verifiziert** (Grundfunktion, 64-GB-Karte FAT32) |
-| Verschlüsseltes Laufwerk am Bambu X2D (Druck von einem entsperrten, verschlüsselten Stick) | **noch nicht geprüft** |
-| Verschlüsselung: Stromausfall während Einrichtung oder Passwortwechsel | **noch nicht geprüft** |
-| Verschlüsselung auf dem internen Flash (ohne Karte) | **noch nicht geprüft** |
-| Weboberfläche am echten Handy (iOS Safari), echtes Drag & Drop, Abläufe am echten Gerät | **nicht getestet** (Browser-Tests laufen am Testserver mit Chromium) |
-| Nur-Lese-Modus des USB-Geräts | implementiert, **nicht getestet** |
-| Test am Bambu Lab X2D (ohne Verschlüsselung, Version 0.2.0 und 0.3.0) | **Grundkompatibilität** laut Rückmeldung des Besitzers: Laufwerk erkannt, per Web hochgeladene `.gcode.3mf` angezeigt und gedruckt (Standard-Build MSC + CDC, microSD 64 GB FAT32). Keine Messung. Offen: lange Drucke, Nur-Lese-Modus, Übernahme während eines Drucks, Stromaufnahme, interner Flash, andere Druckermodelle |
+Der Dongle steckt am Drucker oder PC und erscheint dort als normales USB-Laufwerk. Über WLAN öffnest
+du im Browser eine eingebaute Dateiverwaltung. Dort lädst du Dateien hoch und herunter, benennst sie um,
+verschiebst und löschst sie, ohne den Stick abzuziehen. Gebaut ist das Projekt für den Bambu Lab X2D;
+der hat den Stick erkannt und davon gedruckt (ohne Verschlüsselung).
 
-Gemessene Raten:
+Die Weboberfläche gibt es auf Deutsch und Englisch, am Handy wie am PC. Sie braucht kein Internet und
+keine App.
 
-| Medium | USB schreiben | USB lesen | Web-Upload |
-|---|---|---|---|
-| interner Flash (FAT12, 4-KiB-Cluster) | 47 KB/s | 753 KB/s | 46 KB/s |
-| microSD 64 GB (FAT32) | 832 KB/s | – | 1335–1578 KB/s |
-| microSD 64 GB, **verschlüsselt** (0.4.0) | 820 KB/s | 659 KB/s | 1,0 MB/s |
+> **Privates Projekt.** WiFi DataDrive ist ein Freizeitprojekt und steht in keiner Verbindung zu LILYGO,
+> Espressif oder Bambu Lab. Die Software wird ohne Gewährleistung und ohne Haftung bereitgestellt.
+> Einzelheiten stehen im [Haftungsausschluss](HAFTUNGSAUSSCHLUSS.md).
 
-Bei der verschlüsselten Messung fehlt ein Vergleich mit unverschlüsselt unter denselben
-Bedingungen (noch nicht geprüft). Für die Einrichtung der Verschlüsselung auf der
-microSD-Karte misst das Gerät 51 s (64 GB).
+> **Stand 2026-11-13.** Der Quelltext trägt die Version 0.6.0. Sie ist in Arbeit: gebaut und gegen den
+> Testserver geprüft, aber noch nicht am Gerät gelaufen. Am Gerät geprüft ist zuletzt 0.5.0. Ein Release
+> ist noch nicht veröffentlicht. Was genau geprüft ist, steht unter
+> [Geprüft und nicht geprüft](#geprüft-und-nicht-geprüft).
 
-HTTPS (0.5.0), gemessen am Gerät, Laufwerk verschlüsselt und entsperrt (welches
-Speichermedium dabei steckte, ist nicht protokolliert):
+## Funktionen
 
-| Messung | Wert |
-|---|---|
-| Upload 30 MB über HTTPS | 864 kB/s; Datei nach dem Herunterladen bitgleich |
-| Download über HTTPS | 389 kB/s (über HTTP: 487 kB/s) |
-| Freier Arbeitsspeicher (Heap) im Leerlauf | 66 KiB |
-| Tiefster Wert während des Uploads | 22 KiB |
-| Fehlgriffe beim TLS-Puffer | keine |
+**Ein Stick, zwei Wege.**
+Am Drucker ist der Dongle ein gewöhnliches USB-Laufwerk. Über WLAN verwaltest du dieselben Dateien im
+Browser.
 
-Ohne Karte arbeitet der Dongle mit dem internen Flash (ca. 11 MB, eine 5-MB-Datei braucht
-ca. 2 min). Empfohlen wird die microSD-Karte (FAT32, groß, schnell). Karte
-nur im ausgesteckten Zustand wechseln. Ergebnisse in [docs/05_testprotokoll.md](docs/05_testprotokoll.md),
-Befunde und offene Risiken in [docs/06_risiken.md](docs/06_risiken.md).
+**Immer nur einer greift zu.**
+Das Laufwerk gehört zu jedem Zeitpunkt entweder dem USB-Gerät oder der Dateiverwaltung im Browser. Der
+Stick schaltet kontrolliert um und fragt nach, wenn der Drucker das Laufwerk noch benutzt.
 
-## Funktionen im Überblick
+**Dateien und Ordner.**
+Hochladen per Knopf oder Drag & Drop, beliebige Dateitypen bis 4 GB pro Datei. Ordner anlegen,
+umbenennen, verschieben, kopieren und löschen, auch mehrere Dateien auf einmal. Ordner lädst du als ZIP
+herunter. Ein abgebrochener Upload geht an der Abbruchstelle weiter.
 
-| Funktion | Version | Kurz erklärt | Anleitung |
-|---|---|---|---|
-| Dateien hochladen, laden, umbenennen, löschen | 0.2.0 | Im Browser, auch per Drag & Drop, beliebige Dateitypen | Schnellstart, Abschnitt 4 |
-| Anmeldung, Benutzer und Rollen | 0.3.0 | `admin` darf alles, `user` verwaltet Dateien und wechselt die Betriebsart | [docs/09_api_v3.md](docs/09_api_v3.md) Abschnitt 2 |
-| Ordner | 0.3.0 | Anlegen, öffnen, umbenennen, verschieben, kopieren, löschen; mehrere Dateien markieren | Weboberfläche |
-| Mehrere WLANs | 0.3.0 | Bis zu 5 gespeicherte Netze; das stärkste bekannte wird genommen | Weboberfläche, Einstellungen → Netzwerk |
-| Taste mit QR-Code | 0.3.0 | Klick zeigt die Adresse als QR-Code, Doppelklick wechselt die Betriebsart | Abschnitt „Bedienung an der Taste“ |
-| App-Icon am Handy | 0.3.0 | Adresse im Browser als Verknüpfung auf den Home-Bildschirm legen | [docs/10_senden.md](docs/10_senden.md) |
-| Senden vom PC (Windows) | 0.3.0 | Rechtsklick → „Senden an“ → WiFi DataDrive | [tools/sendto/README.md](tools/sendto/README.md) |
-| Senden vom iPhone | 0.3.0 | Kurzbefehl über das Teilen-Menü (von Hand einzurichten) | [docs/10_senden.md](docs/10_senden.md) |
-| Firmware-Update im Browser | 0.3.0 | Nur `admin`; Datei hochladen, Rückkehr zur alten Version bei Fehlstart | Einstellungen → System |
-| Deutsch und Englisch | 0.3.0 | Weboberfläche folgt der Browsersprache, umstellbar | Einstellungen |
-| Verschlüsselung des Laufwerks | 0.4.0 | AES-256-XTS, optional; nach jedem Einstecken mit Passwort entsperren | Abschnitt „Verschlüsselung einrichten und am Drucker benutzen“ |
-| WLAN-Suche | 0.4.0 | Beim Hinzufügen eines Netzes die Netze in Reichweite auswählen | Einstellungen → Netzwerk |
-| Animierte Anzeige „LIO“ | 0.4.0 | Zeigt den Zustand auf dem Display (bereit, Upload, gesperrt, Fehler …) | – |
-| Netzlaufwerk (WebDAV) | 0.5.0 | Stick im Explorer oder in einer Datei-App öffnen, ohne Browser; nur solange die Dateiverwaltung aktiv ist | Abschnitt „Als Netzlaufwerk verbinden“ |
-| Uhrzeit aus dem Netz | 0.5.0 | Dateien bekommen ein richtiges Datum; Zeitzone wählbar (Voreinstellung Deutschland mit Sommerzeit) | Einstellungen → System |
-| Automatisch sperren | 0.5.0 | Verschlüsseltes Laufwerk sperrt sich nach einer Zeit ohne Zugriff und/oder beim Trennen des USB-Geräts; Voreinstellung aus | Abschnitt „Automatisch sperren“ |
-| Display-Sprache | 0.5.0 | Das Display folgt der Sprache der Weboberfläche (Deutsch/Englisch) | Einstellungen → Allgemein |
-| Einrichtungsseite öffnet sich von selbst | 0.5.0 | Beim Verbinden mit dem Einrichtungs-WLAN des Sticks springt die Seite auf | Schnellstart, Abschnitt 2 |
-| Upload fortsetzen | 0.5.0 | Ein abgebrochener Upload geht ab der Abbruchstelle weiter | Weboberfläche: dieselbe Datei noch einmal wählen |
-| Ordner als ZIP, ganze Ordner hochladen | 0.5.0 | ZIP ohne Kompression, höchstens 4096 Dateien; Ordner hochladen nicht am iPhone | Weboberfläche |
-| HTTPS | 0.5.0 | Verschlüsselte Verbindung, Schalter in den Einstellungen, Voreinstellung aus | Abschnitt „HTTPS einschalten“ |
+**Anmeldung mit Rollen.**
+Bis zu 8 Benutzer mit den Rollen `admin` und `user`. Geräte, denen du vertraust, bleiben angemeldet.
 
-## Schnellstart
+**Verschlüsselung, wenn du willst.**
+AES-256-XTS auf der Speicherkarte, in der Voreinstellung aus. Nach jedem Einstecken entsperrst du das
+Laufwerk im Browser. Auf Wunsch sperrt es sich nach einer Zeit ohne Zugriff selbst; ab 0.6.0 zeigt die
+Oberfläche die Restzeit an.
 
-Voraussetzung: ESP-IDF v5.5.6 unter `%USERPROFILE%\esp\esp-idf-v5.5.6`
-(Installation siehe [docs/04_build_und_flash.md](docs/04_build_und_flash.md)).
-Alle Befehle in PowerShell im Projektordner.
+**Mehrere WLANs.**
+Bis zu 5 Netze; der Stick verbindet sich mit dem stärksten. Beim Hinzufügen zeigt er die Netze in
+Reichweite. Ab 0.6.0 gibt es eine feste IP-Adresse und einen eigenen Namen im Netzwerk (`name.local`).
 
-**0. Werks-Firmware** – Ein Vollbackup per `tools\backup_flash.ps1` war über
-USB-Serial/JTAG unzuverlässig. Zum Wiederherstellen liegt das offizielle LILYGO-Abbild
-`backup\T-Dongle-S3_factory_screen_251218.bin` bereit (SHA256 in `backup\SHA256SUMS.txt`,
-Befehl in [docs/04_build_und_flash.md](docs/04_build_und_flash.md) Abschnitt 5).
+**Netzlaufwerk und HTTPS.**
+Der Stick ist zusätzlich als Netzlaufwerk (WebDAV) erreichbar. Eine verschlüsselte Verbindung (HTTPS)
+lässt sich einschalten.
 
-**1. Smoke-Test bauen und flashen** (Werks-Firmware oder Smoke-Test läuft, Port COM4)
+**Uhrzeit aus dem Netz.**
+Dateien bekommen ein richtiges Datum. Die Zeitzone ist wählbar.
 
-```powershell
-.\tools\idf.ps1 smoke_test build
-.\tools\idf.ps1 smoke_test -p COM4 flash monitor
+**Display und Taste.**
+Das LCD zeigt Adresse, Zustand und Speicher, dazu das Maskottchen LIO. Ein Klick auf die Taste zeigt
+die Adresse als QR-Code.
+
+**Updates im Browser.**
+Neue Firmware spielst du über die Weboberfläche ein. Startet sie nicht sauber, kehrt der Stick zur
+bisherigen Version zurück. Ab 0.6.0 kann die Firmware so gebaut werden, dass sie nur signierte Updates
+annimmt.
+
+**Hilfe im Gerät.**
+Die i-Symbole und die Seite „Hilfe & Anleitungen“ erklären jede Einstellung, auch ohne Internet.
+
+<p align="center">
+  <img src="docs/images/desktop-dateien.png" alt="Weboberfläche am PC: oben die Umschaltung zwischen Dateiverwaltung und USB-Gerät mit Speicherbelegung, darunter die Karte zur Verschlüsselung und die Liste Meine Dateien mit Ordnern und Druckdateien" width="800">
+</p>
+
+<p align="center">
+  <img src="docs/images/lio-zustaende.gif" alt="Das Maskottchen LIO in neun Zuständen, jeweils mit der Farbe der Statuszeile des Displays" width="640">
+</p>
+<p align="center"><sub>LIO zeigt auf dem Display den Zustand: bereit, Upload, USB-Gerät liest, kopieren, entsperrt,
+WLAN verbinden, kein WLAN, gesperrt, Fehler. Vorschau aus den Animationsdaten, kein Foto. LIO ist das
+Maskottchen des Autors und steht nicht unter der MIT-Lizenz, siehe <a href="LICENSE-LIO.md">LICENSE-LIO.md</a>.</sub></p>
+
+## Was du brauchst
+
+- **LILYGO T-Dongle-S3 mit LCD** (ESP32-S3, 16 MB Flash, microSD-Slot, eine Taste). Nur diese Variante
+  ist gebaut und getestet. T-Dongle-S3 Plus und Dual sind nicht getestet.
+- **microSD-Karte**, FAT32 empfohlen. Getestet ist eine 64-GB-Karte. Ohne Karte nutzt der Stick seinen
+  internen Flash: etwa 11 MB, Schreiben etwa 46 KB/s.
+- **Ein WLAN mit 2,4 GHz.** Der ESP32-S3 kann kein 5 GHz.
+- **Chrome oder Edge** am PC oder Mac, wenn du im Browser flashen willst.
+
+## Installation
+
+**Voraussetzung:** Chrome oder Edge am PC oder Mac und ein USB-A-Anschluss für den Dongle.
+
+1. Öffne den [Browser-Flasher](https://wliffers.github.io/wifi-datadrive/).
+2. Halte die Taste am Dongle gedrückt, stecke ihn ein und lass die Taste nach etwa 2 Sekunden los. Der
+   Dongle ist jetzt im Download-Modus.
+3. Klicke auf **Installieren** und wähle den Anschluss des Dongles. Bei der ersten Installation
+   beantwortest du die Frage „Erase device“ mit Ja.
+4. Zieh den Dongle nach dem Flashen einmal ab und steck ihn wieder ein.
+
+Das Gesamtabbild setzt Benutzer, gespeicherte WLANs und Einstellungen zurück. Die microSD-Karte wird
+dabei nicht beschrieben. Die Flasher-Seite ist mit einem echten Gerät **noch nicht geprüft**, und
+solange kein Release veröffentlicht ist, gibt es dort nichts zu installieren.
+
+Ohne Browser geht es mit esptool:
+`python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin`
+
+<details>
+<summary>Selbst bauen mit ESP-IDF</summary>
+
+Du brauchst **ESP-IDF 5.5.6** (genau diese Version; die Komponenten sind in
+`firmware/printdrive/dependencies.lock` festgelegt).
+
+```sh
+idf.py -C firmware/printdrive build
+idf.py -C firmware/printdrive -p PORT flash
 ```
 
-Erwartet: Farbbalken rot/grün/blau/weiß auf dem LCD, im Log
-`SMOKE: flash size 16777216 bytes`. Monitor beenden mit `Ctrl+]`.
-
-**2. WLAN-Zugangsdaten (optional)**
-
-```powershell
-copy firmware\pd_secrets.h.example firmware\pd_secrets.h   # dann SSID/Passwort eintragen
-```
-
-Ohne diese Datei startet der Dongle ein Einrichtungs-WLAN `DataDrive-XXXX`
-(Passwort steht auf dem LCD), WLAN wird dann über die Weboberfläche gesetzt
-(Einstellungen → Netzwerk).
-
-Seit 0.5.0 soll sich die Einrichtungsseite beim Verbinden von selbst öffnen (wie bei einem
-Hotel-WLAN). Das ist gebaut, mit einem echten Handy aber **noch nicht geprüft**. Öffnet sie
-sich nicht, im Browser `http://192.168.4.1` eingeben. Im Anmeldefenster des Handys klappt nur
-die WLAN-Einrichtung, kein Hoch- oder Herunterladen. Danach das Fenster schließen; am iPhone
-„Ohne Internet verwenden“ wählen.
-
-**3. Hauptfirmware bauen und flashen**
+Unter Windows laden die Skripte in `tools/` die ESP-IDF-Umgebung selbst:
 
 ```powershell
 .\tools\flash.ps1 -Project printdrive -Build -Monitor
 ```
 
-**Immer nur einen Build gleichzeitig laufen lassen.** Mehrere Builds parallel haben den PC
-überlastet (siehe [docs/04_build_und_flash.md](docs/04_build_und_flash.md) Abschnitt 4).
+`flash.ps1` findet den Anschluss und schickt einen laufenden Stick per Software in den Download-Modus.
+Klappt das nicht, halte beim Einstecken die Taste und zieh den Dongle nach dem Flashen einmal ab. Lass
+immer nur einen Build gleichzeitig laufen.
 
-`flash.ps1` findet den Port selbst und schaltet einen laufenden `printdrive` per
-1200-Baud-Touch in den Download-Modus. Klappt das nicht: BOOT-Taste gedrückt halten,
-Dongle einstecken, loslassen, Befehl wiederholen – danach einmal aus- und einstecken,
-sonst bleibt der Dongle im Download-Modus.
+Eigene WLAN-Zugangsdaten kannst du fest einbauen: `firmware/pd_secrets.h.example` nach
+`firmware/pd_secrets.h` kopieren (die Datei ist git-ignoriert). So gebaute Dateien gibst du nicht weiter.
 
-Danach genügt für jedes Software-Update `.\tools\flash.ps1 -Project printdrive -Build`
-(1200-Baud-Touch → Flashen → Start, ohne Handgriff am Dongle). Die Weboberfläche
-(`main/web/index.html`) wird dabei automatisch gzip-komprimiert eingebettet.
-Ab 0.3.0 kann dasselbe Update auch über die Weboberfläche kommen (noch nicht geprüft).
+Installation von ESP-IDF, Wiederherstellen der Werks-Firmware und alle Optionen:
+[docs/04_build_und_flash.md](docs/04_build_und_flash.md).
+</details>
 
-**4. Benutzen**
+## Erste Einrichtung
 
-- Optional microSD-Karte einlegen (nur bei ausgestecktem Dongle). Ohne Karte wird der
-  interne Flash genutzt. exFAT-Karten (meist > 32 GB) einmal im Web auf FAT32 formatieren
-  (Einstellungen → Gefahrenbereich).
-- Am PC/Drucker einstecken → Laufwerk erscheint (LCD: `USB`).
-- Im Browser `http://datadrive.local` oder die IP vom LCD öffnen. (Ist HTTPS eingeschaltet,
-  leitet der Stick auf `https://` um, siehe „HTTPS einschalten“.)
-- **Erste Anmeldung:** Benutzer `admin`, Passwort `admin`. Die Oberfläche verlangt sofort
-  ein neues Passwort; `admin` ist dabei nicht erlaubt. Ohne Passwortwechsel ist nichts
-  anderes bedienbar.
-- Im Bereich „Meine Dateien“ Ordner anlegen und Dateien hochladen („Hochladen“ oder
-  Drag & Drop, beliebige Dateitypen). Ist das USB-Laufwerk aktiv, aktiviert die
-  Weboberfläche zuerst die Dateiverwaltung (ggf. mit Rückfrage), speichert die Dateien und
-  stellt das USB-Laufwerk danach wieder bereit.
-- Weitere Benutzer legt `admin` im Bereich Benutzer der Weboberfläche an. Rolle `user` darf
-  Dateien verwalten und die Betriebsart wechseln, aber keine Einstellungen, WLAN oder
-  Benutzer. Ein Gerät kann sich als „vertrautes Gerät“ merken lassen (höchstens 4 je Benutzer).
-- Von Hand umschalten: „Dateiverwaltung aktivieren“ bzw. „USB-Laufwerk bereitstellen“ in
-  der Statusleiste, oder BOOT-Taste kurz drücken (Doppelklick, siehe unten).
-- Passwort vergessen (Anmeldung): BOOT-Taste 10 Sekunden halten. Die Benutzer werden auf
-  `admin` / `admin` zurückgesetzt; Dateien und WLAN bleiben, das Laufwerks-Passwort (siehe
-  unten) wird nicht geändert.
-- **Uhrzeit (seit 0.5.0):** Im Heim-WLAN mit Internet stellt der Stick seine Uhr selbst
-  (NTP); Zeitzone unter Einstellungen → System, Voreinstellung Deutschland mit Sommerzeit.
-  Ohne Internet stellt der Browser die Uhr nach dem Anmelden. Nach einem Stromausfall ist die
-  Uhr unbekannt, bis das Netz wieder da ist; Dateien, die in dieser Zeit geschrieben werden,
-  haben kein Datum.
-- **Abgebrochener Upload (seit 0.5.0):** Dieselbe Datei noch einmal auswählen, dann geht es an
-  der Abbruchstelle weiter. Es gibt nur einen angefangenen Upload. Er wird verworfen, sobald
-  etwas anderes hochgeladen, das Laufwerk dem USB-Gerät gegeben, gesperrt oder der Stick neu
-  gestartet wird.
-- **Ordner als ZIP (seit 0.5.0):** im Menü eines Ordners „Als ZIP herunterladen“. Das ZIP ist
-  nicht komprimiert und darf höchstens 4096 Dateien enthalten. Nur möglich, solange die
-  Dateiverwaltung aktiv ist. Ganze Ordner hochladen geht über „Ordner hochladen“ (nicht am
-  iPhone, dort gibt es keine Ordnerauswahl; am Gerät **noch nicht geprüft**).
+1. Ohne gespeichertes WLAN öffnet der Stick ein eigenes WLAN `DataDrive-XXXX`. Das Passwort steht auf
+   dem Display. Verbinde dein Handy damit.
+2. Die Einrichtungsseite soll sich von selbst öffnen (mit einem echten Handy **noch nicht geprüft**).
+   Sonst gib im Browser `http://192.168.4.1` ein. Im Anmeldefenster des Handys klappt nur die
+   WLAN-Einrichtung. Für Dateien schließt du es (iPhone: „Ohne Internet verwenden“) und nimmst den Browser.
+3. Melde dich mit `admin` / `admin` an. Die Oberfläche verlangt sofort ein neues Passwort; vorher ist
+   nichts anderes bedienbar.
+4. Füge unter **Einstellungen › WLAN** dein WLAN hinzu. Danach erreichst du den Stick unter
+   `http://datadrive.local` oder unter der Adresse auf dem Display.
 
-**Bedienung an der Taste** (laut Quelltext, am Gerät noch nicht geprüft):
+**Adresse vergessen?** Ein Klick auf die Taste zeigt sie 20 Sekunden lang als QR-Code. Halte das Handy
+davor und öffne den Link.
 
-| Bedienung | Wirkung |
-|---|---|
-| einmal kurz drücken | QR-Code mit der Adresse für 20 Sekunden; nochmal drücken blendet ihn aus |
-| zweimal schnell drücken | zwischen USB-Laufwerk und Dateiverwaltung wechseln; ist das USB-Gerät noch angeschlossen, zweiter Doppelklick innerhalb von 4 Sekunden |
-| 5 bis 10 Sekunden halten, dann loslassen | Wartungsmodus (Download-Modus zum Flashen) |
-| 10 Sekunden halten | Benutzer auf `admin` / `admin` zurücksetzen |
+**Passwort vergessen?** Halte die Taste 10 Sekunden. Die Benutzer stehen dann wieder auf `admin` /
+`admin`, ab 0.6.0 auch die Netzwerkeinstellungen. Deine Dateien bleiben erhalten, und ein verschlüsseltes
+Laufwerk bleibt zu.
 
-**5. API-Tests (optional, verändern den Laufwerksinhalt)**
+Die Bedienung an der Taste folgt dem Quelltext und ist am Gerät **noch nicht geprüft**. Alle
+Tastenfunktionen stehen in [docs/09_api_v3.md](docs/09_api_v3.md) Abschnitt 9.
 
-```powershell
-python tools\api_test.py 192.168.2.152 --user admin --password <Passwort> --drive E:
-```
+## Am Drucker benutzen
 
-Nur die Prüfungen von Version 5 (0.5.0): zusätzlich `--only v5`. `api_test.py` baut seine
-Adressen laut Quelltext mit `http://`. Für den Test HTTPS ausgeschaltet lassen; ob er bei
-eingeschaltetem HTTPS über die Umleitung läuft, ist noch nicht geprüft.
+Das Laufwerk hat immer genau einen Besitzer: das USB-Gerät (Drucker oder PC) oder die Dateiverwaltung im
+Browser. Solange du im Browser arbeitest, sieht der Drucker kein Laufwerk; gibst du es zurück, sieht er
+die neuen Dateien.
 
-Die Tests legen Testdateien an und löschen sie wieder. Mit `--crypt-test` werden zusätzlich
-Verschlüsselung und Laufwerks-Passwort geprüft; das **löscht das ganze Laufwerk** und braucht
-`--drive-password` sowie `--i-know-this-erases-the-drive`. Die Optionen stehen in
-[docs/04_build_und_flash.md](docs/04_build_und_flash.md) Abschnitt 10.
+1. Steck den Stick in den USB-Anschluss des Druckers. Oben in der Oberfläche ist **USB-Gerät** gewählt.
+2. Lade im Browser deine geslicte Datei hoch, zum Beispiel eine `.gcode.3mf`. Die Oberfläche holt sich
+   das Laufwerk dafür, fragt nach, wenn der Drucker es noch benutzt, und gibt es nach dem Hochladen zurück.
+3. Wähle die Datei am Drucker und starte den Druck.
 
-**6. Weboberfläche ohne Hardware entwickeln (optional)**
+<p align="center">
+  <img src="docs/images/handy-usb-geraet.png" alt="Weboberfläche am Handy, während das Laufwerk dem USB-Gerät gehört: Die Dateien gehören gerade dem USB-Gerät, darunter der Knopf Dateien hochladen" width="300">
+</p>
 
-```powershell
-python tools\mock_server.py --port 8090 --scenario files    # dann http://127.0.0.1:8090/
-```
+**Nicht während eines Drucks umschalten.** „Dateiverwaltung“ nimmt dem Drucker das Laufwerk weg. Liest er
+gerade, bricht der Druck ab. Ob der X2D eine Datei beim Start ganz einliest oder währenddessen weiter vom
+Stick liest, ist nicht bekannt. Sicherer ist es, das Laufwerk vorher am Drucker auszuwerfen.
 
-Der Testserver bildet die Geräte-API nach und liest `index.html` bei jedem Aufruf neu
-(Details: [docs/04_build_und_flash.md](docs/04_build_und_flash.md) Abschnitt 11).
-
-Browser-Test gegen den laufenden Testserver (einmalig `pip install playwright`, nutzt das
-installierte Edge, ca. 19 min für PC- und Handy-Profil):
-
-```powershell
-python tools\ui_test.py --base http://localhost:8090
-```
+Am Bambu Lab X2D hat der Autor geprüft: Laufwerk erkannt, per Browser hochgeladene `.gcode.3mf` angezeigt
+und gedruckt (Firmware 0.2.0 und 0.3.0, microSD 64 GB FAT32, ohne Verschlüsselung). Gemessen wurde dabei
+nichts. Am PC funktioniert der Stick unter Windows 11 als normales Laufwerk.
 
 ## Verschlüsselung einrichten und am Drucker benutzen
 
-Die Verschlüsselung ist **optional** und in der Voreinstellung aus. Sie schützt die Dateien
-auf der Speicherkarte oder dem Stick vor Leuten, die den Stick ohne Passwort in die Hand
-bekommen. Was sie nicht schützt, steht in „Grenzen“ weiter unten.
+Die Verschlüsselung ist optional und in der Voreinstellung aus. Sie schützt deine Dateien, wenn jemand die
+Karte oder den Stick ohne das Laufwerks-Passwort in die Hand bekommt. Solange das Laufwerk entsperrt ist,
+schützt sie nicht.
 
-**Vor dem Einrichten:** Alle Dateien auf der Karte werden gelöscht. Vorher auf den PC
-kopieren.
+**Vorher:** Beim Einrichten werden alle Dateien gelöscht. Kopiere sie vorher auf den PC.
 
 ### Einrichten
 
-1. Im Browser anmelden. Einstellungen öffnen, Abschnitt **Speicher & USB**, Eintrag
-   **Verschlüsselung**. (Die Bezeichnungen stammen aus der Weboberfläche; der Weg ist noch
-   nicht von Hand am Gerät nachgeklickt.)
-2. **Einrichten** antippen. Die Oberfläche fragt „Laufwerk verschlüsseln?“ und erklärt die
-   Folgen. Mit **Löschen und verschlüsseln** bestätigen.
-3. Ein **Laufwerks-Passwort** eingeben, mindestens 12 Zeichen. Es ist **nicht** das
-   Anmelde-Passwort. Ein langer Satz oder ein zufälliges Passwort ist am besten.
-4. Warten. Auf einer 64-GB-microSD dauerte die Einrichtung 51 s. Bei anderen Karten
-   kann es länger dauern. Das Laufwerk antwortet währenddessen auf nichts anderes; den Stick
-   nicht abziehen.
-5. Am Ende erscheint **einmalig** der **Wiederherstellungsschlüssel** (8 Gruppen zu je 4
-   Zeichen, z. B. `7K3M-Q9XD-4WTB-HN2C-5RYE-8FGA-ZP6V-JC3S`). **Sofort aufschreiben** und
-   getrennt vom Stick aufbewahren. Er wird nie wieder angezeigt. Groß-/Kleinschreibung und
-   Bindestriche sind beim Eingeben egal.
-6. Das Laufwerk ist danach entsperrt und benutzbar.
+1. Melde dich als `admin` an und wähle **Verschlüsselung einrichten** auf der Startseite oder unter
+   **Einstellungen › Sicherheit**.
+2. Wähle ein Laufwerks-Passwort mit mindestens 12 Zeichen. Es ist nicht dein Anmelde-Passwort. Am besten
+   ist ein Satz aus mehreren Wörtern.
+3. Tippe `LÖSCHEN` ein und bestätige. Auf einer 64-GB-Karte dauerte das 51 Sekunden. Zieh den Stick
+   währenddessen nicht ab.
+4. Schreib den **Wiederherstellungsschlüssel** auf und bewahre ihn getrennt vom Stick auf. Er wird nur
+   einmal angezeigt.
 
-### Am Drucker benutzen
+### Verschlüsselt am Drucker
 
-1. Stick mit Karte am Drucker einstecken. **Nach jedem Einstecken und nach jedem
-   Stromausfall ist das Laufwerk gesperrt.** Der Drucker sieht dann kein Medium.
-2. Mit dem Handy im selben WLAN die Adresse `http://datadrive.local` oder die IP öffnen und
-   anmelden.
-3. Die Oberfläche zeigt „Laufwerk gesperrt“. Das **Laufwerks-Passwort** eingeben (nicht das
-   Anmelde-Passwort) und entsperren. Ist der Drucker angeschlossen, bekommt er das Laufwerk
-   danach.
-4. Auf dem Drucker die Datei wählen und drucken.
+1. Nach jedem Einstecken und nach jedem Stromausfall ist das Laufwerk gesperrt. Der Drucker sieht dann
+   kein Laufwerk.
+2. Öffne die Oberfläche am Handy, gib das Laufwerks-Passwort ein und tippe auf **Entsperren**. Der Drucker
+   bekommt das Laufwerk danach.
+3. Wähle die Datei am Drucker und drucke.
 
-Hinweis: Dass der X2D von einem verschlüsselten, per Handy entsperrten Stick druckt, ist
-**noch nicht geprüft**. Bis das getestet ist, gilt das als Annahme.
+Dass der X2D von einem verschlüsselten, per Handy entsperrten Stick druckt, ist **noch nicht geprüft**.
+Mach vor einem wichtigen Druck einen Probedruck.
 
-Solange das Laufwerk entsperrt ist, sieht der Drucker die Dateien im Klartext. Die
-Verschlüsselung schützt nur, solange der Stick gesperrt ist.
+**Automatisch sperren** (Einstellungen › Speicher & USB, Voreinstellung aus): Das Laufwerk sperrt sich
+nach der gewählten Zeit ohne Zugriff und, wenn du willst, sobald das USB-Gerät getrennt wird. Während das
+USB-Gerät schreibt oder ein Upload läuft, wartet es. Für lange Drucke wählst du „Aus“ oder eine großzügige
+Zeit. Die Einstellungen sind am Gerät per API-Test geprüft; das Sperren nach Ablauf der Zeit selbst ist
+**noch nicht geprüft**.
 
-### Automatisch sperren (seit 0.5.0)
+**Passwort vergessen:** Entsperre mit dem Wiederherstellungsschlüssel und lege danach unter
+**Einstellungen › Sicherheit › Verschlüsselung** ein neues Laufwerks-Passwort fest. Sind Passwort und
+Schlüssel beide verloren, sind die Daten weg. Dann bleibt nur, das Laufwerk zu löschen und neu
+einzurichten. Das Zurücksetzen per Taste hilft hier nicht.
 
-Das entsperrte Laufwerk kann sich selbst wieder sperren. Voreinstellung: **aus**.
-Einstellen unter Einstellungen → Speicher & USB → **Automatisch sperren** (Rolle `admin`;
-Weg laut Weboberfläche, am Gerät nicht von Hand nachgeklickt).
+**Ausschalten** löscht ebenfalls alle Dateien.
 
-- **Nach Zeit:** nach der gewählten Zahl Minuten ohne Zugriff. Als Zugriff zählen Dateiaktionen
-  im Browser, Anfragen über das Netzlaufwerk und Lesen oder Schreiben des USB-Geräts.
-- **Beim Trennen des USB-Geräts:** etwa 10 Sekunden, nachdem das USB-Gerät verschwunden ist.
-  Bloßes Auswerfen am PC zählt nicht.
-- **Nie**, solange der Drucker oder PC schreibt oder ein Upload, Download oder ZIP läuft. Das
-  Sperren folgt, wenn der Vorgang fertig ist.
-- **Achtung beim Drucken:** Ist die Zeit abgelaufen, nimmt das Sperren auch einem Drucker das
-  Laufwerk weg, der gerade nichts liest. Ob der Bambu X2D eine Datei beim Start ganz einliest
-  oder während des Drucks weiter vom Stick liest, ist **nicht bekannt**. Für lange Drucke
-  deshalb „Aus“ oder eine großzügige Zeit wählen.
+<p align="center">
+  <img src="docs/images/handy-sicherheit.png" alt="Einstellungen am Handy, Bereich Sicherheit: Verschlüsselung ein und entsperrt mit den Knöpfen Laufwerk sperren, Passwort ändern, neuen Wiederherstellungsschlüssel erzeugen und Ausschalten; darunter der Schalter für HTTPS, das Zertifikat des Sticks und die vertrauten Geräte" width="300">
+</p>
 
-Die Einstellungen sind am Gerät per API-Test geprüft. Dass das Laufwerk nach Ablauf der Zeit
-wirklich sperrt, ist **noch nicht geprüft**.
+Was die Verschlüsselung nicht leistet:
 
-### Passwort vergessen
+- **Die Stärke des Passworts ist der eigentliche Schutz.** Wer die Karte hat, kann Passwörter am PC
+  durchprobieren. Ein kurzes Passwort schützt nicht.
+- Die Wartezeit nach falschen Eingaben bremst nur das Raten über das Netzwerk.
+- Gezielte Änderungen an den verschlüsselten Daten erkennt das Verfahren nicht.
+- Ohne HTTPS geht das Laufwerks-Passwort beim Entsperren lesbar durchs WLAN.
 
-- **Wiederherstellungsschlüssel vorhanden:** Im Entsperr-Dialog „Passwort vergessen?“ den
-  Schlüssel eintragen. Danach das Laufwerk entsperren und unter Verschlüsselung ein neues
-  Laufwerks-Passwort festlegen. Als bisheriges Passwort dient dabei der Schlüssel.
-- **Schlüssel verloren, aber Passwort bekannt:** Unter Verschlüsselung **Neuen
-  Wiederherstellungsschlüssel erzeugen** (Laufwerk muss entsperrt sein). Der alte Schlüssel
-  funktioniert danach nicht mehr. Der neue wird nur einmal angezeigt.
-- **Beides verloren:** Die Daten sind **endgültig verloren**. Es bleibt nur, das Laufwerk
-  zu löschen und neu zu formatieren (Verschlüsselung löschen, dann neu einrichten). Das
-  Zurücksetzen per Taste hilft hier nicht.
+Mehr dazu in [docs/12_api_v4.md](docs/12_api_v4.md) Abschnitt 2.5 und [docs/06_risiken.md](docs/06_risiken.md)
+Abschnitt 8.
 
-### Verschlüsselung ausschalten
+## Netzlaufwerk und HTTPS
 
-Unter Verschlüsselung **Ausschalten** und das Laufwerks-Passwort eingeben. **Alle Dateien
-werden dabei gelöscht.** Danach ist der Speicher unverschlüsselt und an jedem Gerät lesbar.
+### Als Netzlaufwerk verbinden
 
-### Grenzen (aus der unabhängigen Prüfung)
+Unter `http://<Stick>/dav/` ist der Stick ein Netzlaufwerk (WebDAV). Du meldest dich mit demselben
+Benutzer an wie im Browser.
 
-- **Die Stärke des Passworts ist der eigentliche Schutz.** Wer die Karte hat, kann Passwörter
-  offline sehr schnell durchprobieren. Ein kurzes Passwort schützt nicht.
-- Die Wartezeit nach falschen Eingaben bremst nur das Raten über das Netzwerk am laufenden
-  Gerät. Ein Neustart setzt sie zurück.
-- Drucker und PC sehen die Dateien im Klartext, solange das Laufwerk entsperrt ist.
-- Das Verfahren erkennt keine gezielten Änderungen an den verschlüsselten Daten.
-- Updates sind nicht signiert. Wer Administrator-Zugriff hat, könnte geänderte Firmware
-  aufspielen, die beim nächsten Entsperren das Passwort mitliest.
-- Passwörter gehen ohne HTTPS unverschlüsselt durchs WLAN. Seit 0.5.0 lässt sich HTTPS
-  einschalten (Abschnitt „HTTPS einschalten“).
-
-Die vollständige Beschreibung steht in [docs/12_api_v4.md](docs/12_api_v4.md) Abschnitt 2.5.
-
-## Als Netzlaufwerk verbinden
-
-Seit 0.5.0 ist der Stick unter `http://<Stick>/dav/` als Netzlaufwerk (WebDAV) erreichbar,
-zum Beispiel `http://192.168.2.152/dav/`. Dateien lassen sich dann im Explorer oder in einer
-Datei-App hineinziehen, ohne Browser. Anmeldung mit demselben Benutzer und Passwort wie in der
-Weboberfläche.
-
-**Prüfstand:** Am Gerät nur per API-Test geprüft: Liste, Hochladen, Verschieben, Löschen,
-Anmeldung nötig, abgewiesen bei gesperrtem Laufwerk. Mit echten Programmen (Windows-Explorer,
-macOS-Finder, Handy-Apps) ist es **noch nicht geprüft**. Die Hinweise unten stammen aus
-Recherche, nicht aus eigenen Tests.
-
-Regeln:
-
-- Das Netzlaufwerk geht nur, solange die **Dateiverwaltung** aktiv ist. Es nimmt dem Drucker
-  das Laufwerk nie weg. Gehört das Laufwerk gerade dem USB-Gerät, zuerst in der Weboberfläche
-  „Dateiverwaltung aktivieren“.
+- Das Netzlaufwerk geht nur, solange die Dateiverwaltung aktiv ist. Dem Drucker nimmt es das Laufwerk nie
+  weg.
 - Ein verschlüsseltes Laufwerk muss entsperrt sein.
-- Abschaltbar unter Einstellungen → Netzwerk (Rolle `admin`; Voreinstellung an).
-- Ohne HTTPS gehen Benutzername und Passwort lesbar durchs WLAN.
+- Abschalten kannst du es unter Einstellungen › WLAN.
 
-Was bekannt ist (Recherche, nicht selbst getestet):
+Am Gerät ist das Netzlaufwerk nur per API-Test geprüft. Mit echten Programmen ist es **noch nicht
+geprüft**. Die Bedingungen in der Tabelle stammen aus Recherche, nicht aus eigenen Tests:
 
 | Programm | Bedingung |
 |---|---|
-| Windows-Explorer | Verbindet sich über `http` erst nach einer einmaligen Änderung in der Registry (`BasicAuthLevel = 2`). Außerdem begrenzt Windows Dateien auf etwa 50 MB. Das Skript `tools\webdav\Connect-DataDrive.ps1` fragt vorher und ändert beides. Die Registry-Änderung gilt für **alle** WebDAV-Server, nicht nur für den Stick. |
-| iPhone/iPad | Die eingebaute App „Dateien“ kann nur SMB, kein WebDAV. Es braucht eine zusätzliche App. |
-| macOS-Finder | Anzeigen und Herunterladen gehen, Hineinkopieren nicht: Der Finder lädt „chunked“ hoch, das kann der Webserver des Sticks nicht annehmen. |
+| Windows-Explorer | Verbindet sich über `http` erst nach einer einmaligen Einstellung in der Registry, die für alle WebDAV-Server gilt. Das Skript `tools\webdav\Connect-DataDrive.ps1` fragt vorher und setzt sie. |
+| iPhone und iPad | Die App „Dateien“ kann kein WebDAV. Du brauchst eine zusätzliche App. |
+| macOS-Finder | Anzeigen und Herunterladen gehen, Hineinkopieren nicht. |
 
-Schritte für Windows, Fehlermeldungen und weitere Programme: [tools/webdav/README.md](tools/webdav/README.md).
-Die Schnittstelle: [docs/15_api_v5.md](docs/15_api_v5.md) Abschnitt 6.
+Schritte und Fehlermeldungen: [tools/webdav/README.md](tools/webdav/README.md).
 
-## HTTPS einschalten
+### HTTPS einschalten
 
-Mit HTTPS gehen Passwörter und Dateien verschlüsselt durchs WLAN. Seit 0.5.0 ist HTTPS in der
-Firmware enthalten, der Schalter steht aber auf **aus**, bis man ihn einschaltet.
+Ohne HTTPS gehen Passwörter und Dateien lesbar durchs WLAN. HTTPS ist eingebaut, der Schalter steht aber
+auf aus.
 
-### Einschalten
-
-1. Als `admin` anmelden. Einstellungen → **Sicherheit** → „Verschlüsselte Verbindung (HTTPS)“
-   einschalten. (Bezeichnungen aus der Weboberfläche.)
-2. Der Stick fragt, ob er neu starten soll. Die Änderung gilt erst nach dem Neustart. Ein
-   angeschlossenes USB-Gerät verliert das Laufwerk dabei kurz.
-3. Danach ist der Stick unter `https://<Stick>/` erreichbar. Aufrufe mit `http://` werden auf
-   `https://` umgeleitet.
-4. Jeder Browser warnt beim ersten Aufruf, weil der Stick sein Zertifikat selbst ausstellt.
-   Die Warnung verschwindet, wenn das Zertifikat des Sticks auf dem Gerät installiert ist:
-   Einstellungen → Sicherheit → „Zertifikat herunterladen“.
-   - **Windows:** Datei öffnen → Zertifikat installieren → Lokaler Computer → Speicher
+1. Melde dich als `admin` an und schalte unter **Einstellungen › Sicherheit** die „Verschlüsselte
+   Verbindung (HTTPS)“ ein.
+2. Bestätige den Neustart. Ein angeschlossenes USB-Gerät verliert das Laufwerk dabei kurz.
+3. Danach erreichst du den Stick unter `https://<Stick>/`. Aufrufe mit `http://` werden umgeleitet.
+4. Jeder Browser warnt, bis das Zertifikat des Sticks installiert ist. Lade es unter
+   **Einstellungen › Sicherheit › Zertifikat herunterladen** und installiere es einmal auf jedem Gerät:
+   - **Windows:** Datei öffnen › Zertifikat installieren › Lokaler Computer › Speicher
      „Vertrauenswürdige Stammzertifizierungsstellen“.
-   - **iPhone:** In Safari herunterladen, dann Einstellungen → Profil geladen → Installieren.
-     Danach Allgemein → Info → **Zertifikatsvertrauenseinstellungen**: Vertrauen einschalten.
-5. Den Fingerabdruck (SHA-256) dabei mit dem in den Einstellungen vergleichen.
+   - **iPhone:** in Safari herunterladen, Einstellungen › Profil geladen › Installieren, dann
+     Allgemein › Info › Zertifikatsvertrauenseinstellungen: Vertrauen einschalten.
 
-Die Wege zum Installieren des Zertifikats stammen aus den Texten der Weboberfläche. Am iPhone
-und unter Windows sind sie **noch nicht geprüft**.
+Danach müssen Skripte („Senden an“, Kurzbefehl, eigene Skripte) `https://` benutzen, und ein Symbol auf
+dem Home-Bildschirm legst du neu an. Der Stick bedient immer nur eine HTTPS-Verbindung gleichzeitig. Ab
+0.6.0 gilt: Ein neuer Name im Netzwerk erzeugt ein neues Zertifikat des Sticks, das du neu installierst.
 
-### Was danach anders ist
+Am Gerät gemessen (0.5.0, Laufwerk verschlüsselt und entsperrt): Upload von 30 MB mit 864 kB/s, die Datei
+war danach bitgleich; Download 389 kB/s. **Noch nicht geprüft:** die Installation des Zertifikats auf
+iPhone und Windows, Netzlaufwerk und Skripte über `https`, Betrieb über viele Stunden.
 
-- **Skripte müssen `https://` benutzen.** Das betrifft „Senden an“ (Windows), den
-  iPhone-Kurzbefehl, eigene Skripte und `tools/api_test.py`. Mit `http://` kommt nur noch die
-  Umleitung.
-- Ein Symbol auf dem Home-Bildschirm muss neu angelegt werden.
-- Es wird immer nur **eine** HTTPS-Verbindung gleichzeitig bedient.
+## Updates
 
-### Prüfstand
+**Über den Browser:** Einstellungen › System › „Datei auswählen …“, dann die Datei `…-app.bin` aus dem
+Release wählen. Die neue Version läuft zuerst zur Probe; startet sie nicht stabil, kehrt der Stick zur
+bisherigen zurück. Dateien und Einstellungen bleiben. Dieser Weg ist am Gerät **noch nicht geprüft**;
+bisher kam jede Version per USB auf den Stick.
 
-Gemessen am Gerät mit entsperrtem, verschlüsseltem Laufwerk: Upload 30 MB mit 864 kB/s, Datei
-danach bitgleich; Download 389 kB/s (über HTTP 487 kB/s); Dateiliste und Seitenaufruf
-funktionieren; 66 KiB Arbeitsspeicher frei im Leerlauf, 22 KiB als tiefster Wert beim Upload.
+**Signierte Updates (ab 0.6.0):** Eine mit der Option `CONFIG_PD_OTA_SIGNED` gebaute Firmware installiert
+über den Browser nur noch Dateien, die mit dem Schlüssel des Autors signiert sind. Auch ein Administrator
+mit richtigem Passwort kann dann keine veränderte Firmware übers Netz einspielen. Signiert wird nur auf
+dem Rechner des Autors; der private Schlüssel kommt nie zu GitHub. Die Bestätigung vor dem Update zeigt
+„Nur signierte Updates“ und die Schlüssel-ID. Am Gerät ist das **noch nicht geprüft**.
 
-**Noch nicht geprüft:** iPhone mit installiertem Zertifikat (Profil installieren und volles
-Vertrauen in den Zertifikatsvertrauenseinstellungen), Home-Bildschirm-Symbol und Kurzbefehl
-über `https`, Netzlaufwerk (WebDAV) über `https`, „Senden an“ über `https`, Betrieb über
-viele Stunden oder Tage.
+**Forks und eigene Builds:** In der Voreinstellung baut das Repository ohne Signatur. So eine Firmware
+nimmt jedes gültige Update an, wie 0.5.0. Auf einen Stick mit signierter Firmware kommt dein eigener Build
+nur per USB. Eigene signierte Builds mit eigenem Schlüssel und was die Signatur nicht schützt (USB-Zugriff,
+kein Secure Boot): [docs/17_signierte_updates.md](docs/17_signierte_updates.md).
 
-Ausschalten geht am selben Schalter, ebenfalls mit Neustart. Danach müssen Symbole und
-Skripte wieder auf `http://` umgestellt werden. Die Schnittstelle: [docs/12_api_v4.md](docs/12_api_v4.md)
-Abschnitt 3.
+## Geprüft und nicht geprüft
 
-## Ordnerstruktur
+**Geprüft** heißt hier: am echten Gerät ausprobiert, mit Ergebnis in
+[docs/05_testprotokoll.md](docs/05_testprotokoll.md). Alles andere steht als nicht geprüft da, auch wenn es
+gebaut ist oder am Testserver läuft.
+
+| Bereich | Stand |
+|---|---|
+| USB-Laufwerk unter Windows 11: kopieren, auswerfen, neu einstecken | geprüft |
+| microSD 64 GB FAT32 | geprüft (eine Karte) |
+| Bambu Lab X2D ohne Verschlüsselung: Laufwerk erkannt, Datei angezeigt, gedruckt | Rückmeldung des Autors (0.2.0 und 0.3.0), keine Messung |
+| Drucken am X2D von einem verschlüsselten, entsperrten Stick | nicht geprüft |
+| Lange Drucke, Umschalten während eines Drucks, Nur-Lese-Modus, andere Drucker | nicht geprüft |
+| Anmeldung, Benutzer, Ordner, mehrere WLANs (0.3.0) | geprüft per API-Test am Gerät (182/182) |
+| Verschlüsselung: einrichten, sperren, entsperren, Wiederherstellung, ausschalten (0.4.0) | geprüft per API-Test am Gerät (334/334) |
+| Verschlüsselung auf dem internen Flash, Stromausfall beim Einrichten | nicht geprüft |
+| Netzlaufwerk-Grundfunktionen, Uhrzeit, Upload fortsetzen, ZIP, Einstellungen zum Sperren (0.5.0) | geprüft per API-Test am Gerät (354/354) |
+| HTTPS (0.5.0) | Grundfunktion am Gerät gemessen; iPhone mit Zertifikat, WebDAV über `https`, Dauerbetrieb nicht geprüft |
+| Netzlaufwerk mit Explorer, Finder oder Handy-Apps | nicht geprüft |
+| Automatisches Sperren nach Ablauf der Zeit | nicht geprüft |
+| Einrichtungsseite öffnet sich von selbst, WLAN-Suche im Einrichtungs-WLAN | nicht geprüft |
+| Taste (QR-Code, Umschalten, Zurücksetzen), App-Symbol am Handy, „Senden an“, iPhone-Kurzbefehl | nicht geprüft |
+| Firmware-Update über den Browser, Browser-Flasher | nicht geprüft |
+| Weboberfläche | Browser-Test gegen den Testserver (Chromium, PC- und Handy-Profil); an einem echten Handy nicht geprüft |
+| Neu in 0.6.0: Restzeit bis zum Sperren, feste Adresse und Name im Netzwerk, signierte Updates, neue Oberfläche | gegen den Testserver geprüft (API-Test 373/373, Browser-Test PC 786/786 und Handy 803/803); am Gerät nicht geprüft |
+
+Gemessen mit microSD 64 GB: USB schreiben 832 KB/s, Upload im Browser 1,3 bis 1,6 MB/s. Verschlüsselt:
+USB schreiben 820 KB/s, lesen 659 KB/s, Upload 1,0 MB/s. Offene Risiken und Annahmen stehen in
+[docs/06_risiken.md](docs/06_risiken.md).
+
+## Gespeicherte und gelesene Daten
+
+- **Auf der Speicherkarte** (ohne Karte im internen Flash): deine Dateien. Mit Verschlüsselung zusätzlich
+  ein Kopfbereich mit dem verschlüsselten Laufwerksschlüssel. Das Laufwerks-Passwort selbst wird nirgends
+  gespeichert.
+- **Im Einstellungsspeicher des Sticks:** die Benutzer mit Rolle und gesalzenem Passwort-Hash, nie das
+  Passwort im Klartext; vertraute Geräte als Hash; die gespeicherten WLANs mit Passwort,
+  **unverschlüsselt**; Netzwerk- und Geräteeinstellungen; bei HTTPS das Zertifikat und der Schlüssel des
+  Sticks. Wer den Stick in der Hand hat, kann diesen Speicher per USB auslesen.
+- **Im Browser:** Darstellung, die Einstellung „Nach dem Hochladen wieder bereitstellen“ und das
+  Sitzungs-Cookie.
+- **Protokoll:** die letzten 8 KB Meldungen für die Fehlersuche, lesbar unter Einstellungen › System.
+- **Internet:** keine Cloud, kein Konto, keine Telemetrie. Die einzige Verbindung nach außen ist die
+  Uhrzeit per NTP (`pool.ntp.org` oder der Zeitserver, den dein Router nennt). Die Weboberfläche lädt
+  nichts von fremden Servern. Im WLAN meldet sich der Stick per mDNS als `datadrive.local`.
+- **Browser-Flasher:** Die Flasher-Seite lädt ESP Web Tools von unpkg.com und das Firmware-Abbild aus dem
+  Release auf GitHub.
+
+## Grenzen
+
+- Gebaut und getestet nur für den LILYGO T-Dongle-S3 mit LCD.
+- Gedacht für vertrauenswürdige Netze. In der Voreinstellung spricht der Stick nur HTTP; Passwörter gehen
+  dann lesbar durchs WLAN.
+- Der Stick bearbeitet eine Anfrage nach der anderen. Während eines Uploads warten andere Geräte.
+- Kein exFAT. Viele Karten über 32 GB kommen mit exFAT und müssen im Browser auf FAT32 formatiert werden;
+  dabei gehen ihre Daten verloren. Höchstens 4 GB pro Datei.
+- Die Karte wechselst du nur bei ausgestecktem Stick.
+- USB läuft mit Full Speed (12 Mbit/s). Am PC gemessen: Schreiben etwa 0,8 MB/s, Lesen etwa 0,75 MB/s.
+  Ohne Karte ist der interne Flash klein und langsam.
+- Der Stick nimmt jeden Dateityp an und prüft keine Inhalte.
+- Wer die Taste 10 Sekunden hält, setzt die Anmeldung auf `admin` / `admin` zurück. Ein verschlüsseltes
+  Laufwerk öffnet das nicht.
+- Ohne Internet stellt der Browser die Uhr. Nach einem Stromausfall ist sie unbekannt, bis Netz oder
+  Browser sie wieder stellen.
+- Der Projektordner `firmware/printdrive`, der Header `X-PrintDrive` und das Präfix `pd_` stammen aus der
+  Zeit, als das Projekt „WiFi PrintDrive“ hieß.
+
+## Rückmeldungen
+
+Fehlerberichte, Testergebnisse von echter Hardware und Vorschläge sind als Issue willkommen. Hilfreich
+sind Firmware-Version, Board, Speicher (microSD oder interner Flash, verschlüsselt ja/nein), Drucker oder
+Rechner am USB und die letzten Zeilen aus dem Protokoll, ohne Passwörter und WLAN-Namen.
+Sicherheitslücken meldest du bitte vertraulich, siehe [.github/SECURITY.md](.github/SECURITY.md).
+
+WiFi DataDrive wird in der Freizeit gepflegt. Ich antworte, sobald ich kann, kann aber keine
+Antwortzeiten oder Korrekturen zusagen. Mehr dazu in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Für Entwickler
 
 ```
-README.md
-docs/                        Projektdokumentation (deutsch)
-firmware/
-  partitions.csv             gemeinsame Partitionstabelle (16 MB, OTA-fähig)
-  pd_secrets.h.example       Vorlage für WLAN-Zugangsdaten (Kopie pd_secrets.h ist git-ignoriert)
-  components/
-    board/                   Pinbelegung, APA102-LED, BOOT-Taste, Download-Modus
-    st7735/                  ST7735-Paneltreiber (von LILYGO, MIT)
-    display/                 Framebuffer, 5x7-Font (Adafruit, BSD), Text/Rechtecke
-    pd_wifi/                 WLAN STA/AP, mDNS, WLAN-Suche, DNS für die Einrichtungsseite (pd_dns.c, seit 0.5.0)
-    pd_crypt/                AES-256-XTS-Schicht, Kopfbereich, Selbsttest (tools/pd_crypt_check.py)
-    pd_time/                 Uhrzeit per NTP, Zeitzone (seit 0.5.0)
-    applog/                  Log-Ringpuffer (Web/CDC)
-  smoke_test/                Phase-0-Hardwaretest
-  printdrive/                Hauptfirmware WiFi DataDrive (Ordnername historisch;
-                             main/: drive, usb_dev, auth, web_*.c (Anmeldung, Dateien, WLAN,
-                             Verschlüsselung, Update, System), web_dav.c (Netzlaufwerk),
-                             web_zip.c (ZIP), ota, tls (HTTPS, Schalter), ui,
-                             anim (Anzeige LIO), web/index.html, web/gzip_file.py)
-tools/
-  idf.ps1                    idf.py mit geladener ESP-IDF-Umgebung
-  flash.ps1                  Flashen mit automatischer Port-/Download-Modus-Erkennung
-  monitor.ps1 / monitor.py   Log-Leser (TinyUSB-CDC oder USB-Serial/JTAG)
-  backup_flash.ps1 / .py     vollständiges Flash-Backup nach backup/ (über USB-Serial/JTAG unzuverlässig)
-  api_test.py                End-to-End-Test der Web-API v3 bis v5 gegen den echten Dongle
-  mock_server.py             Testserver: Geräte-API ohne Hardware, zum Entwickeln/Testen der Weboberfläche
-  ui_test.py                 Browser-Test der Weboberfläche gegen den Testserver (Playwright + Edge,
-                             PC 1280x800 und Handy-Emulation 390x844, hell/dunkel)
-  sendto/                    „Senden an“ für Windows (Install-SendTo.ps1, Send-DataDrive.ps1)
-  webdav/                    Netzlaufwerk unter Windows verbinden (Connect-DataDrive.ps1, seit 0.5.0)
-  make_icons.py, make_anim.py  Erzeugen der App-Icons bzw. der LIO-Animation
-backup/                      LILYGO-Werksabbild, Flash-Abbilder (*.bin git-ignoriert) + SHA256SUMS.txt
+firmware/printdrive/       Hauptfirmware: Laufwerk, USB, Anmeldung, Web-API, WebDAV, ZIP, Update, HTTPS, Display
+  main/web/index.html      Weboberfläche; wird beim Bauen gzip-komprimiert eingebettet
+firmware/components/       board, st7735, display, pd_wifi, pd_crypt, pd_time, applog
+firmware/smoke_test/       Hardwaretest: LCD, LED, Taste, Flash, WLAN
+tools/flash.ps1, idf.ps1   Bauen und Flashen unter Windows; findet Anschluss und Download-Modus selbst
+tools/mock_server.py       Testserver: bildet die Geräte-API ohne Hardware nach
+tools/api_test.py          API-Test gegen den Testserver oder das echte Gerät
+tools/ui_test.py           Browser-Test der Weboberfläche (Playwright mit Edge oder Chrome)
+tools/signing/             Schlüssel erzeugen, signiert bauen, Signatur prüfen
+tools/sendto/, webdav/     „Senden an“ und Netzlaufwerk unter Windows
+web-flasher/               Browser-Flasher für GitHub Pages
+docs/                      Projektdokumentation (deutsch)
 ```
 
-## Versionsverlauf
+```bash
+python -m pip install -r requirements-dev.txt               # Python 3.10 oder neuer
+idf.py -C firmware/printdrive build                         # ESP-IDF 5.5.6
+python tools/mock_server.py --port 8090                     # dann http://127.0.0.1:8090/ (admin / admin123)
+python tools/api_test.py 127.0.0.1:8090 --user admin --password admin123
+python tools/ui_test.py --base http://localhost:8090        # bei Änderungen an der Weboberfläche
+```
 
-| Version | Inhalt | Commits |
-|---|---|---|
-| 0.1.0 | „WiFi PrintDrive“: USB-Laufwerk, Umschalten, Upload per Web, microSD | Vorgeschichte vor `72109c6` |
-| 0.2.0 | Umbenennung in WiFi DataDrive, neue Weboberfläche, API v2, Browser-Test 566/566 | `72109c6` … `0b52a5d` |
-| 0.3.0 | Anmeldung und Benutzer, Ordner, mehrere WLANs, Taste mit QR-Code, App-Icon, Senden an (Windows, iPhone), Update über die Weboberfläche, Deutsch/Englisch; API-Test am Gerät 182/182 | `9ee80f4` … `9de5179` |
-| 0.4.0 | Verschlüsselung des Laufwerks (AES-256-XTS), WLAN-Suche, Display-Animation „LIO“, HTTPS vorbereitet (aus); API-Test am Gerät 334/334; Browser-Tests 548/548 (PC) und 561/561 (Handy) | `24b12b9` … `0de2267` |
-| 0.5.0 | Netzlaufwerk (WebDAV), Uhrzeit aus dem Netz, automatisches Sperren, Display-Sprache, Einrichtungsseite öffnet sich von selbst, Upload fortsetzen, Ordner als ZIP und Ordner hochladen, HTTPS mit Speicher-Umbau (Schalter, Voreinstellung aus), API v5; API-Test am Gerät 354/354 | `da1df2c` … `af2a675` |
+Der Kern des Projekts ist die Ein-Besitzer-Regel des Laufwerks; sie steht in Kurzform in
+[docs/00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md) und ausführlich in
+[docs/02_architektur.md](docs/02_architektur.md). Änderungen an der API kommen zuerst in den API-Vertrag
+(zuletzt [docs/16_api_v6.md](docs/16_api_v6.md)), dann in Firmware, Testserver und API-Test. GitHub
+Actions baut jeden Push mit ESP-IDF 5.5.6 und testet gegen den Testserver; die Workflows sind geschrieben,
+aber noch nicht auf GitHub gelaufen. Der Ablauf eines Releases steht in [docs/RELEASING.md](docs/RELEASING.md),
+die Änderungen je Version in [CHANGELOG.md](CHANGELOG.md).
 
-Die Versionen 0.3.0 und 0.4.0 sind mit ihren Plänen in [docs/08_plan_v03.md](docs/08_plan_v03.md)
-und [docs/11_plan_v04.md](docs/11_plan_v04.md) beschrieben. Version 0.5.0 setzt die Punkte V1 bis V8
-der [docs/14_vormerkliste.md](docs/14_vormerkliste.md) um; sie wurde in sieben parallelen
-Arbeitspaketen gebaut (Schnittstelle: [docs/15_api_v5.md](docs/15_api_v5.md)). Was als Nächstes
-kommen kann, steht ebenfalls in der Vormerkliste.
-
-## Dokumentation
+<details>
+<summary>Alle Dokumente in docs/</summary>
 
 | Datei | Inhalt |
 |---|---|
-| [docs/00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md) | der Kern in Kurzform: Besitzer-Prinzip, Sicherungen, Eckdaten |
-| [docs/01_bestandsaufnahme.md](docs/01_bestandsaufnahme.md) | Hardware, verifizierte Daten, Technologieentscheidung |
-| [docs/02_architektur.md](docs/02_architektur.md) | Module, Besitzer-Zustandsautomat, Upload, Weboberfläche, LCD, USB, Anmeldung, Verschlüsselung |
-| [docs/03_umsetzungsplan.md](docs/03_umsetzungsplan.md) | Phasen 0–8, Abnahmekriterien, Status, Backlog |
-| [docs/04_build_und_flash.md](docs/04_build_und_flash.md) | ESP-IDF-Installation, Bauen, Flashen, Recovery, Konfiguration, Tests, Testserver |
-| [docs/05_testprotokoll.md](docs/05_testprotokoll.md) | Testprozeduren mit erwarteten Ergebnissen, Ergebnisse je Version |
-| [docs/06_risiken.md](docs/06_risiken.md) | offene Risiken, ungeprüfte Punkte und Annahmen |
-| [docs/07_api.md](docs/07_api.md) | HTTP-API Version 2 (historisch; ersetzt durch Version 3 bis 5) |
-| [docs/08_plan_v03.md](docs/08_plan_v03.md) | Plan Version 0.3.0: Funktionen, Entscheidungen, Abnahme |
-| [docs/09_api_v3.md](docs/09_api_v3.md) | HTTP-API Version 3 (0.3.0): Anmeldung, Rollen, Dateien, Ordner, WLAN, Taste |
-| [docs/10_senden.md](docs/10_senden.md) | Senden vom iPhone (Kurzbefehl) und App-Icon am Handy |
-| [docs/11_plan_v04.md](docs/11_plan_v04.md) | Plan Version 0.4.0: Verschlüsselung, WLAN-Suche, Restarbeiten |
-| [docs/12_api_v4.md](docs/12_api_v4.md) | HTTP-API Version 4 (0.4.0): WLAN-Suche, Verschlüsselung, HTTPS-Option; Schutzwirkung in Abschnitt 2.5 |
-| [docs/13_display_animation_briefing.md](docs/13_display_animation_briefing.md) | Vorgaben für die animierte Anzeige „LIO“ |
-| [docs/14_vormerkliste.md](docs/14_vormerkliste.md) | Vormerkliste: was in 0.5.0 umgesetzt wurde, was offen und noch nicht entschieden ist |
-| [docs/15_api_v5.md](docs/15_api_v5.md) | HTTP-API Version 5 (0.5.0): Uhrzeit, automatisches Sperren, Display-Sprache, Upload fortsetzen, ZIP, WebDAV, Einrichtungsseite |
-| [tools/webdav/README.md](tools/webdav/README.md) | Netzlaufwerk verbinden: Windows, iPhone, Android, macOS, Linux, Fehlermeldungen |
-| [docs/18_veroeffentlichung.md](docs/18_veroeffentlichung.md) | Checkliste für die Veröffentlichung auf GitHub: vor dem ersten Push, Pages, Releases |
-| [README.en.md](README.en.md) | Kurzfassung auf Englisch |
+| [00_kern_usb_gadget.md](docs/00_kern_usb_gadget.md) | der Kern in Kurzform: Besitzer-Prinzip, Sicherungen, Eckdaten |
+| [01_bestandsaufnahme.md](docs/01_bestandsaufnahme.md) | Hardware, verifizierte Daten, Technologieentscheidung |
+| [02_architektur.md](docs/02_architektur.md) | Module, Besitzer-Zustandsautomat, Upload, Weboberfläche, Anmeldung, Verschlüsselung |
+| [03_umsetzungsplan.md](docs/03_umsetzungsplan.md) | Phasen 0 bis 8, Abnahmekriterien |
+| [04_build_und_flash.md](docs/04_build_und_flash.md) | ESP-IDF, Bauen, Flashen, Wiederherstellen, Konfiguration, Tests, Testserver |
+| [05_testprotokoll.md](docs/05_testprotokoll.md) | Testprozeduren und Ergebnisse je Version |
+| [06_risiken.md](docs/06_risiken.md) | offene Risiken, ungeprüfte Punkte, Annahmen |
+| [07_api.md](docs/07_api.md) | HTTP-API Version 2 (historisch) |
+| [08_plan_v03.md](docs/08_plan_v03.md) | Plan Version 0.3.0 |
+| [09_api_v3.md](docs/09_api_v3.md) | HTTP-API Version 3: Anmeldung, Rollen, Dateien, Ordner, WLAN, Taste |
+| [10_senden.md](docs/10_senden.md) | Senden vom iPhone (Kurzbefehl), App-Symbol am Handy |
+| [11_plan_v04.md](docs/11_plan_v04.md) | Plan Version 0.4.0 |
+| [12_api_v4.md](docs/12_api_v4.md) | HTTP-API Version 4: WLAN-Suche, Verschlüsselung, HTTPS; Schutzwirkung in Abschnitt 2.5 |
+| [13_display_animation_briefing.md](docs/13_display_animation_briefing.md) | Vorgaben für die Anzeige „LIO“ |
+| [14_vormerkliste.md](docs/14_vormerkliste.md) | Vormerkliste: umgesetzt, offen, nicht entschieden |
+| [15_api_v5.md](docs/15_api_v5.md) | HTTP-API Version 5: Uhrzeit, automatisches Sperren, Upload fortsetzen, ZIP, WebDAV |
+| [16_api_v6.md](docs/16_api_v6.md) | HTTP-API Version 6: Restzeit bis zum Sperren, Netzwerkeinstellungen, signierte Updates |
+| [17_signierte_updates.md](docs/17_signierte_updates.md) | Signierte Updates: Schutz, Einrichtung, Schlüsselverlust, Testschritte |
+| [18_veroeffentlichung.md](docs/18_veroeffentlichung.md) | einmalige Checkliste für die Veröffentlichung auf GitHub |
+| [RELEASING.md](docs/RELEASING.md) | Ablauf eines Releases |
+| [tools/webdav/README.md](tools/webdav/README.md) | Netzlaufwerk verbinden: Windows, iPhone, Android, macOS, Linux |
+| [tools/sendto/README.md](tools/sendto/README.md) | „Senden an“ für Windows |
+| [tools/signing/README.md](tools/signing/README.md) | Werkzeuge für signierte Updates |
+</details>
 
-## Lizenzen von Fremdcode
+## Haftung und Lizenz
 
-- `firmware/components/st7735/` – ST7735-Treiber aus dem LILYGO-Repository, MIT (`LICENSE.LILYGO`).
-- `firmware/components/display/font5x7.c` – Adafruit-GFX-Font, BSD (`LICENSE.Adafruit_GFX`).
+- **Lizenz:** [MIT](LICENSE) – frei nutzbar, auch im Betrieb, ohne Gewährleistung.
+- **Maskottchen LIO:** Name, Figur und Grafiken stehen nicht unter der MIT-Lizenz; die Rechte liegen beim
+  Autor. Wer eine eigene Fassung der Firmware veröffentlicht, ersetzt die Grafiken.
+  [LICENSE-LIO.md](LICENSE-LIO.md)
+- **Haftungsausschluss:** Benutzung auf eigene Gefahr. Sichere deine Dateien, bewahre Passwort und
+  Wiederherstellungsschlüssel getrennt auf und prüfe deine Drucke. [HAFTUNGSAUSSCHLUSS.md](HAFTUNGSAUSSCHLUSS.md)
+- **Fremdanteile:** ST7735-Treiber von LILYGO (MIT), 5×7-Schrift aus Adafruit GFX (BSD), dazu ESP-IDF,
+  TinyUSB und weitere Komponenten mit ihren eigenen Lizenzen. Alles Weitere, auch die Pflichten bei der
+  Weitergabe von Firmware-Dateien, in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- **Marken:** LILYGO ist eine Marke ihres Inhabers. Espressif und ESP32 sind Marken von Espressif Systems.
+  Bambu Lab ist eine Marke von Bambu Lab. WiFi DataDrive ist ein unabhängiges Projekt und mit keinem der
+  Genannten verbunden.
 
-## Flashen im Browser
+---
 
-Ohne ESP-IDF lässt sich die Firmware mit Chrome oder Edge direkt aus dem Browser aufspielen:
-Seite `web-flasher/` auf GitHub Pages (`https://wliffers.github.io/wifi-datadrive/`), sie nutzt ESP Web
-Tools und holt das zusammengeführte Abbild der neuesten Version.
-
-1. Dongle abziehen, die Taste gedrückt halten, Dongle einstecken, Taste nach etwa 2 Sekunden
-   loslassen (Download-Modus).
-2. Auf der Seite **Installieren** wählen und den Anschluss des Dongles auswählen. Bei der
-   Erstinstallation die Frage nach dem Löschen („Erase device“) bejahen.
-3. Nach dem Flashen den Dongle einmal ab- und wieder anstecken.
-4. Erste Anmeldung mit `admin` / `admin`, danach wird sofort ein neues Passwort verlangt.
-
-Das Abbild setzt Benutzer, gespeicherte WLANs und Einstellungen zurück; die microSD-Karte wird
-nicht beschrieben. Für ein Update einer laufenden Version ist die Datei `…-app.bin` aus dem
-Release gedacht (Einstellungen → System), dieser Weg ist am Gerät noch nicht geprüft.
-**Prüfstand:** Die Flasher-Seite ist mit einem echten Gerät **noch nicht geprüft**.
-
-Ohne Browser: `python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin`.
-
-## Mitmachen
-
-Fehlerberichte, Testergebnisse von echter Hardware und Korrekturen sind willkommen. Die Regeln
-(jede Aussage als verifiziert oder noch nicht geprüft markiert, keine Kompatibilitätsaussage ohne
-echten Test, die Ein-Besitzer-Regel des Laufwerks bleibt unangetastet) und die Tests stehen in
-[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). Sicherheitslücken bitte vertraulich melden:
-[.github/SECURITY.md](.github/SECURITY.md).
-
-## Lizenz
-
-Der eigene Code steht unter der [MIT-Lizenz](LICENSE). Fremdcode, Komponenten aus ESP-IDF und dem
-ESP Component Registry sowie die Pflichten bei der Weitergabe von Firmware-Dateien:
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-Das Maskottchen „LIO“ (Name, Figur, Grafiken) gehört nicht zur MIT-Lizenz. Die Rechte bleiben beim Urheber, siehe [LICENSE-LIO.md](LICENSE-LIO.md).
+<p align="center">Version 0.6.0 (in Arbeit, nicht veröffentlicht) · Stand 2026-11-13</p>

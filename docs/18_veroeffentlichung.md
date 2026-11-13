@@ -20,8 +20,8 @@ Diese Punkte sind offen und müssen vom Besitzer entschieden oder erledigt werde
 | V5 | Fest eingetragener Pfad in den lokalen Temp-Ordner des Benutzers | `tools/ui_test.py` Zeilen 92–93 (`_SCRATCH_SHOTS`) | Erledigt. |
 | V6 | Interne Arbeitsnotizen zur Arbeitsteilung | `docs/08_plan_v03.md` Zeilen 44–60 (Spalte „Modell“, „interne Notizen“), `docs/11_plan_v04.md` Zeilen 77–97 (ebenso), `docs/04_build_und_flash.md` Zeile 55, `docs/13_display_animation_briefing.md` Zeile 3 | Erledigt. |
 | V7 | Lizenz der Maskottchen-Grafik „LIO“ ungeklärt | `firmware/printdrive/main/anim/*.png`, daraus erzeugt `anim_data.inc` | Erledigt: LIO ist das Maskottchen des Rechteinhabers und steht nicht unter MIT, siehe `LICENSE-LIO.md`. |
-| V8 | Platzhalter für Repository und Pages-Adresse | `README.md` Abschnitt „Flashen im Browser“, `README.en.md` Abschnitt „Flash in the browser“: `https://wliffers.github.io/wifi-datadrive/` | Nach dem Anlegen des Repositorys echte Adresse eintragen. Die Workflows und die Flasher-Seite brauchen keine Platzhalter (sie nehmen den Namen aus GitHub) |
-| V9 | README verweist auf ein Werksabbild in `backup\`, das nicht veröffentlicht wird | `README.md` Schnellstart Punkt 0, `docs/04_build_und_flash.md` Abschnitt 5 | Für Fremde ergänzen, woher das LILYGO-Werksabbild kommt (Hersteller-Repository); das Abbild selbst **nicht** einchecken (`backup/*.bin` ist ignoriert) |
+| V8 | Platzhalter für Repository und Pages-Adresse | `README.md` Knopf „Im Browser flashen“ und Abschnitt „Installation“, `README.en.md` ebenso („Flash in the browser“, „Installation“): `https://wliffers.github.io/wifi-datadrive/` | Nach dem Anlegen des Repositorys echte Adresse eintragen. Die Workflows und die Flasher-Seite brauchen keine Platzhalter (sie nehmen den Namen aus GitHub) |
+| V9 | Doku verweist auf ein Werksabbild in `backup\`, das nicht veröffentlicht wird | `docs/04_build_und_flash.md` Abschnitt 5 (die README verweist seit der Neufassung nur noch auf diesen Abschnitt) | Für Fremde ergänzen, woher das LILYGO-Werksabbild kommt (Hersteller-Repository); das Abbild selbst **nicht** einchecken (`backup/*.bin` ist ignoriert) |
 | V10 | Geräte-MAC-Adresse und daraus abgeleiteter Name des Einrichtungs-WLANs | `docs/01_bestandsaufnahme.md` Zeile 24, `docs/05_testprotokoll.md` Zeile 52; `PrintDrive-54D5` in `docs/03`, `docs/04`, `docs/05` | Geringes Risiko (identifiziert nur dieses Exemplar). Nach Wunsch kürzen, z. B. `e0:72:a1:xx:xx:xx` |
 | V11 | Eintrag für einen lokalen Werkzeugordner | `.gitignore` Zeile 26 | Der Eintrag nennt den Ordnernamen eines Werkzeugs. Wer das nicht veröffentlichen will: Zeile löschen und denselben Eintrag in `.git/info/exclude` setzen (wirkt nur lokal) |
 
@@ -72,39 +72,12 @@ vereinheitlichen (17 Dateien liegen mit CRLF im Repository). Vorgehen steht als 
 
 ## 4. Release erstellen
 
-1. Version in `firmware/printdrive/CMakeLists.txt` (`PROJECT_VER`) setzen, README-Stand,
-   `docs/05_testprotokoll.md` und `docs/06_risiken.md` nachziehen, committen.
-2. Tag setzen und pushen; der Tag muss zu `PROJECT_VER` passen (sonst bricht der Build ab):
-
-   ```sh
-   git tag -a v0.5.0 -m "WiFi DataDrive 0.5.0"
-   git push origin v0.5.0
-   ```
-
-3. Der Workflow „Release“ baut, testet und legt einen **Entwurf** an mit
-   `wifi-datadrive-vX.Y.Z-esp32s3-merged.bin` (Erstinstallation ab 0x0, Browser-Flasher),
-   `wifi-datadrive-vX.Y.Z-app.bin` (Update über die Weboberfläche),
-   `wifi-datadrive-vX.Y.Z-build-files.zip`, `licenses.zip`, `LICENSE`, `THIRD_PARTY_NOTICES.md`
-   und `SHA256SUMS.txt`. Diese Dateien sind **nicht signiert**.
-4. **Signierte Updates** (falls genutzt): Signiert wird **nur auf dem eigenen Rechner**, der private
-   Schlüssel kommt nie zu GitHub (kein Secret, keine Variable, kein Upload). Den signierten Build
-   nach der Anleitung zu den signierten Updates (`tools/signing/`, Doku unter `docs/`) erstellen,
-   dann das zusammengeführte Abbild daraus bauen:
-
-   ```sh
-   python .github/scripts/merge_image.py firmware/printdrive/build_signed wifi-datadrive-vX.Y.Z-esp32s3-merged.bin
-   ```
-
-   Im Entwurf die beiden `.bin`-Dateien durch die signierten ersetzen (**gleiche Dateinamen**) und
-   `SHA256SUMS.txt` neu erzeugen und ersetzen; der Pages-Workflow prüft das Abbild gegen diese
-   Datei. Vor diesem Build sicherstellen, dass `firmware/pd_secrets.h` auf dem Rechner **nicht**
-   existiert, sonst stehen die eigenen WLAN-Zugangsdaten im veröffentlichten Abbild.
-5. Release-Text prüfen (Prüfstand der Version, bekannte Grenzen) und **veröffentlichen**.
-   Danach aktualisiert sich der Browser-Flasher von selbst.
+Der wiederkehrende Ablauf (Version setzen, prüfen, taggen, Entwurf, signierte Dateien einsetzen,
+veröffentlichen) steht jetzt in [RELEASING.md](RELEASING.md). Für das erste Release gilt er genauso.
 
 ## 5. Was von Hand bleibt
 
-- Signieren der Release-Dateien und Ersetzen im Entwurf (Abschnitt 4).
+- Signieren der Release-Dateien und Ersetzen im Entwurf ([RELEASING.md](RELEASING.md) Abschnitt 5).
 - Veröffentlichen jedes Releases (der Workflow legt nur Entwürfe an).
 - Tests am echten Gerät und am Drucker; GitHub Actions testet nur gegen den Testserver.
   Der Browser-Test `tools/ui_test.py` läuft nicht in GitHub Actions.
