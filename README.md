@@ -518,7 +518,7 @@ kommen kann, steht ebenfalls in der Vormerkliste.
 ## Flashen im Browser
 
 Ohne ESP-IDF lässt sich die Firmware mit Chrome oder Edge direkt aus dem Browser aufspielen:
-Seite `web-flasher/` auf GitHub Pages (`https://<OWNER>.github.io/wifi-datadrive/`), sie nutzt ESP Web
+Seite `web-flasher/` auf GitHub Pages (`https://wliffers.github.io/wifi-datadrive/`), sie nutzt ESP Web
 Tools und holt das zusammengeführte Abbild der neuesten Version.
 
 1. Dongle abziehen, die Taste gedrückt halten, Dongle einstecken, Taste nach etwa 2 Sekunden
