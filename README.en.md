@@ -63,7 +63,7 @@ web upload 46 KB/s.
 
 ### Flash in the browser
 
-Open the web flasher (GitHub Pages of this repository: `https://<OWNER>.github.io/<REPO>/`) in
+Open the web flasher (GitHub Pages of this repository: `https://<OWNER>.github.io/wifi-datadrive/`) in
 Chrome or Edge, hold the dongle's button while plugging it in, click "Install". Instructions are
 on the page. Flashing the full image resets users, Wi-Fi and settings; files on the microSD card
 are not touched.

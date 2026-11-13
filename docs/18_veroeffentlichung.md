@@ -13,14 +13,14 @@ Diese Punkte sind offen und müssen vom Besitzer entschieden oder erledigt werde
 
 | Nr. | Punkt | Wo | Was tun |
 |---|---|---|---|
-| V1 | Name des Rechteinhabers fehlt | `LICENSE` Zeile 3: `Copyright (c) 2026 <NAME>` | Echten Namen oder Pseudonym eintragen |
+| V1 | Name des Rechteinhabers fehlt | `LICENSE` Zeile 3: `Copyright (c) 2026 <NAME>` | Erledigt: Willi Liffers. |
 | V2 | E-Mail-Adresse in allen 33 Commits (Autor und Committer) | `git log --format='%an <%ae> / %cn <%ce>'` | Wird mit dem Push öffentlich. Entweder hinnehmen oder vor dem ersten Push den Verlauf mit einer GitHub-noreply-Adresse neu schreiben (z. B. `git filter-repo --mailmap`). Für neue Commits `git config user.email <id>+<name>@users.noreply.github.com` setzen und in den GitHub-Einstellungen „Keep my email addresses private“ einschalten |
 | V3 | Alle 33 Commit-Nachrichten enden mit einer Zeile Mitautor-Zeile mit fremdem Namen und fremder Adresse | `git log --all --format=%B` | Vor der Veröffentlichung entfernen (Verlauf neu schreiben, z. B. `git filter-repo --message-callback`). Geht nur zusammen mit V2 in einem Durchgang sinnvoll |
-| V4 | Lokaler Pfad mit Benutzername | `docs/04_build_und_flash.md` Zeile 4 | Pfad durch „Projektordner“ ersetzen |
-| V5 | Fest eingetragener Pfad in den lokalen Temp-Ordner des Benutzers | `tools/ui_test.py` Zeilen 92–93 (`_SCRATCH_SHOTS`) | Zeilen entfernen, Voreinstellung nur über `tempfile.gettempdir()` |
-| V6 | Interne Arbeitsnotizen zur Arbeitsteilung | `docs/08_plan_v03.md` Zeilen 44–60 (Spalte „Modell“, „interne Notizen“), `docs/11_plan_v04.md` Zeilen 77–97 (ebenso), `docs/04_build_und_flash.md` Zeile 55, `docs/13_display_animation_briefing.md` Zeile 3 | Spalte und Begriffe entfernen oder neutral formulieren (z. B. „Paket“, „Bearbeiter“, „Designer“) |
-| V7 | Lizenz der Maskottchen-Grafik „LIO“ ungeklärt | `firmware/printdrive/main/anim/*.png`, daraus erzeugt `anim_data.inc` | Beim Designer schriftlich bestätigen lassen, dass sie unter MIT (oder einer anderen freien Lizenz) veröffentlicht werden darf; Ergebnis in `THIRD_PARTY_NOTICES.md` Abschnitt 1 eintragen. Ohne Bestätigung: Grafik vor der Veröffentlichung ersetzen |
-| V8 | Platzhalter für Repository und Pages-Adresse | `README.md` Abschnitt „Flashen im Browser“, `README.en.md` Abschnitt „Flash in the browser“: `https://<OWNER>.github.io/<REPO>/` | Nach dem Anlegen des Repositorys echte Adresse eintragen. Die Workflows und die Flasher-Seite brauchen keine Platzhalter (sie nehmen den Namen aus GitHub) |
+| V4 | Lokaler Pfad mit Benutzername | `docs/04_build_und_flash.md` Zeile 4 | Erledigt. |
+| V5 | Fest eingetragener Pfad in den lokalen Temp-Ordner des Benutzers | `tools/ui_test.py` Zeilen 92–93 (`_SCRATCH_SHOTS`) | Erledigt. |
+| V6 | Interne Arbeitsnotizen zur Arbeitsteilung | `docs/08_plan_v03.md` Zeilen 44–60 (Spalte „Modell“, „interne Notizen“), `docs/11_plan_v04.md` Zeilen 77–97 (ebenso), `docs/04_build_und_flash.md` Zeile 55, `docs/13_display_animation_briefing.md` Zeile 3 | Erledigt. |
+| V7 | Lizenz der Maskottchen-Grafik „LIO“ ungeklärt | `firmware/printdrive/main/anim/*.png`, daraus erzeugt `anim_data.inc` | Erledigt: eigene Arbeit des Rechteinhabers, steht unter der MIT-Lizenz des Repositorys. |
+| V8 | Platzhalter für Repository und Pages-Adresse | `README.md` Abschnitt „Flashen im Browser“, `README.en.md` Abschnitt „Flash in the browser“: `https://<OWNER>.github.io/wifi-datadrive/` | Nach dem Anlegen des Repositorys echte Adresse eintragen. Die Workflows und die Flasher-Seite brauchen keine Platzhalter (sie nehmen den Namen aus GitHub) |
 | V9 | README verweist auf ein Werksabbild in `backup\`, das nicht veröffentlicht wird | `README.md` Schnellstart Punkt 0, `docs/04_build_und_flash.md` Abschnitt 5 | Für Fremde ergänzen, woher das LILYGO-Werksabbild kommt (Hersteller-Repository); das Abbild selbst **nicht** einchecken (`backup/*.bin` ist ignoriert) |
 | V10 | Geräte-MAC-Adresse und daraus abgeleiteter Name des Einrichtungs-WLANs | `docs/01_bestandsaufnahme.md` Zeile 24, `docs/05_testprotokoll.md` Zeile 52; `PrintDrive-54D5` in `docs/03`, `docs/04`, `docs/05` | Geringes Risiko (identifiziert nur dieses Exemplar). Nach Wunsch kürzen, z. B. `e0:72:a1:xx:xx:xx` |
 | V11 | Eintrag für einen lokalen Werkzeugordner | `.gitignore` Zeile 26 | Der Eintrag nennt den Ordnernamen eines Werkzeugs. Wer das nicht veröffentlichen will: Zeile löschen und denselben Eintrag in `.git/info/exclude` setzen (wirkt nur lokal) |
@@ -48,7 +48,7 @@ vereinheitlichen (17 Dateien liegen mit CRLF im Repository). Vorgehen steht als 
 
 1. Auf GitHub ein neues **öffentliches** Repository anlegen, Vorschlag für den Namen:
    `wifi-datadrive`. **Ohne** README, Lizenz und `.gitignore` von GitHub (liegen schon vor).
-2. Lokal: `git remote add origin https://github.com/<OWNER>/<REPO>.git`, dann `git push -u origin main`.
+2. Lokal: `git remote add origin https://github.com/<OWNER>/wifi-datadrive.git`, dann `git push -u origin main`.
 3. Beschreibung und Themen setzen, z. B. `esp32-s3`, `esp-idf`, `usb-mass-storage`, `3d-printing`,
    `webdav`, `lilygo`.
 4. Einstellungen:
