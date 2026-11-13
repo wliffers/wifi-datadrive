@@ -665,7 +665,7 @@ Schlüssel-ID des Geräts steht hier bewusst nicht.
 | Nr. | Prüfpunkt | Ergebnis | Datum |
 |---|---|---|---|
 | T10.2a | Schritt 1: signierte 0.6.0 auf 0.5.0 über die Weboberfläche; danach `/api/status` | **bestanden**: siehe T10.1; `ota.signed_required: true`, `ota.key_id` = ID des Schlüssels des Besitzers | 2026-11-13 |
-| T10.2b | Schritt 2 oder 3: unsignierte 0.6.0 einspielen | **bestanden**: `422 UNSIGNED`; Gerät lief ohne Neustart weiter. Beide unsignierten Dateien wurden geprüft (normaler Build `build\printdrive.bin` und `build_signed\printdrive-unsigned.bin`), beide `422 UNSIGNED`; ist nicht protokolliert | 2026-11-13 |
+| T10.2b | Schritt 2 oder 3: unsignierte 0.6.0 einspielen | **bestanden**: `422 UNSIGNED`; Gerät lief ohne Neustart weiter. Beide unsignierten Dateien wurden geprüft (normaler Build `build\printdrive.bin` und `build_signed\printdrive-unsigned.bin`), beide `422 UNSIGNED`. | 2026-11-13 |
 | T10.2c | Schritt 4: dieselbe 0.6.0 mit einem anderen Schlüssel signiert | **bestanden**: `422 BAD_SIGNATURE`; Gerät lief ohne Neustart weiter | 2026-11-13 |
 | T10.2d | Schritte 5 bis 12: veränderte Datei, Text- oder Bilddatei, erneutes Einspielen, Rücksprung nach Abziehen, Flashen per USB mit `-Signed`, Schutz von `flash.ps1`, Build ohne Schlüssel, Update über HTTPS | **noch nicht geprüft** | – |
 
