@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0%20unver%C3%B6ffentlicht-2563eb">
+  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0-2563eb">
   <img alt="Board" src="https://img.shields.io/badge/Board-LILYGO%20T--Dongle--S3-0f766e">
   <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.6-6b7280">
   <a href="LICENSE"><img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-16a34a"></a>
@@ -56,8 +56,8 @@ keine App.
 > Einzelheiten stehen im [Haftungsausschluss](HAFTUNGSAUSSCHLUSS.md).
 
 > **Stand 2026-11-13.** Der Quelltext trägt die Version 0.6.0. Sie läuft am Gerät: per Update über den
-> Browser installiert, mit dem API-Test geprüft (415/415) und mit signierten Updates. Ein Release ist noch
-> nicht veröffentlicht. Einiges ist auch in 0.6.0 noch nicht geprüft, zum Beispiel eine feste IP-Adresse am
+> Browser installiert, mit dem API-Test geprüft (415/415) und mit signierten Updates. 0.6.0 ist das erste
+> Release. Einiges ist auch in 0.6.0 noch nicht geprüft, zum Beispiel eine feste IP-Adresse am
 > Gerät und das Sperren nach Ablauf der Zeit. Was genau geprüft ist, steht unter
 > [Geprüft und nicht geprüft](#geprüft-und-nicht-geprüft).
 
@@ -139,8 +139,7 @@ Maskottchen des Autors und steht nicht unter der MIT-Lizenz, siehe <a href="LICE
 4. Zieh den Dongle nach dem Flashen einmal ab und steck ihn wieder ein.
 
 Das Gesamtabbild setzt Benutzer, gespeicherte WLANs und Einstellungen zurück. Die microSD-Karte wird
-dabei nicht beschrieben. Die Flasher-Seite ist mit einem echten Gerät **noch nicht geprüft**, und
-solange kein Release veröffentlicht ist, gibt es dort nichts zu installieren.
+dabei nicht beschrieben. Die Flasher-Seite ist mit einem echten Gerät **noch nicht geprüft**.
 
 Ohne Browser geht es mit esptool:
 `python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin`
@@ -254,8 +253,8 @@ läuft ab 0.6.0 nur in der Dateiverwaltung: Ist das Laufwerk dem Drucker oder PC
 nicht nach Zeit, damit kein Druck abbricht; der Wechsel zurück in die Dateiverwaltung startet die Zeit
 neu. Während ein Upload läuft, wartet es. Die Startseite zeigt die Restzeit; „Zeit zurücksetzen“ startet
 sie neu. Die Einstellungen und die Restzeit sind am Gerät geprüft (bei 15 Minuten nach wenigen Sekunden
-895 s, nach dem Zurücksetzen 900 s), noch mit der Regel vor dieser Änderung; die Regel „nur in der
-Dateiverwaltung“ ist nur gegen den Testserver geprüft, das Sperren nach Ablauf der Zeit selbst ist
+895 s, nach dem Zurücksetzen 900 s), die Regel „nur in der Dateiverwaltung“ ebenfalls (5 Minuten: Countdown in der Dateiverwaltung, im
+USB-Modus keiner, nach dem Zurückschalten volle Zeit). Das Sperren nach Ablauf der Zeit selbst ist
 **noch nicht geprüft**.
 
 **Passwort vergessen:** Entsperre mit dem Wiederherstellungsschlüssel und lege danach unter
@@ -375,7 +374,7 @@ gebaut ist oder am Testserver läuft.
 | Netzlaufwerk mit Explorer, Finder oder Handy-Apps | nicht geprüft |
 | Restzeit bis zum Sperren und „Zeit zurücksetzen“ (0.6.0) | geprüft per API am Gerät (15 Minuten: 895 s, nach dem Zurücksetzen 900 s) |
 | Automatisches Sperren nach Ablauf der Zeit | nicht geprüft |
-| Sperren nach Zeit nur in der Dateiverwaltung, im USB-Modus kein Countdown (0.6.0, nach dem Gerätetest geändert) | nur gegen den Testserver geprüft (API- und Browser-Test) |
+| Sperren nach Zeit nur in der Dateiverwaltung, im USB-Modus kein Countdown (0.6.0) | geprüft per API am Gerät (Dateiverwaltung 294 s, USB-Modus -1, zurück 293 s), dazu API- und Browser-Test gegen den Testserver |
 | Netzwerkeinstellungen lesen (0.6.0): DHCP, Adresse, Maske, Gateway, DNS, Name | geprüft am Gerät |
 | Feste IP-Adresse oder neuen Namen im Netzwerk einstellen (0.6.0) | nicht geprüft (bewusst: ein Fehler bräuchte die 10-Sekunden-Taste vor Ort) |
 | Einrichtungsseite öffnet sich von selbst, WLAN-Suche im Einrichtungs-WLAN | nicht geprüft |
@@ -518,4 +517,4 @@ die Änderungen je Version in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-<p align="center">Version 0.6.0 (am Gerät geprüft, nicht veröffentlicht) · Stand 2026-11-13</p>
+<p align="center">Version 0.6.0 · Stand 2026-11-13</p>

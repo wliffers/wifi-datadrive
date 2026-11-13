@@ -697,8 +697,8 @@ Wechsel zurück in die Dateiverwaltung startet die Frist neu. Lesen und Schreibe
 nicht mehr als Aktivität. Entfallen sind „ab 10 Minuten nimmt die Zeitregel einem untätigen USB-Gerät das
 Laufwerk weg“ und „bei 1 bis 9 Minuten wartet sie (`waiting`)“; `waiting` heißt nur noch: Zeit um, letzter
 Sperrversuch abgewiesen (beschäftigt). `on_detach` ist unverändert. T10.3, T10.4 und T10.11 liefen mit der
-Regel davor. Die neue Regel ist nur gegen den Testserver geprüft (API-Test, Browser-Test PC 878/878,
-Handy-Profil 895/895), am Gerät **noch nicht**. T10.5 und T10.6 gelten mit der neuen Regel.
+Regel davor. Die neue Regel ist gegen den Testserver geprüft (API-Test, Browser-Test PC 878/878,
+Handy-Profil 895/895) und am Gerät **bestanden** (2026-11-13, signierte 0.6.0 per Web-Update installiert: Dateiverwaltung mit 5 Minuten 294 s, USB-Modus `remaining_s` -1 und „Zeit zurücksetzen“ ohne Wirkung, zurück in der Dateiverwaltung 293 s; danach API-Test 415/415, 8 übersprungen). T10.5 und T10.6 gelten mit der neuen Regel.
 
 ### Nachträge zu früheren Punkten
 

@@ -3,11 +3,11 @@
 Alle nennenswerten Änderungen an WiFi DataDrive. Die Versionsnummer steht in
 `firmware/printdrive/CMakeLists.txt` (`PROJECT_VER`) und in der Weboberfläche unter Einstellungen › System.
 
-Bisher ist keine Version als Release veröffentlicht. Das Datum ist der Tag, an dem die Version im
-Repository entstand. „Am Gerät geprüft“ heißt: auf dem LILYGO T-Dongle-S3 mit LCD, Ergebnisse in
+0.6.0 ist das erste veröffentlichte Release; ältere Versionen gibt es nur im Verlauf des Repositorys.
+Das Datum ist der Tag, an dem die Version entstand. „Am Gerät geprüft“ heißt: auf dem LILYGO T-Dongle-S3 mit LCD, Ergebnisse in
 [docs/05_testprotokoll.md](docs/05_testprotokoll.md).
 
-## [0.6.0] – 2026-11-13, noch nicht veröffentlicht
+## [0.6.0] – 2026-11-13
 
 ### Neu
 - **Restzeit bis zum Sperren:** Ist das automatische Sperren eingestellt, zeigt die Karte „Verschlüsselt“
@@ -17,8 +17,8 @@ Repository entstand. „Am Gerät geprüft“ heißt: auf dem LILYGO T-Dongle-S3
   Dateiverwaltung das Laufwerk hat. Ist es dem USB-Gerät bereitgestellt, gibt es keinen Countdown und kein
   Sperren nach Zeit, damit Drucker oder PC nicht mitten in der Arbeit das Laufwerk verlieren; der Wechsel
   zurück in die Dateiverwaltung startet die Frist neu. Bis 0.5.0 nahm die Zeitregel einem untätigen
-  USB-Gerät das Laufwerk weg. „Sperren, wenn das USB-Gerät getrennt wird“ wirkt unverändert. Geändert nach
-  dem Gerätetest, nur gegen den Testserver geprüft.
+  USB-Gerät das Laufwerk weg. „Sperren, wenn das USB-Gerät getrennt wird“ wirkt unverändert. Am Gerät
+  geprüft.
 - **Feste Adresse und Name im Netzwerk:** Unter Einstellungen › WLAN wählst du DHCP oder eine feste
   IPv4-Adresse (vorbelegt mit den Werten aus DHCP) und einen eigenen Namen für `name.local`. Mit HTTPS
   erzeugt ein neuer Name eine neue Zertifizierungsstelle, die auf jedem Gerät neu installiert werden muss;
@@ -55,8 +55,7 @@ Repository entstand. „Am Gerät geprüft“ heißt: auf dem LILYGO T-Dongle-S3
 - Behoben: Nach dem Ändern der Sperrzeit meldete die Oberfläche „Stick nicht erreichbar“. Ursache waren
   parallele Anfragen, während der Stick mit HTTPS nur eine Verbindung bedient. Nachgestellt und behoben mit
   einem Modell, das nur eine Verbindung annimmt; am iPhone noch nicht nachgeprüft.
-- Nicht geprüft: feste Adresse und neuer Name am Gerät, das Sperren nach Ablauf der Zeit, die Zeitregel
-  nur in der Dateiverwaltung (am Gerät), der Zustand „wartet“, das Zurücksetzen per Taste, die Rückkehr
+- Nicht geprüft: feste Adresse und neuer Name am Gerät, das Sperren nach Ablauf der Zeit, der Zustand „wartet“, das Zurücksetzen per Taste, die Rückkehr
   zur alten Version nach einem Fehlstart.
 
 ### Bekannte Grenzen

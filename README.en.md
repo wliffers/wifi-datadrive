@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0%20unreleased-2563eb">
+  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0-2563eb">
   <img alt="Board" src="https://img.shields.io/badge/Board-LILYGO%20T--Dongle--S3-0f766e">
   <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.6-6b7280">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-16a34a"></a>
@@ -57,8 +57,8 @@ connection and no app.
 > [disclaimer](HAFTUNGSAUSSCHLUSS.md) (German and English).
 
 > **Status 2026-11-13.** The source carries version 0.6.0. It runs on the device: installed by an update
-> in the browser, tested with the API test (415/415) and with signed updates. No release has been
-> published yet. Some parts of 0.6.0 are still untested, for example a static IP address on the device and
+> in the browser, tested with the API test (415/415) and with signed updates. 0.6.0 is the first
+> release. Some parts of 0.6.0 are still untested, for example a static IP address on the device and
 > the lock itself after the timeout. What exactly is tested is listed under
 > [Tested and untested](#tested-and-untested).
 
@@ -137,8 +137,7 @@ the author's mascot and is not covered by the MIT licence, see <a href="LICENSE-
 4. Unplug the dongle once after flashing and plug it back in.
 
 The full image resets users, saved Wi-Fi networks and settings. The microSD card is not written. The
-flasher page is **untested** with a real device, and as long as no release is published there is nothing
-to install.
+flasher page is **untested** with a real device.
 
 Without a browser, use esptool:
 `python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin`
@@ -246,8 +245,8 @@ in the file manager: while the drive is provided to the printer or PC it never l
 is interrupted; switching back to the file manager starts the time again. While an upload runs, it
 waits. The start page shows the time left; "Zeit zurücksetzen" (reset time) starts it again. The
 settings and the time left are tested on the device (with 15 minutes: 895 s after a few seconds, 900 s
-after the reset), still with the rule before this change; the "file manager only" rule is tested against
-the mock server only, and the lock itself after the timeout is **untested**.
+after the reset), and so is the "file manager only" rule (5 minutes: countdown in the file manager, none in
+USB mode, full period again after switching back). The lock itself after the timeout is **untested**.
 
 **Forgot the drive password:** unlock with the recovery key, then set a new drive password under
 **Settings › Sicherheit › Verschlüsselung**. If both password and recovery key are lost, the data is gone.
@@ -362,7 +361,7 @@ built or runs against the mock server.
 | Network drive with Explorer, Finder or phone apps | untested |
 | Time left until lock and "reset time" (0.6.0) | tested via the API on the device (15 minutes: 895 s, 900 s after the reset) |
 | Automatic lock after the timeout | untested |
-| Lock by time only in the file manager, no countdown in USB mode (0.6.0, changed after the device test) | tested against the mock server only (API and browser test) |
+| Lock by time only in the file manager, no countdown in USB mode (0.6.0) | tested via the API on the device (file manager 294 s, USB mode -1, back again 293 s), plus API and browser test against the mock server |
 | Reading the network settings (0.6.0): DHCP, address, mask, gateway, DNS, name | tested on the device |
 | Setting a static IP address or a new network name (0.6.0) | untested (on purpose: a mistake would need the 10-second button on site) |
 | Setup page opening by itself, Wi-Fi scan on the setup network | untested |
@@ -504,4 +503,4 @@ in [CHANGELOG.md](CHANGELOG.md) (all German).
 
 ---
 
-<p align="center">Version 0.6.0 (tested on the device, not released) · status 2026-11-13</p>
+<p align="center">Version 0.6.0 · status 2026-11-13</p>
