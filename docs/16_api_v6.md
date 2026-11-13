@@ -4,7 +4,7 @@ Ergänzung zu [09_api_v3.md](09_api_v3.md), [12_api_v4.md](12_api_v4.md) und [15
 
 **Stand am Gerät (2026-11-13, Firmware 0.6.0, Ergebnisse in [05_testprotokoll.md](05_testprotokoll.md) Phase 10):** API-Test 415/415 mit 7 übersprungenen Prüfungen.
 
-- Abschnitt 1: `remaining_s` und `POST /api/autolock/touch` am Gerät geprüft (15 Minuten: 895, nach `touch` 900). **Noch nicht geprüft:** der Zustand `waiting` und das Sperren selbst nach Ablauf der Zeit.
+- Abschnitt 1: `remaining_s` und `POST /api/autolock/touch` am Gerät geprüft (15 Minuten: 895, nach `touch` 900). **Noch nicht geprüft:** der Zustand `waiting` und das Sperren selbst nach Ablauf der Zeit. **Nach dem Gerätetest geändert:** Die Zeitregel läuft nur noch, solange die Dateiverwaltung das Laufwerk hat (1.1); diese Regel ist nur im Testserver geprüft, noch nicht am Gerät.
 - Abschnitt 2: `GET /api/network` am Gerät geprüft (DHCP, aktuelle Adresse, Maske, Gateway, DNS, Gerätename). Von `POST /api/settings/network` lief am Gerät nur der Teil des API-Tests ohne `--network-test` (Anfragen, die schon durch ihre Form ungültig sind). **Noch nicht geprüft:** die Prüfungen von Maske und Subnetz, das Umstellen auf eine feste Adresse, ein neuer Gerätename, das Zurücksetzen per Taste.
 - Abschnitt 3: `signed_required:true` und `key_id` am Gerät geprüft; `422 UNSIGNED` (unsignierte Datei) und `422 BAD_SIGNATURE` (anderer Schlüssel) am Gerät geprüft, die laufende Firmware lief danach ohne Neustart weiter. **Noch nicht geprüft:** eine nach dem Signieren veränderte Datei, Update über HTTPS.
 
@@ -16,15 +16,11 @@ Gemeinsam mit Version 3 bis 5 gilt: `POST` braucht den Header `X-PrintDrive: 1` 
 
 Das Objekt `autolock` in `GET /api/status` (Version 5, Abschnitt 2) bekommt zwei Felder: `"autolock":{"minutes":30,"on_detach":false,"remaining_s":1712,"waiting":false}`.
 
+- **Die Zeitregel läuft nur in der Dateiverwaltung.** Sie zählt nur, solange die Dateiverwaltung das Laufwerk hat (`drive.owner` = `app`). Ist das Laufwerk dem USB-Gerät bereitgestellt (`drive.owner` = `usb`), ist sie aus: kein Countdown, kein Sperren nach Zeit, denn sonst würde sie Drucker oder PC mitten in der Arbeit stören. Jeder Wechsel zurück in die Dateiverwaltung startet die Frist neu. **Das ersetzt die Zeitregel aus Version 5, Abschnitt 2** („Ein untätiges USB-Gerät verliert dabei das Medium“ gilt ab 0.6.0 nicht mehr). Die Regel `on_detach` bleibt unverändert und wirkt weiter auch im USB-Modus.
 - `remaining_s`: Sekunden, bis die Zeitregel (`minutes`) das Laufwerk sperrt, wenn bis dahin nichts geschieht. Auf ganze Sekunden aufgerundet, höchstens `minutes × 60`.
-- **`-1`: es läuft kein Countdown**, nämlich wenn das Sperren nach Zeit aus ist (`minutes:0`), das Laufwerk nicht verschlüsselt, gesperrt oder beschädigt ist, oder gerade eine Übertragung oder ein langer Vorgang läuft (Up- oder Download, ZIP, Kopieren, rekursives Löschen, Formatieren; ein laufender Vorgang zählt als Aktivität, die Frist beginnt erst danach).
-- **`0` mit `waiting:true`: die Zeit ist abgelaufen, das Sperren ist aber aufgeschoben.** Das ist der Fall, solange
-  - ein USB-Gerät das Laufwerk hält und `minutes` zwischen 1 und 9 liegt (siehe unten), oder
-  - das USB-Gerät gerade schreibt (Schreibschutzzeit `write_guard_ms`) oder das Laufwerk beschäftigt ist und der letzte Sperrversuch deshalb abgewiesen wurde.
-  
-  Sobald der Grund entfällt, wird gesperrt. `waiting` ist sonst immer `false`.
-- **Kurze Zeiten nehmen dem USB-Gerät das Laufwerk nicht weg:** Ein USB-Gerät „hält“ das Laufwerk, solange es ihm bereitgestellt ist (`drive.owner` = `usb`), angeschlossen ist, es nicht ausgeworfen hat und nicht länger als die Frist für `on_detach` im Ruhezustand ist. Bei `minutes` von 1 bis 9 wartet die Zeitregel dann, bis das USB-Gerät das Laufwerk nicht mehr hält; ab 10 Minuten nimmt sie es ihm weg (wie in Version 5 beschrieben: ein untätiges USB-Gerät verliert das Medium). Die Regel `on_detach` bleibt davon unberührt.
-- **Was die Frist neu startet:** jede Datei-Anfrage (Liste in Version 5, Abschnitt 2), jedes Lesen oder Schreiben des USB-Geräts, `POST /api/autolock/touch` (1.2), das Entsperren und jede Änderung von `minutes`. **Das Abfragen von `/api/status` zählt nicht**, ebenso wenig Sitzung und `/api/crypt`: eine offene Seite hält das Laufwerk nicht offen.
+- **`-1`: es läuft kein Countdown**, nämlich wenn das Sperren nach Zeit aus ist (`minutes:0`), das Laufwerk nicht verschlüsselt, gesperrt oder beschädigt ist, **dem USB-Gerät bereitgestellt ist** (`drive.owner` = `usb`), oder gerade eine Übertragung oder ein langer Vorgang läuft (Up- oder Download, ZIP, Kopieren, rekursives Löschen, Formatieren; ein laufender Vorgang zählt als Aktivität, die Frist beginnt erst danach).
+- **`0` mit `waiting:true`: die Zeit ist abgelaufen, der letzte Sperrversuch wurde aber abgewiesen,** weil das Laufwerk gerade beschäftigt war. Das Gerät versucht es alle paar Sekunden erneut und sperrt, sobald es frei ist. `waiting` ist sonst immer `false`.
+- **Was die Frist neu startet:** jede Datei-Anfrage (Liste in Version 5, Abschnitt 2), `POST /api/autolock/touch` (1.2), das Entsperren, jede Änderung von `minutes` und der Wechsel in die Dateiverwaltung. Lesen und Schreiben des USB-Geräts spielt keine Rolle (in der Dateiverwaltung kann es nicht zugreifen). **Das Abfragen von `/api/status` zählt nicht**, ebenso wenig Sitzung und `/api/crypt`: eine offene Seite hält das Laufwerk nicht offen.
 - Der Wert ist eine Momentaufnahme. Das Gerät prüft die Regel alle paar Sekunden; nach `remaining_s:0` (ohne `waiting`) kann es daher bis zu einigen Sekunden dauern, bis `crypt.unlocked` `false` meldet.
 
 ### 1.2 Endpunkt
@@ -33,7 +29,7 @@ Das Objekt `autolock` in `GET /api/status` (Version 5, Abschnitt 2) bekommt zwei
 |---|---|---|---|---|
 | POST | `/api/autolock/touch` | user | – | „Ich arbeite noch“: startet die Frist der Zeitregel neu wie eine Datei-Anfrage. `{"ok":true,"remaining_s":1800}` mit der neuen Restzeit; `-1`, wenn kein Countdown läuft (Fälle wie in 1.1; dann ändert sich nichts). Auch im gesperrten Zustand erreichbar (`200`, `-1`). |
 
-Die Oberfläche zeigt die Restzeit auf der Karte „Verschlüsselt“ an; der Knopf „Zeit zurücksetzen“ daneben schickt `POST /api/autolock/touch`. `on_detach` wird durch `touch` nicht aufgehalten.
+Die Oberfläche zeigt die Restzeit auf der Karte „Verschlüsselt“ an; der Knopf „Zeit zurücksetzen“ daneben schickt `POST /api/autolock/touch`. Im USB-Modus (`remaining_s:-1`) zeigt die Karte keine Restzeit. `on_detach` wird durch `touch` nicht aufgehalten.
 
 ## 2. Netzwerkeinstellungen
 
@@ -136,8 +132,8 @@ Unverändert und hier ebenfalls verwendet: `400 BAD_REQUEST`, `422 INVALID_FILE`
 ## 7. Testserver und Test
 
 - `tools/mock_server.py` bildet Version 6 nach (Prüfungen und Texte wie die Firmware). Zusätzliche Schalter unter `/mock/set`:
-  - `autolock_remaining=<s>`: verschiebt die letzte Aktivität so, dass der Countdown `s` Sekunden zeigt (braucht `minutes` > 0; `0` sperrt sofort, wenn nichts aufschiebt). Derselbe Mechanismus wie `idle_s`, nur von der anderen Seite.
-  - `autolock_waiting=0|1`: `1` schiebt das Sperren nach Zeit auf; ist die Zeit um, meldet der Status `remaining_s:0`, `waiting:true`. Die Regel „1 bis 9 Minuten nehmen dem USB-Gerät das Laufwerk nicht weg“ gilt im Testserver ohnehin.
+  - `autolock_remaining=<s>`: verschiebt die letzte Aktivität so, dass der Countdown `s` Sekunden zeigt (braucht `minutes` > 0; `0` sperrt sofort, wenn der Sperrversuch nicht abgewiesen wird). Derselbe Mechanismus wie `idle_s`, nur von der anderen Seite. Im USB-Modus gibt es keinen Countdown; die Zeitregel des Testservers läuft wie die der Firmware nur in der Dateiverwaltung.
+  - `autolock_waiting=0|1`: `1` lässt jeden Sperrversuch der Zeitregel scheitern, als wäre das Laufwerk beschäftigt; ist die Zeit um, meldet der Status `remaining_s:0`, `waiting:true`.
   - `net_dhcp=0|1`: gespeicherte Netzwerk-Einstellung (`0` ohne gespeicherte feste Werte setzt `192.0.2.152/24`, Gateway und DNS `192.0.2.1`).
   - `net_fail=1` (oder Sekunden): Nach der nächsten angenommenen Netzwerkänderung setzt der Testserver 3 Sekunden (bzw. so viele) lang jede Verbindung zurück, wie bei einem Adresswechsel. Ohne den Schalter bleibt er erreichbar; er lauscht immer auf seiner eigenen Adresse, `current` und `wifi.ip` zeigen aber die eingestellte.
   - `ota_signed=0|1`: Updates müssen signiert sein (`key_id` des Testservers `4d6f636b`).
@@ -145,6 +141,6 @@ Unverändert und hier ebenfalls verwendet: `400 BAD_REQUEST`, `422 INVALID_FILE`
   
   Der Gerätename des Testservers ist `datadrive-mock`, seine Adresse mit DHCP `192.0.2.152`.
 - `tools/api_test.py` prüft Version 6 in den Abschnitten 17 bis 19; nur diese: `python tools/api_test.py HOST --password PW --only v6` (einzeln: `--only countdown,network,otasig`).
-  - Abschnitt 17 setzt die Zeit vorübergehend auf 30 Minuten (stellt sie wieder her) und prüft Restzeit, Abfragen ohne Wirkung, `touch` und Datei-Anfragen. Den Zustand `waiting` prüft er nicht (dauert mindestens eine Minute).
+  - Abschnitt 17 setzt die Zeit vorübergehend auf 30 Minuten (stellt sie wieder her) und prüft in der Dateiverwaltung Restzeit, Abfragen ohne Wirkung, `touch` und Datei-Anfragen, im USB-Modus `remaining_s:-1` (auch nach `touch`) und nach dem Wechsel zurück die volle Frist. Den Modus wechselt er nicht mit `--skip-destructive` und nicht, wenn die Dateiverwaltung das Laufwerk hat und ein USB-Gerät angeschlossen ist (wie Abschnitt 4; am Testserver trotzdem). Den Zustand `waiting` prüft er nur am Testserver (`autolock_waiting=1`); am Gerät müsste ein Sperrversuch genau beim Ablauf der Zeit abgewiesen werden.
   - Abschnitt 18 liest die Einstellungen und schickt am Gerät nur Anfragen, die schon durch ihre Form ungültig sind (fehlende oder unlesbare Werte, ungültige Gerätenamen bei unverändertem Modus und unveränderten Adressen); nimmt das Gerät eine davon trotzdem an, stellt der Test sofort den vorigen Stand her. Die Prüfungen von Maske, Subnetz, Netz- und Broadcast-Adresse sowie das Umstellen (DHCP → feste aktuelle Adresse → DHCP, bzw. bei fester Adresse nur ein vorübergehender Gerätename) laufen am Gerät nur mit `--network-test`; der Test wartet nach jeder Änderung, bis das Gerät wieder antwortet, und stellt am Ende den vorigen Stand her. Am Testserver läuft alles ohne Schalter.
   - Abschnitt 19 prüft die Statusfelder; mit `--ota-probe` und `signed_required:true` außerdem drei nie startfähige Abbilder (Größe kein Vielfaches von 4096, unsigniert, Signaturblock mit fremdem Schlüssel), die mit `422` abgewiesen werden müssen, ohne dass sich die Partition ändert.

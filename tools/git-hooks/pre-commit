@@ -1,0 +1,35 @@
+#!/bin/sh
+# pre-commit: checks the staged files and the commit identity with tools/publish_check.py
+# (--tree-only). Enable once per clone:  git config core.hooksPath tools/git-hooks
+# (or run tools/install-hooks.ps1). Bypassing with --no-verify defeats the purpose; fix the
+# finding instead. Details: docs/19_sicherer_veroeffentlichungsprozess.md
+
+top=$(git rev-parse --show-toplevel) || exit 1
+checker="$top/tools/publish_check.py"
+if [ ! -f "$checker" ]; then
+    echo "pre-commit: $checker not found" >&2
+    exit 1
+fi
+
+# Find a Python 3.10+ (on Windows "python3" can be a store stub that only prints a hint).
+py=""
+for cand in python3 python py; do
+    if command -v "$cand" >/dev/null 2>&1; then
+        if [ "$cand" = py ]; then set -- -3; else set --; fi
+        if "$cand" "$@" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+            py="$cand"
+            break
+        fi
+    fi
+done
+if [ -z "$py" ]; then
+    echo "pre-commit: Python 3.10 or newer not found; the publication check cannot run." >&2
+    exit 1
+fi
+
+"$py" "$@" "$checker" --tree-only
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "pre-commit: commit stopped by tools/publish_check.py (exit $rc)." >&2
+fi
+exit $rc

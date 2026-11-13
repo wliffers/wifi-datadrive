@@ -441,8 +441,8 @@ Gerät 354/354). Die Beschreibung folgt dem Quelltext und den Kommentaren darin.
   Zeitzone als POSIX-Zeichenkette (Voreinstellung Deutschland mit Sommerzeit); sie bestimmt die
   Ortszeit, die auf das FAT geschrieben wird. Ohne NTP stellt der Browser die Uhr. Verifiziert:
   Uhr nach dem Start gestellt.
-- **Automatisches Sperren (`drive.c`):** prüft Untätigkeit von Web, WebDAV und USB-Gerät und das
-  Verschwinden des USB-Geräts; sperrt nie während eines Schreibvorgangs oder einer Übertragung.
+- **Automatisches Sperren (`drive.c`):** Zeitablauf nur in der Dateiverwaltung (Untätigkeit von Web und WebDAV; im USB-Modus läuft keine Zeit),
+  dazu auf Wunsch das Verschwinden des USB-Geräts; sperrt nie während eines Schreibvorgangs oder einer Übertragung.
   Wirkung wie das Sperren von Hand. Zeitablauf am Gerät **noch nicht geprüft**.
 - **Upload fortsetzen (`drive.c`, `web_files.c`):** höchstens ein angefangener Upload; sein
   Stand liegt nur im Arbeitsspeicher, die Daten in der Temp-Datei. Verifiziert per API-Test.

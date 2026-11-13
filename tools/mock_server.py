@@ -122,9 +122,10 @@ Behaviour mirrored from the firmware
     and `now`) is real Unix time (UTC) from v5 on. Files uploaded without `mtime` and new folders get the device
     clock, 0 while it is unknown (scenario ap_setup, /mock/set?clock=unsynced).
   - Automatic lock: `autolock` {minutes, on_detach} in /api/status, POST /api/settings/autolock (admin). File
-    requests (and host reads/writes) count as activity, status polls do not; never locks while an upload by another
-    client runs or the host writes. Simulate idle time with /mock/set?idle_s=N. on_detach: locks 10 s after
-    usb_connected=0 or after 60 s of usb_suspended=1.
+    requests count as activity, status polls do not; never locks while an upload by another client runs. Since
+    0.6.0 (API v6) the timer only runs in file manager mode (see below). Simulate idle time with /mock/set?idle_s=N.
+    on_detach (also in USB mode; not while the host writes): locks 10 s after usb_connected=0 or after 60 s of
+    usb_suspended=1.
   - Display language: `lang` in /api/status, POST /api/settings/lang?value=de|en (user).
   - Resumable upload: GET /api/upload/resume?path=&size=, POST /api/upload?path=&size=&offset=N (409
     RESUME_MISMATCH with the server's `offset`, also for offset=0 while a part of that file is held and for
@@ -144,12 +145,13 @@ Behaviour mirrored from the firmware
 
 * API v6 (docs/16_api_v6.md):
   - Auto-lock countdown: `autolock` in /api/status also carries `remaining_s` (seconds until the timer locks, -1 when no
-    countdown runs: timer off, drive not encrypted / locked / damaged, upload of another client running) and `waiting`
-    (true with remaining_s 0: the time is up, but the lock is postponed). Like the firmware, a timer of 1..9 minutes
-    never takes the drive from a USB host that holds it (owner usb, host connected, not ejected, not suspended for
-    60 s); the countdown then stays at 0 / waiting until the host lets go. Host reads/writes and file requests
-    restart the period, status polls do not. POST /api/autolock/touch (user) restarts it too:
-    {"ok":true,"remaining_s":S}. Mock controls: autolock_remaining=<s>, autolock_waiting=0|1 (see below).
+    countdown runs: timer off, drive not encrypted / locked / damaged, upload of another client running, or the drive
+    provided to the USB device) and `waiting` (true with remaining_s 0: the time is up, but the lock attempt was
+    refused). Like the firmware, the timer runs only while the file manager owns the drive (owner app): with
+    owner usb there is no countdown and the timer never locks; every switch to the file manager starts the period
+    anew. File requests restart the period, status polls do not; host reads/writes play no part (they cannot happen
+    in file manager mode). POST /api/autolock/touch (user) restarts it too: {"ok":true,"remaining_s":S}. on_detach is
+    not affected. Mock controls: autolock_remaining=<s>, autolock_waiting=0|1 (see below).
   - Network settings: GET /api/network (admin), POST /api/settings/network?dhcp=0|1[&ip=&mask=&gateway=&dns=]
     [&hostname=] (admin; parameters as form body or, without a body, in the query; dhcp also true/false). Rules and
     German texts of the firmware: 400 BAD_REQUEST naming the field in the text (no extra JSON key); mask /8../30;
@@ -253,13 +255,13 @@ Control endpoints (GET, no CSRF header, no login, exist only in the mock)
                             none clears
     upload_drop_after=<bytes>    the next upload/push connection is reset after that many body bytes (a
                             resumable upload keeps the whole 4 KiB blocks received); none clears
-    idle_s=<n>              pretend the last file activity, host access, unplugging and suspend were n s ago (the automatic
-                            lock strikes at once if due)
+    idle_s=<n>              pretend the last file activity, host access, unplugging, suspend and (owner app) the switch to
+                            the file manager were n s ago (the automatic lock strikes at once if due)
     autolock_remaining=<s>  (API v6) shift the last activity so that the countdown shows s seconds (needs a timer,
-                            0 <= s <= minutes*60; 0 locks at once unless the lock is postponed). Same mechanism as
-                            idle_s, only expressed from the other end
-    autolock_waiting=0|1    (API v6) 1: the timer lock is postponed (as if a host or an operation kept the drive):
-                            when the time is up the status shows remaining_s 0 / waiting true; 0: locks when due
+                            0 <= s <= minutes*60; 0 locks at once unless the lock attempt is refused). Same mechanism as
+                            idle_s, only expressed from the other end. With owner usb there is no countdown
+    autolock_waiting=0|1    (API v6) 1: every timer lock attempt is refused (as if the drive were busy): when the time
+                            is up the status shows remaining_s 0 / waiting true; 0: locks when due
     net_dhcp=0|1            (API v6) stored network mode; 0 without stored static values fills 192.0.2.152 /
                             255.255.255.0 / gateway and DNS 192.0.2.1
     net_fail=0|1|<s>        (API v6) the next successful POST /api/settings/network makes the mock unreachable (connections
@@ -356,13 +358,12 @@ EPOCH_MIN = 1_700_000_000           # plausible clock for POST /api/time: after 
 EPOCH_MAX = 4_102_444_800           # ... and before 2100-01-01
 AUTOLOCK_MAX = 1440                 # minutes
 DETACH_LOCK_S = 10                  # on_detach: lock this long after the host disappeared ...
-SUSPEND_LOCK_S = 60                 # ... or after this long in USB suspend
+SUSPEND_LOCK_S = 300                # ... or after this long in USB suspend (5 min, like the firmware)
 RESUME_BLOCK = 4096                 # a broken resumable upload keeps whole blocks of this size
 ZIP_FILES_MAX = 4096                # more files in the tree: 413 TOO_MANY_FILES (firmware limit)
 DAV_PREFIX = "/dav"
 DAV_REALM = "DataDrive"
 # API v6 (docs/16_api_v6.md)
-AUTOLOCK_TAKE_MIN = 10              # shortest timer that may take the drive from a USB host holding it
 HOSTNAME_MOCK = "datadrive-mock"    # default host name of the mock (the device: "datadrive")
 HOSTNAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?")      # 1..31, a-z 0-9 '-', not at either end
 NET_DHCP_CURRENT = {"ip": FAKE_IP, "mask": "255.255.255.0",
@@ -524,12 +525,12 @@ SET_HELP = {
                  "OFFSET bytes received; '|' separates)",
     "upload_drop_after": "bytes or none (the next upload/push connection is reset after that many body bytes; a "
                          "resumable upload keeps the received whole 4 KiB blocks)",
-    "idle_s": "seconds (pretend the last file activity, host access, unplugging and suspend were that long ago; triggers the automatic "
-              "lock if due)",
+    "idle_s": "seconds (pretend the last file activity, host access, unplugging, suspend and - in file manager mode - the "
+              "switch to it were that long ago; triggers the automatic lock if due)",
     "autolock_remaining": "seconds (API v6: shift the last activity so that the countdown shows that many seconds; needs a "
-                          "timer, 0..minutes*60; 0 locks at once unless postponed)",
-    "autolock_waiting": "0|1 (API v6: 1 postpones the timer lock; when the time is up the status shows remaining_s 0, "
-                        "waiting true)",
+                          "timer, 0..minutes*60; 0 locks at once unless refused; no countdown while owner=usb)",
+    "autolock_waiting": "0|1 (API v6: 1 makes every timer lock attempt fail as if the drive were busy; when the time is up "
+                        "the status shows remaining_s 0, waiting true)",
     "net_dhcp": "0|1 (API v6: stored network mode; 0 without stored static values fills 192.0.2.152/24, gateway 192.0.2.1)",
     "net_fail": "0|1|<s> (API v6: the next network change makes the mock unreachable for 3 s (1) or s seconds)",
     "ota_signed": "0|1 (API v6: updates must be signed; status.ota.signed_required / key_id)",
@@ -1093,7 +1094,7 @@ class Device:
         self.copy_kbps = 0
         self.ota_fail = None
         # API v6
-        self.autolock_hold = False        # /mock/set?autolock_waiting=1: the timer lock is postponed
+        self.autolock_hold = False        # /mock/set?autolock_waiting=1: every timer lock attempt is refused (busy)
         self.net_dhcp = True              # network settings (one for all stored Wi-Fi networks)
         self.net_static = {"ip": "", "mask": "", "gateway": "", "dns": ""}     # stored, empty until set
         self.hostname = HOSTNAME_MOCK
@@ -1352,45 +1353,52 @@ class Device:
         if not (self.crypt_enabled and self.crypt_unlocked and not self.crypt_damaged) or self.pending_boot:
             self.detach_at = None
             return
-        if self.busy_for_lock():
-            return
         now = time.monotonic()
-        if self.autolock_detach and self.detach_at is not None and now - self.detach_at >= DETACH_LOCK_S:
-            self._crypt_lock("automatic: USB host unplugged")
-            return
-        if (self.autolock_detach and self.usb_suspended and self.suspend_since is not None
-                and now - self.suspend_since >= SUSPEND_LOCK_S):
-            self._crypt_lock("automatic: USB host suspended")
-            return
-        if self.autolock_min > 0 and now - self.autolock_last() >= self.autolock_min * 60 and not self.autolock_postponed():
+        # on_detach (works in USB mode too; never while an operation runs or the host writes)
+        if not self.busy_for_lock():
+            if self.autolock_detach and self.detach_at is not None and now - self.detach_at >= DETACH_LOCK_S:
+                self._crypt_lock("automatic: USB host unplugged")
+                return
+            if (self.autolock_detach and self.usb_suspended and self.suspend_since is not None
+                    and now - self.suspend_since >= SUSPEND_LOCK_S):
+                self._crypt_lock("automatic: USB host suspended")
+                return
+        # timer (API v6, 0.6.0): runs only while the file manager owns the drive, never in USB mode
+        if self.autolock_due() and not self.autolock_hold:
             self._crypt_lock(f"automatic: {self.autolock_min} min without activity")
 
+    @property
+    def owner(self) -> str:
+        return self._owner
+
+    @owner.setter
+    def owner(self, value: str):
+        """Every owner change is noted: the timer period starts afresh when the file manager gets the drive."""
+        if value != getattr(self, "_owner", None):
+            self.owner_since = time.monotonic()
+        self._owner = value
+
     def autolock_last(self) -> float:
-        """Start of the current timer period: the last file request / touch, host read or host write."""
-        if self.write_hold:
-            return time.monotonic()
-        return max(x for x in (self.last_activity, self.last_read, self.last_write) if x is not None)
+        """Start of the current timer period: the last file request / touch, at the earliest the switch to the file
+        manager. Host reads/writes do not count (they cannot happen in file manager mode)."""
+        return max(self.last_activity, self.owner_since)
 
-    def host_holds(self) -> bool:
-        """A USB host holds the drive: provided to it, connected, not ejected, not suspended for SUSPEND_LOCK_S."""
-        suspended_long = (self.usb_suspended and self.suspend_since is not None
-                          and time.monotonic() - self.suspend_since >= SUSPEND_LOCK_S)
-        return self.owner == "usb" and self.usb_connected and not self.host_ejected and not suspended_long
-
-    def autolock_postponed(self) -> bool:
-        """The timer is due but may not lock: a timer of 1..9 minutes never takes the drive from a host holding it
-        (API v6, like the firmware); /mock/set?autolock_waiting=1 postpones as well."""
-        return self.autolock_hold or (self.autolock_min < AUTOLOCK_TAKE_MIN and self.host_holds())
+    def autolock_due(self) -> bool:
+        """The timer's time is up: timer on, file manager mode, no upload of another client, period over."""
+        return (self.autolock_min > 0 and self.owner == "app" and self.other_upload is None
+                and time.monotonic() - self.autolock_last() >= self.autolock_min * 60)
 
     def autolock_countdown(self):
-        """(remaining_s, waiting) of status.autolock (API v6)."""
+        """(remaining_s, waiting) of status.autolock (API v6). -1: no countdown (timer off, not unlocked, transfer
+        running, or the drive is provided to the USB device). waiting: the time is up but the lock attempt was refused
+        (/mock/set?autolock_waiting=1)."""
         if (not (self.crypt_enabled and self.crypt_unlocked and not self.crypt_damaged) or self.autolock_min == 0
-                or self.other_upload is not None or self.pending_boot):
+                or self.other_upload is not None or self.pending_boot or self.owner != "app"):
             return -1, False
         left = self.autolock_min * 60 - (time.monotonic() - self.autolock_last())
         if left > 0:
             return int(math.ceil(left)), False
-        return 0, True                   # due, but postponed (or the lock is refused right now)
+        return 0, True                   # due, but the lock attempt was refused
 
     def autolock_json(self) -> dict:
         remaining, waiting = self.autolock_countdown()
@@ -2070,10 +2078,11 @@ class Device:
             "autolock": {"minutes": self.autolock_min, "on_detach": self.autolock_detach,
                          "idle_s": round(time.monotonic() - max(x for x in (self.last_activity, self.last_read,
                                                                             self.last_write) if x is not None), 1),
+                         "period_start_ago_s": round(time.monotonic() - self.autolock_last(), 1),
                          "lock_after_detach_s": None if self.detach_at is None else
                          round(max(0.0, self.detach_at + DETACH_LOCK_S - time.monotonic()), 1),
                          "remaining_s": self.autolock_countdown()[0], "waiting": self.autolock_countdown()[1],
-                         "postponed": self.autolock_postponed(), "hold": self.autolock_hold},
+                         "timer_runs": self.owner == "app", "hold": self.autolock_hold},
             "network": {**self.network_json(), "net_fail_s": self.net_fail_s,
                         "down_remaining_s": None if self.net_down_until is None else
                         round(max(0.0, self.net_down_until - time.monotonic()), 1)},
@@ -2429,9 +2438,11 @@ class Device:
                 self.detach_at -= back
             if self.suspend_since is not None:
                 self.suspend_since -= back
+            if self.owner == "app":             # the period cannot have started before the switch to the file manager
+                self.owner_since -= back
         if "autolock_waiting" in v:
             self.autolock_hold = v["autolock_waiting"]
-            notes.append("timer lock " + ("postponed while due (waiting)" if self.autolock_hold else "locks when due"))
+            notes.append("timer lock " + ("refused while due (waiting)" if self.autolock_hold else "locks when due"))
         if "autolock_remaining" in v:
             start = time.monotonic() - (self.autolock_min * 60 - v["autolock_remaining"])
             self.last_activity = start
@@ -2439,8 +2450,11 @@ class Device:
                 self.last_read = min(self.last_read, start)
             if self.last_write is not None:
                 self.last_write = min(self.last_write, start)
-            if self.write_hold:
-                notes.append("host_writing=hold keeps restarting the period: the countdown stays at the full time")
+            if self.owner == "app":
+                self.owner_since = min(self.owner_since, start)
+            else:
+                notes.append("the drive is provided to the USB device: no countdown (the timer only runs in file manager "
+                             "mode and starts afresh when the file manager gets the drive)")
         if "net_dhcp" in v:
             self.net_dhcp = v["net_dhcp"]
             if not self.net_dhcp and not self.net_static["ip"]:

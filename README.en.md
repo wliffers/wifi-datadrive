@@ -81,8 +81,8 @@ Up to 8 users with the roles `admin` and `user`. Devices you trust stay signed i
 
 **Encryption if you want it.**
 AES-256-XTS on the memory card, off by default. After each plug-in you unlock the drive in the browser.
-If you like, it locks itself after a time without access; from 0.6.0 the interface shows the remaining
-time.
+If you like, it locks itself after a time without access while the file manager has the drive; from
+0.6.0 the interface shows the remaining time.
 
 **Several Wi-Fi networks.**
 Up to 5 networks; the stick connects to the strongest. When you add one, it lists the networks in range.
@@ -241,11 +241,13 @@ Printing on the X2D from an encrypted stick unlocked by phone is **untested**. D
 important one.
 
 **Automatic lock** (Settings › Speicher & USB, off by default): the drive locks itself after the chosen
-time without access and, if you want, as soon as the USB host disconnects. While the USB host is writing
-or an upload runs, it waits. For long prints choose "off" or a generous time. From 0.6.0 the start page
-shows the time left; "Zeit zurücksetzen" (reset time) starts it again. The settings and the time left are
-tested on the device (with 15 minutes: 895 s after a few seconds, 900 s after the reset); the lock itself
-after the timeout is **untested**.
+time without access and, if you want, as soon as the USB host disconnects. From 0.6.0 the time only runs
+in the file manager: while the drive is provided to the printer or PC it never locks by time, so no print
+is interrupted; switching back to the file manager starts the time again. While an upload runs, it
+waits. The start page shows the time left; "Zeit zurücksetzen" (reset time) starts it again. The
+settings and the time left are tested on the device (with 15 minutes: 895 s after a few seconds, 900 s
+after the reset), still with the rule before this change; the "file manager only" rule is tested against
+the mock server only, and the lock itself after the timeout is **untested**.
 
 **Forgot the drive password:** unlock with the recovery key, then set a new drive password under
 **Settings › Sicherheit › Verschlüsselung**. If both password and recovery key are lost, the data is gone.
@@ -360,6 +362,7 @@ built or runs against the mock server.
 | Network drive with Explorer, Finder or phone apps | untested |
 | Time left until lock and "reset time" (0.6.0) | tested via the API on the device (15 minutes: 895 s, 900 s after the reset) |
 | Automatic lock after the timeout | untested |
+| Lock by time only in the file manager, no countdown in USB mode (0.6.0, changed after the device test) | tested against the mock server only (API and browser test) |
 | Reading the network settings (0.6.0): DHCP, address, mask, gateway, DNS, name | tested on the device |
 | Setting a static IP address or a new network name (0.6.0) | untested (on purpose: a mistake would need the 10-second button on site) |
 | Setup page opening by itself, Wi-Fi scan on the setup network | untested |
@@ -367,7 +370,7 @@ built or runs against the mock server.
 | Firmware update in the browser (0.5.0 to 0.6.0) | tested (once; return after a failed start untested) |
 | Signed updates (0.6.0): unsigned and foreign-signed file refused | tested on the device (`UNSIGNED`, `BAD_SIGNATURE`, no restart) |
 | Web flasher | untested |
-| Web interface (0.6.0) | browser test against the mock server passed (Chromium, PC 872/872, phone profile 889/889); not tested systematically on a real phone |
+| Web interface (0.6.0) | browser test against the mock server passed (Chromium, PC 878/878, phone profile 895/895); not tested systematically on a real phone |
 | Error "Stick nicht erreichbar" (stick not reachable) after changing the lock time (HTTPS) | fixed with a request queue, reproduced with a model that accepts only one connection; not yet re-checked on the iPhone |
 
 Measured with microSD 64 GB: USB write 832 KB/s, browser upload 1.3 to 1.6 MB/s. Encrypted: USB write

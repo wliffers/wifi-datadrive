@@ -442,10 +442,9 @@ void drive_autolock_get(uint16_t *minutes, bool *on_detach);
 
 /**
  * Store and apply the auto-lock settings; the inactivity period restarts. minutes 0 (off) ..
- * DRIVE_AUTOLOCK_MINUTES_MAX, else ESP_ERR_INVALID_ARG. Inactivity = no host READ/WRITE, no local
- * file operation, no upload/download. A USB host that holds the drive (awake or suspended < 5 min,
- * not ejected) only loses it to the timer if minutes >= 10 and it had no READ/WRITE for the whole
- * period; with 1..9 minutes the timer waits until no host holds the drive. on_detach: host not
+ * DRIVE_AUTOLOCK_MINUTES_MAX, else ESP_ERR_INVALID_ARG. The timer runs only while the file manager
+ * owns the drive (never in USB mode; switching back starts the period anew). Inactivity = no local
+ * file operation, no upload/download. on_detach (also in USB mode): host not
  * configured for 10 s, or suspended for 5 min without READ/WRITE. Full rules in drive.c
  * ("auto-lock"). The lock is never forced past DRIVE_ERR_BUSY or DRIVE_ERR_HOST_WRITING (retried
  * every few seconds instead).
@@ -454,9 +453,9 @@ esp_err_t drive_autolock_set(uint16_t minutes, bool on_detach);
 
 /**
  * Seconds until the inactivity timer would lock the drive if nothing happens, or -1 if no
- * countdown runs (timer off, drive not encrypted or locked, upload/download/long operation
- * running). 0 once the time is up; *waiting (may be NULL) is then true if the lock is postponed
- * (a host still holds the drive with a 1..9 minute setting, host writing, busy). Cheap, takes no
+ * countdown runs (timer off, drive not encrypted or locked, drive in USB mode, upload/download/long
+ * operation running). 0 once the time is up; *waiting (may be NULL) is then true if the last lock
+ * attempt was refused (busy). Cheap, takes no
  * lock and does not count as activity (status polls).
  */
 int32_t drive_autolock_remaining_s(bool *waiting);

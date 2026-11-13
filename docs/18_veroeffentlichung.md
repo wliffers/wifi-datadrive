@@ -12,6 +12,10 @@ Das erste Release wird **0.6.0**. Diese Version läuft am Gerät des Besitzers: 
 Weboberfläche von 0.5.0 aus installiert, API-Test am Gerät 415/415; Einzelheiten und was noch nicht
 geprüft ist in [05_testprotokoll.md](05_testprotokoll.md) Phase 10.
 
+Der vereinbarte Ablauf der Veröffentlichung (einfrieren, Prüfprogramm, Test eines frischen Klons,
+zuerst privates Repository, Freigabe, dann öffentlich) mit Wächtern und Notfallplan steht in
+[19_sicherer_veroeffentlichungsprozess.md](19_sicherer_veroeffentlichungsprozess.md).
+
 ## 1. Vor dem ersten Push
 
 Diese Punkte sind offen und müssen vom Besitzer entschieden oder erledigt werden.
@@ -20,7 +24,7 @@ Diese Punkte sind offen und müssen vom Besitzer entschieden oder erledigt werde
 |---|---|---|---|
 | V1 | Name des Rechteinhabers fehlt | `LICENSE` Zeile 3: `Copyright (c) 2026 <NAME>` | Erledigt: Willi Liffers. |
 | V2 | E-Mail-Adresse in allen Commits (Autor und Committer; Stand 2026-11-13: 38 Commits) | `git log --format='%an <%ae> / %cn <%ce>'` | Erledigt: Historie neu geschrieben (Autor „Willi Liffers“, Adresse `wliffers@users.noreply.github.com`, keine Mitautor-Zeilen). |
-| V3 | 33 der 38 Commit-Nachrichten (Stand 2026-11-13) enden mit einer Zeile Mitautor-Zeile mit fremdem Namen und fremder Adresse | `git log --all --format=%B` | Erledigt: Historie neu geschrieben (Autor „Willi Liffers“, Adresse `wliffers@users.noreply.github.com`, keine Mitautor-Zeilen). |
+| V3 | Mitautor-Zeilen in den Commit-Nachrichten | `git log --all --format=%B` | Erledigt: Historie neu geschrieben (Autor „Willi Liffers“, Adresse `wliffers@users.noreply.github.com`, keine Mitautor-Zeilen). |
 | V4 | Lokaler Pfad mit Benutzername | `docs/04_build_und_flash.md` Zeile 4 | Erledigt. |
 | V5 | Fest eingetragener Pfad in den lokalen Temp-Ordner des Benutzers | `tools/ui_test.py` Zeilen 92–93 (`_SCRATCH_SHOTS`) | Erledigt. |
 | V6 | Interne Arbeitsnotizen in alten Plänen | `docs/08_plan_v03.md`, `docs/11_plan_v04.md`, `docs/04_build_und_flash.md`, `docs/13_display_animation_briefing.md` | Erledigt, auch in der Historie. |
@@ -28,7 +32,7 @@ Diese Punkte sind offen und müssen vom Besitzer entschieden oder erledigt werde
 | V8 | Platzhalter für Repository und Pages-Adresse | `README.md` Knopf „Im Browser flashen“ und Abschnitt „Installation“, `README.en.md` ebenso („Flash in the browser“, „Installation“): `https://wliffers.github.io/wifi-datadrive/` | Nach dem Anlegen des Repositorys echte Adresse eintragen. Die Workflows und die Flasher-Seite brauchen keine Platzhalter (sie nehmen den Namen aus GitHub) |
 | V9 | Doku verweist auf ein Werksabbild in `backup\`, das nicht veröffentlicht wird | `docs/04_build_und_flash.md` Abschnitt 5 (die README verweist seit der Neufassung nur noch auf diesen Abschnitt) | Für Fremde ergänzen, woher das LILYGO-Werksabbild kommt (Hersteller-Repository); das Abbild selbst **nicht** einchecken (`backup/*.bin` ist ignoriert) |
 | V10 | Geräte-MAC-Adresse und daraus abgeleiteter Name des Einrichtungs-WLANs | `docs/01_bestandsaufnahme.md` Zeile 24, `docs/05_testprotokoll.md` Zeile 52; `PrintDrive-54D5` in `docs/03`, `docs/04`, `docs/05` | Geringes Risiko (identifiziert nur dieses Exemplar). Nach Wunsch kürzen, z. B. `e0:72:a1:xx:xx:xx` |
-| V11 | Eintrag für einen lokalen Werkzeugordner | `.gitignore` Zeile 26 | Der Eintrag nennt den Ordnernamen eines Werkzeugs. Wer das nicht veröffentlichen will: Zeile löschen und denselben Eintrag in `.git/info/exclude` setzen (wirkt nur lokal) |
+| V11 | Eintrag für einen lokalen Werkzeugordner in `.gitignore` | `.gitignore` | Erledigt: Eintrag steht nur noch lokal in `.git/info/exclude`. |
 
 Prüfen, unmittelbar vor dem Push (alle Befehle im Projektordner):
 

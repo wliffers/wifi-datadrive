@@ -60,7 +60,8 @@ time, "Anleitung öffnen") and the local help page (#!hilfe/<topic>, also signed
 (one "Hochladen" with a menu, no floating button, "Entsperren" once, "Sperren" not in the user menu) and reduced motion.
 API v6 (docs/16_api_v6.md): one request at a time (DEVICE_JS models the device with HTTPS: one connection, a second one
 closes the first; regression test for the lost auto-lock setting), one quiet retry of requests that are safe to repeat,
-the auto-lock countdown in the encryption card (ticking, reset, warning colour, waiting, lock at 0), the address and
+the auto-lock countdown in the encryption card (ticking, reset, warning colour, none in USB mode and the full period after
+switching back, waiting = lock attempt refused, lock at 0), the address and
 network name items (DHCP / fixed with validation at the fields, the "now reachable at" notice with the reachability
 check), signed updates (key line, BAD_SIGNATURE / UNSIGNED) and a folder upload whose name is taken by a file.
 
@@ -3541,6 +3542,13 @@ def t10f_autolock(c: Ctx):
             o["h"] == "Automatisch sperren" and o["v"] == "0" and o["o"] == [["0", "Aus"], ["5", "nach 5 Minuten"], ["15", "nach 15 Minuten"], ["30", "nach 30 Minuten"],
                                                                          ["60", "nach 60 Minuten"], ["c", "Eigene Zeit …"]] and not o["det"], o)
     c.check("the USB switch text", c.text("#alItem .inner + .inner .txt") == "Sperren, wenn das USB-Gerät getrennt wird", c.text("#alItem .inner + .inner .txt"))
+    c.tap("#alItem .ib")
+    c.page.wait_for_timeout(350)
+    pop = c.pop()
+    c.check("the setting's ⓘ says the time only runs in file management, guide 'Automatisch sperren'", pop["open"]
+            and "Die Zeit läuft nur in der Dateiverwaltung" in pop["text"] and pop["link"] == "#!hilfe/sperren", pop)
+    c.page.keyboard.press("Escape")
+    c.wait("() => document.querySelector('#pop').hidden", None, 3000)
     c.shot("v5_autolock")
     c.overflow_check("settings with automatic lock")
     c.clear_toasts()
@@ -4230,11 +4238,13 @@ def t12b_autolock_countdown(c: Ctx):
             and c.mock.state()["autolock"]["remaining_s"] >= 290, c.text("#alCd"))
     c.tap("#encInfo")
     pop = c.pop()
-    c.check("the card's ⓘ explains the countdown and leads to 'Automatisch sperren'", pop["open"] and "Zeit zurücksetzen" in pop["text"] and pop["link"] == "#!hilfe/sperren", pop)
+    c.check("the card's ⓘ explains the countdown (only in file management) and leads to 'Automatisch sperren'", pop["open"] and "Zeit zurücksetzen" in pop["text"]
+            and "nur in der Dateiverwaltung" in pop["text"] and pop["link"] == "#!hilfe/sperren", pop)
     c.page.keyboard.press("Escape")
     how = c.ev("() => [...L.de.helpDoc].find(x => x[0] === 'sperren')[2]")
-    c.check("help 'Automatisch sperren' describes the countdown, the reset and the wait for the USB device", "Countdown" in how and "Zeit zurücksetzen" in how
-            and "Sperrt, sobald das USB-Gerät fertig ist" in how, how[-120:])
+    c.check("help 'Automatisch sperren' describes the countdown, the reset, the rule 'only in file management' and the wait while busy",
+            "Countdown" in how and "Zeit zurücksetzen" in how and "Die Zeit läuft nur in der Dateiverwaltung." in how
+            and "Sperrt, sobald das Laufwerk frei ist" in how and "USB-Gerät fertig" not in how, how[-160:])
     # a file action restarts the period on the device: the page shows it after the action
     c.mock.set(autolock_remaining=100)
     c.wait("() => /^Sperrt in 1:/.test(document.querySelector('#alCd').textContent)", None, 9000)
@@ -4256,13 +4266,41 @@ def t12b_autolock_countdown(c: Ctx):
     ok = wait_unlock_view(c, True, 9000)
     c.check("countdown reaches 0: status checked at once, the unlock view is shown, countdown gone", ok and not vis(c, "#alBox") and c.wait_toast("gesperrt", 5000), c.toast_texts())
     c.no_console_errors()
-    # postponed while the USB device works
+    # USB mode: the timer does not run (0.6.0), the card shows no countdown; back in file management the period starts anew
+    c.start("crypt_enabled", crypt_kdf_ms=50)
+    c.mock.post("/api/settings/autolock?minutes=5&on_detach=0")
+    c.mock.set(autolock_remaining=100)
+    c.wait("() => /^Sperrt in 1:/.test(document.querySelector('#alCd').textContent)", None, 9000)
+    c.mock.set(owner="usb")
+    ok = c.wait("() => S.st.drive.owner === 'usb' && document.querySelector('#alBox').hidden", None, 9000)
+    st = c.mock.state()["autolock"]
+    c.check("USB mode: no countdown in the encryption card (still 'Entsperrt' with 'Sperren'), the device reports remaining_s -1",
+            ok and not vis(c, "#alBox") and vis(c, "#encCard") and c.text("#encSub") == "Entsperrt" and vis(c, "#lockBtn")
+            and st["remaining_s"] == -1 and st["waiting"] is False, f"{c.text('#alCd')} {st}")
+    c.tap("#encInfo")
+    c.page.wait_for_timeout(350)
+    pop = c.pop()
+    c.check("USB mode: the card's ⓘ explains the encryption, not the countdown", pop["open"] and "Zeit zurücksetzen" not in pop["text"]
+            and pop["link"] == "#!hilfe/verschluesselung", pop)
+    c.page.keyboard.press("Escape")
+    c.wait("() => document.querySelector('#pop').hidden", None, 3000)
+    c.shot("v6_countdown_usb")
+    c.mock.set(idle_s=400)
+    c.page.wait_for_timeout(1500)
+    cr = c.mock.state()["crypt"]
+    c.check("USB mode: no lock by time even long after the period (mock idle_s=400 with 5 minutes)",
+            not c.ev("() => isLocked()") and cr["unlocked"] is True and not vis(c, "#alBox"), cr)
+    c.mock.set(owner="app")
+    ok = c.wait("() => S.st.drive.owner === 'app' && /^Sperrt in (5:00|4:5\\d)$/.test(document.querySelector('#alCd').textContent)", None, 9000)
+    c.check("back in file management: the countdown starts at the full 5:00", ok, c.text("#alCd"))
+    c.no_console_errors()
+    # time up, but the lock attempt was refused (busy)
     c.start("crypt_enabled", crypt_kdf_ms=50)
     c.mock.post("/api/settings/autolock?minutes=5&on_detach=0")
     c.mock.set(autolock_waiting=1)
     c.mock.set(autolock_remaining=0)
-    ok = c.wait("() => document.querySelector('#alCd').textContent === 'Sperrt, sobald das USB-Gerät fertig ist'", None, 9000)
-    c.check("waiting: 'Sperrt, sobald das USB-Gerät fertig ist' (warning colour), still unlocked, the reset stays", ok and vis(c, "#alReset")
+    ok = c.wait("() => document.querySelector('#alCd').textContent === 'Sperrt, sobald das Laufwerk frei ist'", None, 9000)
+    c.check("waiting: 'Sperrt, sobald das Laufwerk frei ist' (warning colour), still unlocked, the reset stays", ok and vis(c, "#alReset")
             and c.ev("() => document.querySelector('#alBox').classList.contains('warn')") and not c.ev("() => isLocked()"), c.text("#alCd"))
     c.shot("v6_countdown_waiting")
     c.overflow_check("encryption card while the lock waits")

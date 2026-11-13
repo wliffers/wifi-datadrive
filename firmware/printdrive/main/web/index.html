@@ -1080,11 +1080,11 @@ de: {
   langX: "Gilt auch für das Display am Stick.",
   clock: "Uhrzeit des Laufwerks", tNet: "aus dem Netz", tBrowser: "vom Browser gesetzt", tNone: "nicht gestellt",
   tzT: "Zeitzone", tzX: "Für die Zeitangaben der Dateien und am Display.",
-  alT: "Automatisch sperren", alX: "Sperrt das Laufwerk nach der gewählten Zeit ohne Zugriff. Wird der Stick abgezogen, ist es danach immer gesperrt.",
+  alT: "Automatisch sperren", alX: "Sperrt das Laufwerk nach der gewählten Zeit ohne Zugriff. Die Zeit läuft nur in der Dateiverwaltung – solange das USB-Gerät das Laufwerk hat, nicht. Wird der Stick abgezogen, ist es danach immer gesperrt.",
   alOff: "Aus", alMin: n => `nach ${n} Minuten`, alCustom: "Eigene Zeit …", alMinL: "Minuten (1 bis 1440)", alBad: "Bitte eine ganze Zahl von 1 bis 1440 eingeben.",
   alDet: "Sperren, wenn das USB-Gerät getrennt wird",
-  alIn: s => `Sperrt in ${s}`, alWait: "Sperrt, sobald das USB-Gerät fertig ist", alReset: "Zeit zurücksetzen",
-  alCdI: "Ohne Zugriff sperrt sich das Laufwerk nach der eingestellten Zeit. Arbeiten mit Dateien und „Zeit zurücksetzen“ starten sie neu.",
+  alIn: s => `Sperrt in ${s}`, alWait: "Sperrt, sobald das Laufwerk frei ist", alReset: "Zeit zurücksetzen",
+  alCdI: "Ohne Zugriff sperrt sich das Laufwerk nach der eingestellten Zeit. Sie läuft nur in der Dateiverwaltung. Arbeiten mit Dateien und „Zeit zurücksetzen“ starten sie neu.",
   ipAuto: "Automatisch (DHCP)", ipFix: "Fest", ipL: "IP-Adresse", maskL: "Subnetzmaske", gwL: "Gateway", dnsL: "DNS-Server (optional)", ipYes: "Übernehmen",
   ipX: "Mit „Fest“ behält der Stick immer dieselbe Adresse. Falsche Werte machen ihn unerreichbar – dann die Taste am Stick 10 Sekunden lang halten (setzt auch Benutzer und vertraute Geräte zurück).",
   ipBad: "Bitte eine IPv4-Adresse wie 192.168.1.50 eingeben.", maskBad: "Ungültige Subnetzmaske – zum Beispiel 255.255.255.0 (von 255.0.0.0 bis 255.255.255.252).",
@@ -1153,10 +1153,11 @@ de: {
 <p>Ohne Passwort und Schlüssel – oder bei beschädigtem Schlüsselbereich – bleibt nur „Löschen und neu formatieren“. Alle Dateien gehen dabei verloren.</p>
 <p>Nach drei falschen Eingaben muss gewartet werden. Jeder weitere Fehlversuch verdoppelt die Wartezeit (höchstens 5 Minuten); sie gilt für alle Geräte.</p>`],
     ["sperren", "Automatisch sperren", `<p>Sperrt das verschlüsselte Laufwerk nach der gewählten Zeit ohne Zugriff (Einstellungen › Speicher & USB). Wird der Stick abgezogen, ist es danach immer gesperrt.</p>
-<p>„Sperren, wenn das USB-Gerät getrennt wird“ sperrt zusätzlich, sobald der Drucker oder PC das Laufwerk trennt.</p>
+<p><b>Die Zeit läuft nur in der Dateiverwaltung.</b> Hat das USB-Gerät das Laufwerk, sperrt es nicht nach Zeit und die Karte „Verschlüsselt“ zeigt keinen Countdown – sonst würde es Drucker oder PC mitten in der Arbeit stören. Beim Wechsel zurück in die Dateiverwaltung beginnt die Zeit neu.</p>
+<p>„Sperren, wenn das USB-Gerät getrennt wird“ sperrt zusätzlich, sobald der Drucker oder PC das Laufwerk trennt – das gilt auch, während das USB-Gerät das Laufwerk hat.</p>
 <p>Von Hand sperren: „Sperren“ in der Karte „Verschlüsselt“ auf der Startseite. Ein angeschlossenes Gerät verliert das Laufwerk sofort.</p>
 <p><b>Countdown:</b> Ist eine Zeit eingestellt, zeigt die Karte „Verschlüsselt“, wann das Laufwerk sperrt („Sperrt in 12:34“). Arbeiten mit Dateien – Hochladen, Herunterladen, Umbenennen, Löschen – startet die Zeit neu, ebenso „Zeit zurücksetzen“ daneben. Eine nur geöffnete Seite zählt nicht. In der letzten Minute wird die Anzeige farbig.</p>
-<p>Verwendet das USB-Gerät das Laufwerk noch, wartet das Laufwerk mit dem Sperren, bis es fertig ist („Sperrt, sobald das USB-Gerät fertig ist“).</p>`],
+<p>Ist die Zeit um, das Laufwerk aber gerade beschäftigt, sperrt es, sobald es frei ist („Sperrt, sobald das Laufwerk frei ist“).</p>`],
     ["wlan", "WLAN und Einrichtung", `<p>Das Laufwerk verbindet sich mit dem stärksten gespeicherten WLAN in Reichweite. Bis zu 5 WLANs lassen sich speichern.</p>
 <ol><li>Einstellungen › WLAN › „WLAN hinzufügen“.</li><li>Ein WLAN aus der Liste wählen oder den Namen von Hand eingeben (versteckte WLANs).</li><li>Das Passwort eingeben und speichern. Das Laufwerk verbindet sich neu; diese Seite ist kurz nicht erreichbar. Ob es geklappt hat, zeigt das Display.</li></ol>
 <p>Ist ein WLAN schon gespeichert, wird sein Passwort ersetzt.</p>
@@ -1468,11 +1469,11 @@ en: {
   langX: "Also applies to the display on the stick.",
   clock: "Drive time", tNet: "from the network", tBrowser: "set by the browser", tNone: "not set",
   tzT: "Time zone", tzX: "For file times and the display.",
-  alT: "Lock automatically", alX: "Locks the drive after the chosen time without access. Pulling the stick out always leaves it locked.",
+  alT: "Lock automatically", alX: "Locks the drive after the chosen time without access. The time only runs in file management – not while the USB device has the drive. Pulling the stick out always leaves it locked.",
   alOff: "Off", alMin: n => `after ${n} minutes`, alCustom: "Custom time …", alMinL: "Minutes (1 to 1440)", alBad: "Please enter a whole number from 1 to 1440.",
   alDet: "Lock when the USB device is disconnected",
-  alIn: s => `Locks in ${s}`, alWait: "Locks as soon as the USB device is done", alReset: "Reset time",
-  alCdI: "Without access the drive locks after the set time. Working with files and “Reset time” start it again.",
+  alIn: s => `Locks in ${s}`, alWait: "Locks as soon as the drive is free", alReset: "Reset time",
+  alCdI: "Without access the drive locks after the set time. It only runs in file management. Working with files and “Reset time” start it again.",
   ipAuto: "Automatic (DHCP)", ipFix: "Fixed", ipL: "IP address", maskL: "Subnet mask", gwL: "Gateway", dnsL: "DNS server (optional)", ipYes: "Apply",
   ipX: "With “Fixed” the stick always keeps the same address. Wrong values make it unreachable — then hold the button on the stick for 10 seconds (this also resets users and trusted devices).",
   ipBad: "Please enter an IPv4 address such as 192.168.1.50.", maskBad: "Invalid subnet mask — for example 255.255.255.0 (from 255.0.0.0 to 255.255.255.252).",
@@ -1541,10 +1542,11 @@ en: {
 <p>Without password and key — or with a damaged key area — only “Erase and reformat” is left. All files are lost.</p>
 <p>After three wrong entries you have to wait. Each further wrong entry doubles the wait (at most 5 minutes); it applies to all devices.</p>`],
     ["sperren", "Automatic lock", `<p>Locks the encrypted drive after the chosen time without access (Settings › Storage & USB). Once the stick is unplugged, it is always locked.</p>
-<p>“Lock when the USB device is disconnected” also locks as soon as the printer or computer releases the drive.</p>
+<p><b>The time only runs in file management.</b> While the USB device has the drive, it never locks by time and the “Encrypted” card shows no countdown — otherwise it would interrupt the printer or computer in the middle of its work. Switching back to file management starts the time again.</p>
+<p>“Lock when the USB device is disconnected” also locks as soon as the printer or computer releases the drive — this applies while the USB device has the drive, too.</p>
 <p>To lock by hand: “Lock” in the “Encrypted” card on the start page. A connected device loses the drive at once.</p>
 <p><b>Countdown:</b> when a time is set, the “Encrypted” card shows when the drive locks (“Locks in 12:34”). Working with files — uploading, downloading, renaming, deleting — starts the time again, and so does “Reset time” next to it. A page that is merely open does not count. In the last minute the display changes colour.</p>
-<p>If the USB device is still using the drive, the drive waits with locking until it is done (“Locks as soon as the USB device is done”).</p>`],
+<p>If the time is up but the drive is busy at that moment, it locks as soon as it is free (“Locks as soon as the drive is free”).</p>`],
     ["wlan", "Wi-Fi and setup", `<p>The drive connects to the strongest saved network in range. Up to 5 networks can be saved.</p>
 <ol><li>Settings › Wi-Fi › “Add network”.</li><li>Pick a network from the list or type its name (hidden networks).</li><li>Enter the password and save. The drive reconnects; this page is unreachable for a moment. The display shows whether it worked.</li></ol>
 <p>If a network is already saved, its password is replaced.</p>
@@ -2187,9 +2189,10 @@ async function lockNow(){
   await refresh(true);
 }
 $("#lockBtn").onclick = $("#cLock").onclick = lockNow;
-/* Auto-lock countdown (API v6): status autolock.remaining_s (-1 = none) is resynchronised by every poll and counts down here
-   in between; waiting = the time is up, the lock waits for the USB device. At 0 the page asks the status at once. Status polls
-   never restart the period on the device, file actions and "Zeit zurücksetzen" (POST /api/autolock/touch) do. */
+/* Auto-lock countdown (API v6): status autolock.remaining_s (-1 = none, e.g. while the USB device owns the drive: the timer only
+   runs in file management) is resynchronised by every poll and counts down here in between; waiting = the time is up, the last
+   lock attempt was refused (busy). At 0 the page asks the status at once. Status polls never restart the period on the device,
+   file actions and "Zeit zurücksetzen" (POST /api/autolock/touch) do. */
 let alEnd = 0, alTimer = 0, alDue = 0;
 const alSt = () => S.st && S.st.autolock;
 const alOn = () => { const a = alSt(); return !!a && canLock() && (a.waiting === true || a.remaining_s >= 0); };

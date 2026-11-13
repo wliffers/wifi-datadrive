@@ -12,6 +12,9 @@
 #     *.sh  text eol=lf
 #     # then: git add --renormalize .  &&  git commit -m "Zeilenenden vereinheitlichen"
 
+# Git hooks are POSIX sh scripts: always LF, also with core.autocrlf (CRLF breaks sh).
+tools/git-hooks/*   text eol=lf
+
 # Binary files: never diff or merge as text, never convert line endings.
 *.png   binary
 *.jpg   binary

@@ -1,0 +1,41 @@
+# Publication safety check: runs tools/publish_check.py over the current tree and the complete
+# history (every commit and every file version reachable from any branch or tag).
+#
+# The private terms file of the owner does not exist here (--ci). Optionally the owner can store
+# the terms as the repository secret PUBLISH_PRIVATE_TERMS (one term per line); the checker never
+# prints a term, only its number. Pull requests from forks do not get secrets; then only the
+# generic checks run.
+#
+# Process and meaning of the findings: docs/19_sicherer_veroeffentlichungsprozess.md
+
+name: Publish check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish-check:
+    name: Publish check (tree and full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out (complete history, all branches and tags)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Run tools/publish_check.py --ci
+        env:
+          PUBLISH_PRIVATE_TERMS: ${{ secrets.PUBLISH_PRIVATE_TERMS }}
+        run: python tools/publish_check.py --ci

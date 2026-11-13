@@ -649,7 +649,7 @@ noch nicht geprüft (er baut seine Adressen mit `http://`).
 Stand 2026-11-13. Schnittstelle: [16_api_v6.md](16_api_v6.md), signierte Updates:
 [17_signierte_updates.md](17_signierte_updates.md). Gerät: LILYGO T-Dongle-S3 (LCD-Variante),
 microSD 64 GB, Laufwerk verschlüsselt. Welcher Commit genau geflasht war und mit welcher
-Befehlszeile der API-Test lief, ist : `python tools/api_test.py <Gerät> --user <admin> --password … --drive E: --drive-password … --ota-probe` über HTTP (HTTPS für den Lauf ausgeschaltet).
+Befehlszeile des API-Tests: `python tools/api_test.py <Gerät> --user <admin> --password … --drive E: --drive-password … --ota-probe` über HTTP (HTTPS für den Lauf ausgeschaltet).
 
 ### T10.1 Update über die Weboberfläche (0.5.0 → 0.6.0)
 
@@ -689,6 +689,16 @@ Schlüssel-ID des Geräts steht hier bewusst nicht.
 | T10.11 | Browser-Test der Weboberfläche gegen den Testserver (`tools/ui_test.py`) | **bestanden**: PC 872/872, Handy-Profil 889/889 | 2026-11-13 |
 | T10.12 | Nach dem Ändern der Sperrzeit meldet die Oberfläche „Stick nicht erreichbar“ | **FEHLER** (behoben): Die Seite schickte parallele Anfragen, der Stick bedient mit HTTPS nur eine Verbindung. Fix: eine Warteschlange für die ganze Seite (eine Anfrage zur Zeit, Anfragen, die gefahrlos wiederholt werden können, einmal still wiederholt). Nachgestellt und als behoben geprüft mit einem Proxy-Modell, das nur eine Verbindung annimmt. Am iPhone vom Besitzer **noch nicht nachgeprüft** | 2026-11-13 |
 | T10.13 | Download oder ZIP-Download über HTTPS, währenddessen Statusabfrage der Oberfläche | **Befund** (offen): Downloads öffnen eine eigene Verbindung im Browser und laufen nicht durch die Warteschlange; eine Statusabfrage während eines langen Downloads kann diese Verbindung noch schließen. Am Gerät **noch nicht geprüft** | – |
+
+**Hinweis: Regel nach dem Gerätetest geändert.** Nach den Tests dieser Phase wurde die Zeitregel des
+automatischen Sperrens geändert: Sie läuft nur noch, solange die Dateiverwaltung das Laufwerk hat. Ist es
+dem USB-Gerät bereitgestellt, gibt es keinen Countdown (`remaining_s` -1) und kein Sperren nach Zeit; der
+Wechsel zurück in die Dateiverwaltung startet die Frist neu. Lesen und Schreiben des USB-Geräts zählen
+nicht mehr als Aktivität. Entfallen sind „ab 10 Minuten nimmt die Zeitregel einem untätigen USB-Gerät das
+Laufwerk weg“ und „bei 1 bis 9 Minuten wartet sie (`waiting`)“; `waiting` heißt nur noch: Zeit um, letzter
+Sperrversuch abgewiesen (beschäftigt). `on_detach` ist unverändert. T10.3, T10.4 und T10.11 liefen mit der
+Regel davor. Die neue Regel ist nur gegen den Testserver geprüft (API-Test, Browser-Test PC 878/878,
+Handy-Profil 895/895), am Gerät **noch nicht**. T10.5 und T10.6 gelten mit der neuen Regel.
 
 ### Nachträge zu früheren Punkten
 

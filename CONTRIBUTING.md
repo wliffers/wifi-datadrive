@@ -124,6 +124,23 @@ lief, als „noch nicht geprüft“ markieren.
   wenn sich Verhalten oder Prüfstand ändern.
 - Neue Texte der Weboberfläche brauchen eine deutsche und eine englische Fassung.
 
+## Prüfung vor jedem Commit
+
+`tools/publish_check.py` sucht nach Dingen, die nicht ins Repository gehören: fremde E-Mail-Adressen,
+lokale Benutzerpfade, Schlüssel und Zugangsdaten, Build-Ausgaben, große Dateien, kaputte Links. GitHub
+Actions führt die Prüfung bei jedem Push und Pull Request aus (`.github/workflows/publish-check.yml`).
+Damit sie schon vor jedem Commit läuft, einmal je Klon die Git-Hooks einschalten:
+
+```sh
+git config core.hooksPath tools/git-hooks      # Windows auch: .\tools\install-hooks.ps1
+```
+
+Die Hooks brauchen Python 3.10 oder neuer und eine Datei mit privaten Suchbegriffen außerhalb des
+Repositorys (`%USERPROFILE%\.datadrive\publish_secrets.txt` bzw. `~/.datadrive/publish_secrets.txt`;
+eine leere Datei genügt). Von Hand: `python tools/publish_check.py` (Stand und ganze Historie) oder
+`python tools/publish_check.py --tree-only` (nur die vorgemerkten Dateien). Einzelheiten:
+[docs/19_sicherer_veroeffentlichungsprozess.md](docs/19_sicherer_veroeffentlichungsprozess.md).
+
 ---
 
 ## English summary

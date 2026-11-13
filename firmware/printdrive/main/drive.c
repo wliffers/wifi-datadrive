@@ -3087,16 +3087,12 @@ drive_result_t drive_crypt_lock(bool force)
 //       READ/WRITE during those 5 min. 5 min, not less: hosts may selectively suspend an attached
 //       but idle drive in the middle of a session and must not lose it for that.
 //     Local web activity does not delay (1).
-// (2) minutes (timer) - "inactive" = no host READ/WRITE (TEST UNIT READY polling does not count),
-//     no local file operation (anything that takes the drive lock: list, upload, download, mkdir,
-//     WebDAV, ...), no running upload/download/long operation, for the whole period. Then:
-//     - no host holds the drive (drive owned by the app, host absent, host ejected it, or host
-//       suspended for at least AUTOLOCK_SUSPEND_MS): the drive is locked;
-//     - a host holds the drive (owner USB, host configured, not ejected, awake or suspended for
-//       less than 5 min): locked - i.e. taken from the host - only if the period is at least
-//       AUTOLOCK_TAKE_MIN_MINUTES (10 min). With 1..9 minutes the timer waits until no host holds
-//       the drive any more. (Without the >= 10 min exception a host that never ejects, e.g. a
-//       printer, would keep the drive unlocked forever.)
+// (2) minutes (timer) - runs ONLY while the file manager owns the drive (owner APP). While the
+//     drive is provided to the USB host (printer/PC) the timer is off: it would interrupt the
+//     device in the middle of its work (owner's decision, 0.6.0). Switching back to the file
+//     manager starts the period anew. "Inactive" = no local file operation (anything that takes
+//     the drive lock: list, upload, download, mkdir, WebDAV, ...), no running upload/download/long
+//     operation, for the whole period; then the drive is locked.
 //     drive_autolock_touch() (the "still working" button of the web UI) restarts the period like
 //     a file operation. Status reads (drive_get_status(), drive_autolock_remaining_s(), i.e. an
 //     open web page polling /api/status) never count: an open tab must not keep the drive
@@ -3109,7 +3105,6 @@ drive_result_t drive_crypt_lock(bool force)
 
 #define AUTOLOCK_DETACH_MS        10000        // host not configured this long (> our own re-plug)
 #define AUTOLOCK_SUSPEND_MS       300000       // host suspended this long (5 min)
-#define AUTOLOCK_TAKE_MIN_MINUTES 10           // shortest timer that may take the drive from a host
 
 typedef enum {
     AL_HOST_AWAKE,                          // configured and not suspended
@@ -3188,18 +3183,14 @@ static uint32_t autolock_host_io_idle(void)
  */
 static bool autolock_idle_due(uint32_t now, al_host_t host, uint32_t host_for)
 {
+    (void)host;
+    (void)host_for;
     const uint32_t minutes = s_al_minutes;
-    if (minutes == 0) {
-        return false;
+    if (minutes == 0 || s_st.owner != DRIVE_OWNER_APP) {
+        return false;                       // timer only in file manager mode, never in USB mode
     }
-    uint32_t idle = min_u32(ms_since(now, s_al_touch_ms), ms_since(now, s_app_activity_ms));
-    idle = min_u32(idle, autolock_host_io_idle());
-    if (idle < minutes * 60000UL) {
-        return false;
-    }
-    const bool host_holds = s_st.owner == DRIVE_OWNER_USB && host != AL_HOST_GONE && !s_host_ejected &&
-                            !(host == AL_HOST_SUSPENDED && host_for >= AUTOLOCK_SUSPEND_MS);
-    return !host_holds || minutes >= AUTOLOCK_TAKE_MIN_MINUTES;
+    const uint32_t idle = min_u32(ms_since(now, s_al_touch_ms), ms_since(now, s_app_activity_ms));
+    return idle >= minutes * 60000UL;
 }
 
 typedef enum {
@@ -3285,8 +3276,12 @@ static void autolock_poll(void)
         s_al_host_seen = true;
     }
     // Unlocked reads of these flags are fine here: autolock_try() checks them again under s_lock.
+    if (s_long_op || s_st.upload_active || s_open_downloads > 0 || s_st.owner != DRIVE_OWNER_APP) {
+        // busy, or the drive belongs to the USB host: the timer does not run; its period starts
+        // afresh afterwards. The on_detach rules below still apply in USB mode.
+        s_al_touch_ms = now;
+    }
     if (s_long_op || s_st.upload_active || s_open_downloads > 0) {
-        s_al_touch_ms = now;                // never now, and the idle period starts afterwards
         return;
     }
     const uint32_t host_for = autolock_host_for(now, host);
@@ -3335,20 +3330,18 @@ static int32_t autolock_remaining(uint32_t now, bool *waiting)
     *waiting = false;
     const uint32_t minutes = s_al_minutes;
     if (minutes == 0 || crypt_state_public() != DRIVE_CRYPT_UNLOCKED || s_long_op || s_st.upload_active ||
-        s_open_downloads > 0) {
-        return -1;                          // no countdown: off, not unlocked, or busy (counts as activity)
+        s_open_downloads > 0 || s_st.owner != DRIVE_OWNER_APP) {
+        return -1;                          // no countdown: off, not unlocked, busy, or USB mode
     }
     const uint32_t period = minutes * 60000UL;
     if (!s_al_unlocked || s_al_gen != s_al_seen_gen) {
         return (int32_t)(period / 1000);    // the poll has not seen the unlock yet: the period starts now
     }
-    uint32_t idle = min_u32(ms_since(now, s_al_touch_ms), ms_since(now, s_app_activity_ms));
-    idle = min_u32(idle, autolock_host_io_idle());
+    const uint32_t idle = min_u32(ms_since(now, s_al_touch_ms), ms_since(now, s_app_activity_ms));
     if (idle < period) {
         return (int32_t)((period - idle + 999) / 1000);
     }
-    // Time is up. The next poll (<= AUTOLOCK_POLL_MS) locks - unless a host still holds the drive
-    // with a 1..9 minute setting, or the last attempt was refused (host writing, busy).
+    // Time is up. The next poll (<= AUTOLOCK_POLL_MS) locks - unless the last attempt was refused.
     const al_host_t host = autolock_host_now();
     *waiting = !autolock_idle_due(now, host, autolock_host_for(now, host)) || s_al_last_result != DRIVE_OK;
     return 0;

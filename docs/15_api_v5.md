@@ -46,8 +46,8 @@ Die Oberfläche zeigt `mtime` mit der Zeitzone des Browsers an (`new Date(mtime 
 Regeln:
 
 - Wirkt nur auf ein verschlüsseltes, entsperrtes Laufwerk; die Einstellung lässt sich auch ohne Verschlüsselung speichern. `minutes=0` schaltet das Sperren nach Zeit aus.
-- **Nach Zeit:** gesperrt wird, wenn `minutes` lang keine Datei-Anfrage kam (Web: Liste, Download, ZIP, Upload, Push, Ordner-, Lösch-, Verschiebe- und Kopieraufträge, Moduswechsel; WebDAV: jede Anfrage außer `OPTIONS`) **und** das USB-Gerät nichts gelesen oder geschrieben hat. Abfragen von Status, Sitzung und `/api/crypt` zählen nicht (die Oberfläche fragt den Status laufend ab). Die Zeit läuft ab dem Ende der letzten Anfrage. Ein untätiges USB-Gerät verliert dabei das Medium.
-- **`on_detach`:** gesperrt wird 10 Sekunden, nachdem das USB-Gerät verschwunden ist, oder nach 60 Sekunden im USB-Ruhezustand (Suspend). Bloßes Auswerfen am USB-Gerät zählt nicht.
+- **Nach Zeit:** gesperrt wird, wenn `minutes` lang keine Datei-Anfrage kam (Web: Liste, Download, ZIP, Upload, Push, Ordner-, Lösch-, Verschiebe- und Kopieraufträge, Moduswechsel; WebDAV: jede Anfrage außer `OPTIONS`) (ab Version 6: der Zeitablauf läuft nur, solange die Dateiverwaltung das Laufwerk hat; im USB-Modus nie, siehe `16_api_v6.md`). Abfragen von Status, Sitzung und `/api/crypt` zählen nicht (die Oberfläche fragt den Status laufend ab). Die Zeit läuft ab dem Ende der letzten Anfrage. Ein untätiges USB-Gerät verliert dabei das Medium.
+- **`on_detach`:** gesperrt wird 10 Sekunden, nachdem das USB-Gerät verschwunden ist, oder nach 5 Minuten im USB-Ruhezustand (Suspend) ohne Lesen oder Schreiben. Bloßes Auswerfen am USB-Gerät zählt nicht.
 - **Nie, solange das USB-Gerät schreibt (Schreibschutzzeit `write_guard_ms`) oder ein Vorgang läuft** (Up- oder Download, ZIP, Kopieren, Formatieren); das Sperren folgt, sobald er beendet ist.
 - Die Wirkung ist dieselbe wie bei `POST /api/crypt/lock` (Version 4, Abschnitt 2), einschließlich: ein angefangener Upload (Abschnitt 4) wird verworfen. Entsperren startet die Zeit neu.
 

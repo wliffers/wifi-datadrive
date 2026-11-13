@@ -1,0 +1,40 @@
+#!/bin/sh
+# commit-msg: checks the commit message (co-author trailers, tool names, e-mail addresses,
+# local paths, private terms) and the identity with tools/publish_check.py --tree-only.
+# The staged files were already checked by the pre-commit hook.
+# Enable once per clone:  git config core.hooksPath tools/git-hooks
+# Details: docs/19_sicherer_veroeffentlichungsprozess.md
+
+msgfile="$1"
+if [ -z "$msgfile" ]; then
+    echo "commit-msg: no message file given" >&2
+    exit 1
+fi
+top=$(git rev-parse --show-toplevel) || exit 1
+checker="$top/tools/publish_check.py"
+if [ ! -f "$checker" ]; then
+    echo "commit-msg: $checker not found" >&2
+    exit 1
+fi
+
+py=""
+for cand in python3 python py; do
+    if command -v "$cand" >/dev/null 2>&1; then
+        if [ "$cand" = py ]; then set -- -3; else set --; fi
+        if "$cand" "$@" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+            py="$cand"
+            break
+        fi
+    fi
+done
+if [ -z "$py" ]; then
+    echo "commit-msg: Python 3.10 or newer not found; the publication check cannot run." >&2
+    exit 1
+fi
+
+"$py" "$@" "$checker" --tree-only --msg-only --msg-file "$msgfile"
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "commit-msg: commit stopped by tools/publish_check.py (exit $rc). Your message is in $msgfile" >&2
+fi
+exit $rc

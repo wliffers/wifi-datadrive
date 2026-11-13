@@ -35,7 +35,8 @@ to this PC's time if the device clock is not NTP-synced (like the web UI does).
 Options
   --skip-destructive  do not take the drive from a USB host and do not switch the mode
                       (file sections only run if the file manager already owns the drive;
-                      the USB-mode checks and the take-over push are skipped).
+                      the USB-mode checks, the take-over push and the mode switches of
+                      section 17 are skipped).
   --wifi-test         also add and remove a dummy Wi-Fi network (a real device tries to
                       reconnect after an add, so this is opt-in).
   --ota-probe         POST a 16 byte invalid body to /api/ota (expects INVALID_FILE). With API v6 and
@@ -1922,6 +1923,42 @@ def touch(tok=DEF):
     return call("POST", "/api/autolock/touch", tok=tok)
 
 
+def countdown_usb_mode(al):
+    """Drive provided to the USB device, timer set: the timer is off (0.6.0), no countdown, touch changes nothing."""
+    check("USB mode: no countdown although a timer is set (remaining_s -1, waiting false)",
+          al.get("remaining_s") == -1 and al.get("waiting") is False, al)
+    r = touch()
+    check("... touch in USB mode: remaining_s -1", okr(r) and jr(r).get("remaining_s") == -1, r.text[:120])
+
+
+def countdown_app_mode(full, why):
+    """File manager owns the drive, timer of `full` seconds just set (or the mode just switched): the period runs."""
+    al2 = status().get("autolock") or {}
+    r0 = al2.get("remaining_s", -9)
+    check(f"{why}: countdown starts at the full period ({full} s, -5 s tolerance)",
+          is_int(r0) and full - 5 <= r0 <= full and al2.get("waiting") is False, al2)
+    t0 = time.time()
+    for _ in range(4):                       # status polls must not restart the period
+        status()
+        time.sleep(1)
+    al3 = status().get("autolock") or {}
+    el = time.time() - t0
+    check(f"status polls do not count: after {el:.1f} s remaining_s went down by about as much",
+          is_int(al3.get("remaining_s")) and r0 - el - 2.5 <= al3["remaining_s"] <= r0 - el + 1.5
+          and al3["remaining_s"] < r0, f"{r0} -> {al3.get('remaining_s')}")
+    r = touch()
+    j = jr(r)
+    check("touch restarts the period: remaining_s back at the full time", okr(r) and is_int(j.get("remaining_s"))
+          and full - 2 <= j["remaining_s"] <= full, r.text[:120])
+    check("... status shows it too", full - 3 <= (status().get("autolock") or {}).get("remaining_s", -9) <= full)
+    time.sleep(2.5)
+    before = (status().get("autolock") or {}).get("remaining_s", -9)
+    ls("")
+    after = (status().get("autolock") or {}).get("remaining_s", -9)
+    check("a file request (GET /api/files) restarts the period", before <= full - 2 and after >= full - 1,
+          f"{before} -> {after}")
+
+
 def sec_countdown(a):
     head("17. Automatic lock: countdown and touch (API v6)")
     st = status()
@@ -1963,39 +2000,52 @@ def sec_countdown(a):
     elif (status().get("upload") or {}).get("active"):
         skip("countdown checks", "an upload is running (no countdown while a transfer runs)")
     else:
-        r0 = al2.get("remaining_s", -9)
-        check(f"changed timer: countdown starts at the full period ({full} s, -5 s tolerance)",
-              full - 5 <= r0 <= full and al2.get("waiting") is False, al2)
-        t0 = time.time()
-        for _ in range(4):                       # status polls must not restart the period
-            status()
-            time.sleep(1)
-        st3 = status()
-        el = time.time() - t0
-        al3 = st3.get("autolock") or {}
-        host_idle = (st3.get("drive") or {}).get("host_idle_ms", -1)
-        if is_int(host_idle) and 0 <= host_idle < el * 1000 + 1000:
-            skip("countdown keeps running during status polls", "the USB host accessed the drive (restarts the period)")
+        owner0 = (status().get("drive") or {}).get("owner")
+        if owner0 == "usb":
+            countdown_usb_mode(al2)
+            if S.skip_destructive:
+                skip("countdown checks in file manager mode", "--skip-destructive: the drive stays with the USB device")
+            elif check("drive taken over for the countdown checks in file manager mode", ensure_app()):
+                countdown_app_mode(full, "after switching to the file manager")
+                r = mode("usb")
+                check("drive provided to USB again", okr(r) or (status().get("drive") or {}).get("owner") == "usb",
+                      r.text[:120])
+        elif owner0 == "app":
+            countdown_app_mode(full, "changed timer")
+            drv = status().get("drive") or {}
+            if S.skip_destructive:
+                skip("no countdown in USB mode", "--skip-destructive: the mode is not switched")
+            elif drv.get("usb_connected") and not drv.get("host_ejected") and not target_is_mock():
+                skip("no countdown in USB mode", "drive is owned by the app and a USB host is connected: not handing "
+                     "it over (like section 4)")
+            else:
+                time.sleep(1.5)
+                r = mode("usb")
+                if check("drive provided to USB for the USB-mode check", okr(r), r.text[:120]):
+                    countdown_usb_mode(status().get("autolock") or {})
+                    ok = ensure_app()
+                    al5 = status().get("autolock") or {}
+                    check(f"back in file manager mode: the period starts anew ({full} s, -3 s tolerance)",
+                          ok and is_int(al5.get("remaining_s")) and full - 3 <= al5["remaining_s"] <= full
+                          and al5.get("waiting") is False, al5)
         else:
-            check(f"status polls do not count: after {el:.1f} s remaining_s went down by about as much",
-                  is_int(al3.get("remaining_s")) and r0 - el - 2.5 <= al3["remaining_s"] <= r0 - el + 1.5
-                  and al3["remaining_s"] < r0, f"{r0} -> {al3.get('remaining_s')}")
+            skip("countdown checks", f"drive owner is {owner0!r}")
+    if running and target_is_mock() and (status().get("drive") or {}).get("owner") == "app":
+        mock_set = lambda **kv: requests.get(S.base + "/mock/set", params=kv, timeout=10)
+        mock_set(autolock_waiting=1)
+        mock_set(autolock_remaining=0)
+        al6 = status().get("autolock") or {}
+        st6 = crypt_state()
+        check("mock: time up but the lock attempt refused (autolock_waiting=1): remaining_s 0, waiting true, still "
+              "unlocked", al6.get("remaining_s") == 0 and al6.get("waiting") is True and st6 == (True, True), al6)
         r = touch()
-        j = jr(r)
-        check("touch restarts the period: remaining_s back at the full time", okr(r) and is_int(j.get("remaining_s"))
-              and full - 2 <= j["remaining_s"] <= full, r.text[:120])
-        check("... status shows it too", full - 3 <= (status().get("autolock") or {}).get("remaining_s", -9) <= full)
-        if (st3.get("drive") or {}).get("owner") == "app":
-            time.sleep(2.5)
-            before = (status().get("autolock") or {}).get("remaining_s", -9)
-            ls("")
-            after = (status().get("autolock") or {}).get("remaining_s", -9)
-            check("a file request (GET /api/files) restarts the period", before <= full - 2 and after >= full - 1,
-                  f"{before} -> {after}")
-        else:
-            skip("file request restarts the period", "the file manager does not own the drive")
-    skip("state waiting (time up, lock postponed)", "needs a 1..9 minute timer and a USB host holding the drive; "
-         "on the mock: /mock/set?autolock_remaining=0&autolock_waiting=1")
+        check("... touch while waiting: back at the full period, waiting false", okr(r)
+              and full - 2 <= jr(r).get("remaining_s", -9) <= full
+              and (status().get("autolock") or {}).get("waiting") is False, r.text[:120])
+        mock_set(autolock_waiting=0)
+    else:
+        skip("state waiting (time up, lock attempt refused)", "needs a lock attempt the device refuses (drive busy) "
+             "at the moment the time is up; on the mock: /mock/set?autolock_waiting=1&autolock_remaining=0")
     r = call("POST", "/api/settings/autolock", params={"minutes": str(m), "on_detach": "1" if d else "0"})
     al4 = status().get("autolock") or {}
     if check("timer restored", okr(r) and al4.get("minutes") == m and al4.get("on_detach") is d, al4):

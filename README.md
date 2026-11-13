@@ -81,8 +81,8 @@ Bis zu 8 Benutzer mit den Rollen `admin` und `user`. Geräte, denen du vertraust
 
 **Verschlüsselung, wenn du willst.**
 AES-256-XTS auf der Speicherkarte, in der Voreinstellung aus. Nach jedem Einstecken entsperrst du das
-Laufwerk im Browser. Auf Wunsch sperrt es sich nach einer Zeit ohne Zugriff selbst; ab 0.6.0 zeigt die
-Oberfläche die Restzeit an.
+Laufwerk im Browser. Auf Wunsch sperrt es sich nach einer Zeit ohne Zugriff selbst, solange die
+Dateiverwaltung das Laufwerk hat; ab 0.6.0 zeigt die Oberfläche die Restzeit an.
 
 **Mehrere WLANs.**
 Bis zu 5 Netze; der Stick verbindet sich mit dem stärksten. Beim Hinzufügen zeigt er die Netze in
@@ -249,11 +249,14 @@ Dass der X2D von einem verschlüsselten, per Handy entsperrten Stick druckt, ist
 Mach vor einem wichtigen Druck einen Probedruck.
 
 **Automatisch sperren** (Einstellungen › Speicher & USB, Voreinstellung aus): Das Laufwerk sperrt sich
-nach der gewählten Zeit ohne Zugriff und, wenn du willst, sobald das USB-Gerät getrennt wird. Während das
-USB-Gerät schreibt oder ein Upload läuft, wartet es. Für lange Drucke wählst du „Aus“ oder eine großzügige
-Zeit. Ab 0.6.0 zeigt die Startseite die Restzeit; „Zeit zurücksetzen“ startet sie neu. Die Einstellungen
-und die Restzeit sind am Gerät geprüft (bei 15 Minuten nach wenigen Sekunden 895 s, nach dem Zurücksetzen
-900 s); das Sperren nach Ablauf der Zeit selbst ist **noch nicht geprüft**.
+nach der gewählten Zeit ohne Zugriff und, wenn du willst, sobald das USB-Gerät getrennt wird. Die Zeit
+läuft ab 0.6.0 nur in der Dateiverwaltung: Ist das Laufwerk dem Drucker oder PC bereitgestellt, sperrt es
+nicht nach Zeit, damit kein Druck abbricht; der Wechsel zurück in die Dateiverwaltung startet die Zeit
+neu. Während ein Upload läuft, wartet es. Die Startseite zeigt die Restzeit; „Zeit zurücksetzen“ startet
+sie neu. Die Einstellungen und die Restzeit sind am Gerät geprüft (bei 15 Minuten nach wenigen Sekunden
+895 s, nach dem Zurücksetzen 900 s), noch mit der Regel vor dieser Änderung; die Regel „nur in der
+Dateiverwaltung“ ist nur gegen den Testserver geprüft, das Sperren nach Ablauf der Zeit selbst ist
+**noch nicht geprüft**.
 
 **Passwort vergessen:** Entsperre mit dem Wiederherstellungsschlüssel und lege danach unter
 **Einstellungen › Sicherheit › Verschlüsselung** ein neues Laufwerks-Passwort fest. Sind Passwort und
@@ -372,6 +375,7 @@ gebaut ist oder am Testserver läuft.
 | Netzlaufwerk mit Explorer, Finder oder Handy-Apps | nicht geprüft |
 | Restzeit bis zum Sperren und „Zeit zurücksetzen“ (0.6.0) | geprüft per API am Gerät (15 Minuten: 895 s, nach dem Zurücksetzen 900 s) |
 | Automatisches Sperren nach Ablauf der Zeit | nicht geprüft |
+| Sperren nach Zeit nur in der Dateiverwaltung, im USB-Modus kein Countdown (0.6.0, nach dem Gerätetest geändert) | nur gegen den Testserver geprüft (API- und Browser-Test) |
 | Netzwerkeinstellungen lesen (0.6.0): DHCP, Adresse, Maske, Gateway, DNS, Name | geprüft am Gerät |
 | Feste IP-Adresse oder neuen Namen im Netzwerk einstellen (0.6.0) | nicht geprüft (bewusst: ein Fehler bräuchte die 10-Sekunden-Taste vor Ort) |
 | Einrichtungsseite öffnet sich von selbst, WLAN-Suche im Einrichtungs-WLAN | nicht geprüft |
@@ -379,7 +383,7 @@ gebaut ist oder am Testserver läuft.
 | Firmware-Update über den Browser (0.5.0 auf 0.6.0) | geprüft (einmal; Rückkehr nach einem Fehlstart nicht geprüft) |
 | Signierte Updates (0.6.0): unsignierte und fremd signierte Datei abgewiesen | geprüft am Gerät (`UNSIGNED`, `BAD_SIGNATURE`, kein Neustart) |
 | Browser-Flasher | nicht geprüft |
-| Weboberfläche (0.6.0) | Browser-Test gegen den Testserver bestanden (Chromium, PC 872/872, Handy-Profil 889/889); an einem echten Handy nicht systematisch geprüft |
+| Weboberfläche (0.6.0) | Browser-Test gegen den Testserver bestanden (Chromium, PC 878/878, Handy-Profil 895/895); an einem echten Handy nicht systematisch geprüft |
 | Fehler „Stick nicht erreichbar“ nach Ändern der Sperrzeit (HTTPS) | behoben mit einer Warteschlange für Anfragen, nachgestellt mit einem Modell, das nur eine Verbindung annimmt; am iPhone noch nicht nachgeprüft |
 
 Gemessen mit microSD 64 GB: USB schreiben 832 KB/s, Upload im Browser 1,3 bis 1,6 MB/s. Verschlüsselt:

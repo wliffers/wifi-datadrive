@@ -288,8 +288,8 @@ API-Test am Gerät 354/354 (6 übersprungen). Schnittstelle: [15](15_api_v5.md),
   UTC-Sekunden. Der Abschnitt „Weboberfläche und API“ oben („Das Gerät hat keine Uhr“) gilt seit
   0.5.0 nur noch ohne Internet.
 - **Automatisches Sperren** des verschlüsselten Laufwerks (Voreinstellung aus): Einstellungen
-  verifiziert, Sperren nach Ablauf der Zeit **noch nicht geprüft**. Kann einem untätigen Drucker
-  das Laufwerk nehmen; für lange Drucke „Aus“ oder eine großzügige Zeit.
+  verifiziert, Sperren nach Ablauf der Zeit **noch nicht geprüft**. Seit 0.6.0 läuft die Zeit nur in der
+  Dateiverwaltung; am Drucker (USB-Modus) sperrt der Zeitablauf nie.
 - **Display-Sprache** folgt der Weboberfläche: Einstellung verifiziert, englische Texte auf dem
   LCD **noch nicht geprüft**.
 - **Einrichtungsseite öffnet sich von selbst:** gebaut, mit echtem Handy **noch nicht geprüft**.

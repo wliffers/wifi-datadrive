@@ -12,8 +12,13 @@ Repository entstand. „Am Gerät geprüft“ heißt: auf dem LILYGO T-Dongle-S3
 ### Neu
 - **Restzeit bis zum Sperren:** Ist das automatische Sperren eingestellt, zeigt die Karte „Verschlüsselt“
   auf der Startseite, wann das Laufwerk sperrt („Sperrt in 12:34“). Arbeiten mit Dateien und „Zeit
-  zurücksetzen“ starten die Frist neu; eine nur geöffnete Seite hält das Laufwerk nicht offen. Bei Zeiten
-  unter 10 Minuten wartet das Sperren, bis das USB-Gerät das Laufwerk nicht mehr hält.
+  zurücksetzen“ starten die Frist neu; eine nur geöffnete Seite hält das Laufwerk nicht offen.
+- **Sperren nach Zeit nur in der Dateiverwaltung:** Die eingestellte Zeit läuft nur, solange die
+  Dateiverwaltung das Laufwerk hat. Ist es dem USB-Gerät bereitgestellt, gibt es keinen Countdown und kein
+  Sperren nach Zeit, damit Drucker oder PC nicht mitten in der Arbeit das Laufwerk verlieren; der Wechsel
+  zurück in die Dateiverwaltung startet die Frist neu. Bis 0.5.0 nahm die Zeitregel einem untätigen
+  USB-Gerät das Laufwerk weg. „Sperren, wenn das USB-Gerät getrennt wird“ wirkt unverändert. Geändert nach
+  dem Gerätetest, nur gegen den Testserver geprüft.
 - **Feste Adresse und Name im Netzwerk:** Unter Einstellungen › WLAN wählst du DHCP oder eine feste
   IPv4-Adresse (vorbelegt mit den Werten aus DHCP) und einen eigenen Namen für `name.local`. Mit HTTPS
   erzeugt ein neuer Name eine neue Zertifizierungsstelle, die auf jedem Gerät neu installiert werden muss;
@@ -46,12 +51,13 @@ Repository entstand. „Am Gerät geprüft“ heißt: auf dem LILYGO T-Dongle-S3
 - Restzeit am Gerät: bei 15 Minuten nach wenigen Sekunden 895 s, nach „Zeit zurücksetzen“ 900 s.
 - Netzwerkeinstellungen am Gerät gelesen: DHCP, aktuelle Adresse, Maske, Gateway, DNS und Name.
 - Freier Speicher mit HTTPS und entsperrtem Laufwerk: 67 KiB im Leerlauf.
-- Browser-Test gegen den Testserver: PC 872/872, Handy 889/889.
+- Browser-Test gegen den Testserver: PC 878/878, Handy 895/895.
 - Behoben: Nach dem Ändern der Sperrzeit meldete die Oberfläche „Stick nicht erreichbar“. Ursache waren
   parallele Anfragen, während der Stick mit HTTPS nur eine Verbindung bedient. Nachgestellt und behoben mit
   einem Modell, das nur eine Verbindung annimmt; am iPhone noch nicht nachgeprüft.
-- Nicht geprüft: feste Adresse und neuer Name am Gerät, das Sperren nach Ablauf der Zeit, der Zustand
-  „wartet“, das Zurücksetzen per Taste, die Rückkehr zur alten Version nach einem Fehlstart.
+- Nicht geprüft: feste Adresse und neuer Name am Gerät, das Sperren nach Ablauf der Zeit, die Zeitregel
+  nur in der Dateiverwaltung (am Gerät), der Zustand „wartet“, das Zurücksetzen per Taste, die Rückkehr
+  zur alten Version nach einem Fehlstart.
 
 ### Bekannte Grenzen
 - Downloads und ZIP-Downloads öffnen eine eigene Verbindung im Browser. Mit HTTPS kann eine Statusabfrage
