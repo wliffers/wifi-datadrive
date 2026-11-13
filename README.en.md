@@ -118,12 +118,33 @@ internet.
   <img src="docs/images/desktop-dateien.png" alt="Web interface on a PC (German): at the top the switch between file manager and USB host with storage use, below the encryption card and the list of files with folders and print files" width="800">
 </p>
 
+### The display
+
+The small colour display shows at a glance what the stick is doing. The state is at the top in a coloured
+bar, the Wi-Fi tag at the top right. Below are the address for the browser, the storage and what the USB
+host is doing. On the right, the mascot LIO shows the state as a small animation. The bar and the LED on
+the stick take LIO's colour.
+
 <p align="center">
-  <img src="docs/images/lio-zustaende.gif" alt="The mascot LIO in nine states, each with the colour of the display's status bar" width="640">
+  <img src="docs/images/display-zustaende.gif" alt="Nine display screens: ready, upload, USB host reading, processing, unlocked, setup Wi-Fi, no Wi-Fi, locked, error" width="760">
 </p>
-<p align="center"><sub>LIO shows the state on the display: ready, upload, USB host reading, copying, unlocked,
-connecting to Wi-Fi, no Wi-Fi, locked, error. Preview rendered from the animation data, not a photo. LIO is
-the author's mascot and is not covered by the MIT licence, see <a href="LICENSE-LIO.md">LICENSE-LIO.md</a>.</sub></p>
+
+| Bar | LIO | Meaning |
+|---|---|---|
+| **BEREIT** (ready) turquoise | calm | The file manager has the drive; you can upload in the browser. |
+| **UPLOAD** blue | arrow up | An upload is running; progress and file name below. |
+| **USB** purple | arrow down | The drive is provided to the USB host and it is reading or writing. When the host is idle, LIO shows "ready" again. |
+| **BEREIT** orange | working | Copying, formatting or an update is running. |
+| **BEREIT** green | tick | The drive was just unlocked (once, then back to the normal state). |
+| **WLAN** turquoise, "AP" at the top | radio waves | The stick's setup Wi-Fi is on. Name and password are shown; the QR code (press the button once) joins the phone directly. |
+| **BEREIT** yellow, "----" at the top | crossed out | No Wi-Fi; the stick is looking for its saved networks. |
+| **GESPERRT** (locked) purple | padlock | The encrypted drive is locked. Unlock it in the browser with the drive password; until then the USB host sees no drive. |
+| **FEHLER** (error) red | warning sign | For example a card without a file system (format it in the browser) or a damaged key area. |
+
+The bottom line shows the number of files, "verschlüsselt" (encrypted) when locked. The texts follow the
+language of the web interface (German or English). The picture is rendered from the firmware's data
+(font, colours, animation; `tools/render_display.py`), not a photo; the addresses are examples.
+LIO is the author's mascot and is not covered by the MIT licence, see [LICENSE-LIO.md](LICENSE-LIO.md).
 
 ## Use cases
 

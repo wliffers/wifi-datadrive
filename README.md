@@ -120,12 +120,34 @@ Die i-Symbole und die Seite „Hilfe & Anleitungen“ erklären jede Einstellung
   <img src="docs/images/desktop-dateien.png" alt="Weboberfläche am PC: oben die Umschaltung zwischen Dateiverwaltung und USB-Gerät mit Speicherbelegung, darunter die Karte zur Verschlüsselung und die Liste Meine Dateien mit Ordnern und Druckdateien" width="800">
 </p>
 
+### Das Display
+
+Das kleine Farbdisplay zeigt auf einen Blick, was der Stick gerade tut. Oben steht der Zustand in einer
+farbigen Leiste, rechts oben das WLAN. Darunter folgen die Adresse für den Browser, der Speicher und was
+das USB-Gerät gerade macht. Rechts zeigt das Maskottchen LIO den Zustand als kleine Animation. Die Farbe
+der Leiste und die LED am Stick haben dieselbe Farbe wie LIO.
+
 <p align="center">
-  <img src="docs/images/lio-zustaende.gif" alt="Das Maskottchen LIO in neun Zuständen, jeweils mit der Farbe der Statuszeile des Displays" width="640">
+  <img src="docs/images/display-zustaende.gif" alt="Neun Bildschirme des Displays: Bereit, Upload, USB-Gerät liest, Verarbeitung, Entsperrt, Einrichtungs-WLAN, kein WLAN, Gesperrt, Fehler" width="760">
 </p>
-<p align="center"><sub>LIO zeigt auf dem Display den Zustand: bereit, Upload, USB-Gerät liest, kopieren, entsperrt,
-WLAN verbinden, kein WLAN, gesperrt, Fehler. Vorschau aus den Animationsdaten, kein Foto. LIO ist das
-Maskottchen des Autors und steht nicht unter der MIT-Lizenz, siehe <a href="LICENSE-LIO.md">LICENSE-LIO.md</a>.</sub></p>
+
+| Leiste | LIO | Bedeutung |
+|---|---|---|
+| **BEREIT** türkis | ruhig | Die Dateiverwaltung hat das Laufwerk, du kannst im Browser hochladen. |
+| **UPLOAD** blau | Pfeil nach oben | Ein Upload läuft; darunter Fortschritt und Dateiname. |
+| **USB** lila | Pfeil nach unten | Das Laufwerk ist dem USB-Gerät bereitgestellt, und es liest oder schreibt gerade. Ruht das Gerät, zeigt LIO wieder „bereit“. |
+| **BEREIT** orange | arbeitet | Kopieren, Formatieren oder ein Update läuft. |
+| **BEREIT** grün | Haken | Das Laufwerk wurde gerade entsperrt (einmal, dann zurück zum normalen Zustand). |
+| **WLAN** türkis, oben „AP“ | Funkwellen | Das Einrichtungs-WLAN des Sticks ist an. Name und Passwort stehen darunter; der QR-Code (Taste einmal drücken) verbindet das Handy direkt. |
+| **BEREIT** gelb, oben „----“ | durchgestrichen | Kein WLAN; der Stick sucht seine gespeicherten Netze. |
+| **GESPERRT** lila | Schloss | Das verschlüsselte Laufwerk ist gesperrt. Im Browser mit dem Laufwerks-Passwort entsperren; bis dahin sieht das USB-Gerät kein Laufwerk. |
+| **FEHLER** rot | Warnzeichen | Zum Beispiel eine Karte ohne Dateisystem (im Browser formatieren) oder ein beschädigter Schlüsselbereich. |
+
+Die unterste Zeile zeigt die Zahl der Dateien, im gesperrten Zustand „verschlüsselt“. Die Texte folgen der
+Sprache der Weboberfläche (Deutsch oder Englisch). Das Bild oben ist aus den Daten der Firmware erzeugt
+(Schrift, Farben, Animation; `tools/render_display.py`), kein Foto; die Adressen sind Beispielwerte.
+LIO ist das Maskottchen des Autors und steht nicht unter der MIT-Lizenz, siehe
+[LICENSE-LIO.md](LICENSE-LIO.md).
 
 ## Anwendungsbeispiele
 
