@@ -9,6 +9,12 @@ läuft. Am Ende stehen die Testschritte.
 Werkzeuge: [tools/signing/README.md](../tools/signing/README.md). API-Felder und Fehlercodes:
 [16_api_v6.md](16_api_v6.md).
 
+**Stand am Gerät (2026-11-13):** Der Umstieg von 0.5.0 auf die signierte 0.6.0 über die
+Weboberfläche ist geprüft, ebenso die Abweisung einer unsignierten Datei (`422 UNSIGNED`) und einer
+mit einem anderen Schlüssel signierten (`422 BAD_SIGNATURE`), jeweils ohne Neustart. Die übrigen
+Testschritte stehen in Abschnitt 9 mit ihrem Stand; Ergebnisse in
+[05_testprotokoll.md](05_testprotokoll.md) Phase 10.
+
 ---
 
 ## 1. Warum
@@ -152,13 +158,16 @@ angenommen, prüften danach aber selbst nichts mehr.
 
 ## 7. Umstieg von 0.5.0
 
-Die Geräte laufen heute mit einer **unsignierten 0.5.0**, die jede gültige Firmware annimmt.
+Ein Gerät mit der **unsignierten 0.5.0** nimmt jede gültige Firmware an.
 
 - **Über das Web:** Die signierte 0.6.0 (`printdrive-0.6.0-signed.bin`) einfach in der
   Weboberfläche von 0.5.0 einspielen. 0.5.0 prüft keine Signatur, die Datei ist aber ein gültiges
   Abbild und passt in den Bereich. Nach dem Neustart läuft 0.6.0, bestätigt sich nach 15 s, und ab
   jetzt nimmt das Gerät nur noch Dateien mit diesem Schlüssel an. Kontrolle: `/api/status` zeigt
   `"signed_required":true` und die eigene `key_id`.
+  **Am Gerät geprüft (2026-11-13):** angenommen nach 13 s, Neustart in den zweiten
+  Firmware-Bereich, nach 15 s als gut bestätigt; danach `signed_required:true` und die Schlüssel-ID
+  des Besitzers.
 - **Per USB:** `.\tools\flash.ps1 printdrive -Signed -Build`.
 - Ein neuer Bootloader ist nicht nötig.
 - Stürzt 0.6.0 in den ersten 15 s ab, kehrt der Bootloader zu 0.5.0 zurück – die nimmt dann wieder
@@ -188,7 +197,7 @@ lehnt es übers Web ab. Also wie bei „verloren“: neuer Schlüssel, per USB f
 annehmen – mit Admin-Zugang. Sofort Admin-Passwörter ändern, neuen Schlüssel erzeugen und alle
 Geräte per USB mit einem damit signierten Build flashen.
 
-## 9. Testschritte (für den Koordinator)
+## 9. Testschritte
 
 Vorbereitung:
 
@@ -210,20 +219,20 @@ Vorbereitung:
 Bei jedem abgewiesenen Update danach prüfen: Gerät läuft weiter, `uptime_s` läuft weiter,
 `ota.partition` unverändert, `ota.pending_verify` false; nach einem Neustart startet dieselbe Version.
 
-| Nr. | Schritt | Erwartet |
-|---|---|---|
-| 1 | Gerät mit 0.5.0: `printdrive-0.6.0-signed.bin` über die Weboberfläche einspielen | angenommen, Neustart; `/api/status`: Version 0.6.0, `ota.signed_required:true`, `ota.key_id` = notierte ID, `pending_verify` erst true, nach 15 s false; Log „web updates must be signed, key id …“ |
-| 2 | `build\printdrive.bin` (unsigniert) einspielen | `422 UNSIGNED` (bei einer Größe, die kein Vielfaches von 4096 ist, sofort nach dem Kopf) |
-| 3 | `build_signed\printdrive-unsigned.bin` einspielen (Größe ist Vielfaches von 4096) | wird ganz geschrieben, dann `422 UNSIGNED`; Gerät läuft weiter |
-| 4 | `fremd-signed.bin` einspielen | `422 BAD_SIGNATURE`; Log nennt Bild-ID ≠ Geräte-ID |
-| 5 | `veraendert.bin` einspielen | `422 BAD_SIGNATURE` |
-| 6 | eine Text- oder Bilddatei einspielen | `422 INVALID_FILE` wie bisher |
-| 7 | `printdrive-0.6.0-signed.bin` erneut einspielen | angenommen, Neustart in den anderen Bereich (`ota.partition` wechselt) |
-| 8 | Rücksprung: signierte Datei einspielen und das Gerät **innerhalb von 15 s nach dem Neustart** abziehen und wieder einstecken | Gerät startet mit der vorherigen Firmware (`ota.partition` wie vor Schritt 8, `pending_verify:false`) |
-| 9 | Per USB: `.\tools\flash.ps1 printdrive -Signed` | flasht, startet, `signed_required:true`, gleiche `key_id`; Einstellungen und Dateien erhalten |
-| 10 | Schutz von `flash.ps1`: `build_signed\printdrive.bin` testweise durch `printdrive-unsigned.bin` ersetzen, `flash.ps1 printdrive -Signed` | bricht vor dem Flashen ab („trägt aber keine Signatur“); danach `build_signed.ps1` neu laufen lassen |
-| 11 | Ohne Schlüssel: `.\tools\idf.ps1 printdrive build` in einem frischen Klon | baut; `/api/status` dieser Firmware: `signed_required:false`, `key_id:""` |
-| 12 | Update über HTTPS (wenn eingeschaltet) wie Schritt 4 und 7 | gleiche Ergebnisse (Stack der HTTPS-Aufgabe reicht für die RSA-Prüfung) |
+| Nr. | Schritt | Erwartet | Am Gerät (2026-11-13) |
+|---|---|---|---|
+| 1 | Gerät mit 0.5.0: `printdrive-0.6.0-signed.bin` über die Weboberfläche einspielen | angenommen, Neustart; `/api/status`: Version 0.6.0, `ota.signed_required:true`, `ota.key_id` = notierte ID, `pending_verify` erst true, nach 15 s false; Log „web updates must be signed, key id …“ | **bestanden**: angenommen nach 13 s, Neustart in den zweiten Bereich, nach 15 s bestätigt, `signed_required:true`, Schlüssel-ID passt. Log-Zeile nicht protokolliert |
+| 2 | `build\printdrive.bin` (unsigniert) einspielen | `422 UNSIGNED` (bei einer Größe, die kein Vielfaches von 4096 ist, sofort nach dem Kopf) | **bestanden** für eine unsignierte 0.6.0: `422 UNSIGNED`, Gerät lief ohne Neustart weiter. Ob es die Datei aus Schritt 2 oder 3 war, ist nicht protokolliert |
+| 3 | `build_signed\printdrive-unsigned.bin` einspielen (Größe ist Vielfaches von 4096) | wird ganz geschrieben, dann `422 UNSIGNED`; Gerät läuft weiter | siehe Schritt 2 |
+| 4 | `fremd-signed.bin` einspielen | `422 BAD_SIGNATURE`; Log nennt Bild-ID ≠ Geräte-ID | **bestanden**: `422 BAD_SIGNATURE`, Gerät lief ohne Neustart weiter. Log nicht protokolliert |
+| 5 | `veraendert.bin` einspielen | `422 BAD_SIGNATURE` | noch nicht geprüft |
+| 6 | eine Text- oder Bilddatei einspielen | `422 INVALID_FILE` wie bisher | noch nicht geprüft |
+| 7 | `printdrive-0.6.0-signed.bin` erneut einspielen | angenommen, Neustart in den anderen Bereich (`ota.partition` wechselt) | noch nicht geprüft |
+| 8 | Rücksprung: signierte Datei einspielen und das Gerät **innerhalb von 15 s nach dem Neustart** abziehen und wieder einstecken | Gerät startet mit der vorherigen Firmware (`ota.partition` wie vor Schritt 8, `pending_verify:false`) | noch nicht geprüft |
+| 9 | Per USB: `.\tools\flash.ps1 printdrive -Signed` | flasht, startet, `signed_required:true`, gleiche `key_id`; Einstellungen und Dateien erhalten | noch nicht geprüft |
+| 10 | Schutz von `flash.ps1`: `build_signed\printdrive.bin` testweise durch `printdrive-unsigned.bin` ersetzen, `flash.ps1 printdrive -Signed` | bricht vor dem Flashen ab („trägt aber keine Signatur“); danach `build_signed.ps1` neu laufen lassen | noch nicht geprüft |
+| 11 | Ohne Schlüssel: `.\tools\idf.ps1 printdrive build` in einem frischen Klon | baut; `/api/status` dieser Firmware: `signed_required:false`, `key_id:""` | noch nicht geprüft |
+| 12 | Update über HTTPS (wenn eingeschaltet) wie Schritt 4 und 7 | gleiche Ergebnisse (Stack der HTTPS-Aufgabe reicht für die RSA-Prüfung) | **bestanden** (2026-11-13): Einspielen von 0.6.0 und die Ablehnungen UNSIGNED / BAD_SIGNATURE liefen über HTTPS. |
 
 Skript-Prüfungen ohne Gerät: `verify.ps1` auf die Dateien aus der Vorbereitung – signiert/passt
 (Exit 0), fremd (1), unsigniert (2).

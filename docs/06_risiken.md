@@ -1,8 +1,9 @@
 # 06 – Risiken und Annahmen
 
-Stand: 2026-11-12, Firmware 0.5.0. Die Risiken aus 0.2.0 gelten, soweit unten nichts anderes
-steht; Abschnitt 8 behandelt die Verschlüsselung (0.4.0), Abschnitt 9 die Neuerungen von 0.5.0.
-Eine unabhängige Sicherheitsprüfung der Neuerungen von 0.5.0 läuft; ihr Ergebnis steht noch aus
+Stand: 2026-11-13, Firmware 0.6.0. Die Risiken aus 0.2.0 gelten, soweit unten nichts anderes
+steht; Abschnitt 8 behandelt die Verschlüsselung (0.4.0), Abschnitt 9 die Neuerungen von 0.5.0,
+Abschnitt 10 die von 0.6.0.
+Die unabhängige Sicherheitsprüfung der Neuerungen von 0.5.0 ist abgeschlossen: kein kritischer Befund; ein schwerer und mehrere mittlere Befunde (Dateiliste hielt das Laufwerks-Schloss während des Sendens, automatisches Sperren konnte einem arbeitenden Drucker das Laufwerk nehmen, WebDAV-Überschreiben in mehreren Schritten u. a.) sind behoben und am Gerät mit dem API-Test geprüft.
 und ist hier nicht eingearbeitet. Bewertung: **hoch** = kann das Projektziel verhindern,
 **mittel** = erfordert Nacharbeit, **niedrig** = Komfort/Randfall.
 
@@ -79,7 +80,7 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 | microSD: Fremddateien | niedrig | Vorhandene Dateien der Karte bleiben erhalten und sind am Drucker sichtbar (Testkarte: `autorun.inf`/`autorun.ico`). |
 | Formatieren des falschen Mediums | niedrig (abgesichert) | Die Format-Anforderung (`fmt_req`) speichert das Medium (Flash/SD); beim Neustart wird nur formatiert, wenn dasselbe Medium gefunden wird. Eine Karte wird nie automatisch formatiert. |
 | Upload-Größe über 4 GiB | niedrig (behoben) | Die Größe wurde 32-bittig gelesen: 62 GB + 1 MB liefen über und wurden angenommen. Fix: 64-Bit-Auswertung, ≥ 4 GiB → 413 `TOO_LARGE` (T5.4). |
-| Ein Request gleichzeitig | niedrig | Der ESP-IDF-HTTP-Server beantwortet während eines Uploads keine anderen Anfragen (auch nicht `/api/status`). Die Weboberfläche pausiert das Polling, das LCD zeigt den Fortschritt; ein zweiter Client wartet. Datei- und Einstellungsaktionen im selben Browser hingen dabei ohne Meldung; seit dem Browser-Test (T6.4) sind sie während eines Uploads mit Meldung gesperrt. |
+| Ein Request gleichzeitig | niedrig | Der ESP-IDF-HTTP-Server beantwortet während eines Uploads keine anderen Anfragen (auch nicht `/api/status`). Die Weboberfläche pausiert das Polling, das LCD zeigt den Fortschritt; ein zweiter Client wartet. Datei- und Einstellungsaktionen im selben Browser hingen dabei ohne Meldung; seit dem Browser-Test (T6.4) sind sie während eines Uploads mit Meldung gesperrt. Seit 0.6.0 schickt die Oberfläche alle Anfragen über eine Warteschlange, eine nach der anderen; Downloads laufen daran vorbei (Abschnitt 10). |
 | FAT-Ausrichtung | niedrig (behoben) | FatFs legt die MBR-Partition bei Sektor 63 an (nicht auf 4 KiB ausgerichtet). Ohne `MKFS_PARM.align` lag der Datenbereich schief, jeder Schreibzugriff lief über den langsamen Lesen-Löschen-Schreiben-Pfad des Wear Levelling: **12 KB/s**. Fix in `probe_and_format()`: `align = 8` Sektoren → Datenbereich auf 4-KiB-Grenzen, **47 KB/s**. Windows meldet weiterhin Partitions-Offset 32256 (= Sektor 63); ausgerichtet ist nur der Datenbereich innerhalb. Ältere Dateisysteme bleiben langsam bis zum Neuformatieren; am PC formatierte Datenträger: Ausrichtung nicht geprüft. |
 | Download-Modus per Software | niedrig | 1200-Baud-Touch **verifiziert** (2026-11-11). TinyUSB schaltet den USB-PHY per `RTC_CNTL_USB_CONF` auf den OTG-Controller, das übersteht einen Software-Reset; ohne Gegenmaßnahme erschien im Download-Modus **kein** USB-Gerät (verifiziert). Fix: `board_restart_to_download_mode()` gibt den PHY vorher an USB-Serial/JTAG zurück (wie Arduinos `usb_switch_to_cdc_jtag()`). Web „Flash-Modus“ und BOOT 5 s nutzen dieselbe Funktion, einzeln noch nicht getestet. Update-Schleife `tools/flash.ps1 -Project printdrive -Build` mehrfach vollautomatisch verifiziert. Rückfall: aus-/einstecken (normaler Start), BOOT halten + einstecken. |
 | Strapping-Latch nach BOOT + Einstecken | niedrig | Nach manuellem Download-Modus bleibt jeder weitere Reset über USB-Serial/JTAG (esptool `hard_reset`, RTS) im Download-Modus (`boot:0x0 (DOWNLOAD(USB/UART0))`, `GPIO_STRAP_REG` = 0), obwohl die Taste losgelassen ist (`GPIO_IN` Bit 0 = 1) – bis zum echten Aus-/Einstecken. Wirkt wie „Firmware startet nicht“. Beim 1200-Baud-Touch nicht beobachtet. |
@@ -106,7 +107,7 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 
 | Risiko | Bew. | Details |
 |---|---|---|
-| Anmeldung (seit 0.3.0) | mittel (Restrisiko) | Die Anmeldung mit Benutzern und Rollen ist umgesetzt (API-Test 182/182). Die Passwörter gehen aber **unverschlüsselt** durchs WLAN (nur HTTP), wer den Funkverkehr mitschneidet, kann sie lesen. Die Anmeldesperre gilt je Adresse und verlangsamt nur das Raten über das Netz. Ein vergessenes Passwort setzt der Reset per Taste auf `admin` / `admin` zurück. Die Oberfläche weist darauf hin. Nur für vertrauenswürdige Netze gedacht. Ein Update über die Weboberfläche ist nicht signiert (Vormerkliste, [14](14_vormerkliste.md)). |
+| Anmeldung (seit 0.3.0) | mittel (Restrisiko) | Die Anmeldung mit Benutzern und Rollen ist umgesetzt (API-Test 182/182). Die Passwörter gehen aber **unverschlüsselt** durchs WLAN (nur HTTP), wer den Funkverkehr mitschneidet, kann sie lesen. Die Anmeldesperre gilt je Adresse und verlangsamt nur das Raten über das Netz. Ein vergessenes Passwort setzt der Reset per Taste auf `admin` / `admin` zurück. Die Oberfläche weist darauf hin. Nur für vertrauenswürdige Netze gedacht. Bis 0.5.0 war ein Update über die Weboberfläche nicht signiert; seit 0.6.0 gibt es signierte Updates als Build-Option (Abschnitt 10). |
 | CSRF | niedrig | POST-Anfragen brauchen `X-PrintDrive: 1` (Headername unverändert). Fremde Webseiten können diesen Header ohne CORS-Freigabe nicht setzen; GET-Endpunkte (Status, Liste, Download, Log) sind ungeschützt lesbar. |
 | WLAN-Zugangsdaten | mittel | STA-Passwort und AP-Passwort liegen **unverschlüsselt** im NVS (keine NVS-Verschlüsselung, kein Flash Encryption). Wer den Dongle hat, kann sie per esptool auslesen. Gleiches gilt für Flash-Backups in `backup\`. |
 | Setup-AP | niedrig | `DataDrive-XXXX`, WPA2 mit gerätespezifischem 10-Zeichen-Passwort; das Passwort steht offen auf dem LCD. Im Log steht es nach aktuellem Quelltext nicht (`setup access point on: SSID '…' (password on the LCD)`). |
@@ -148,14 +149,18 @@ Abläufe der Weboberfläche am echten Gerät und an einem echten Handy.
 | Weboberfläche am echten Handy (iOS Safari) | ungetestet (T6.4 B15) |
 | BOOT-Bestätigung per zweitem Druck | ungetestet (T2.2) |
 | Anmeldung, Passwörter im Klartext durchs WLAN | 0.3.0 umgesetzt; HTTPS offen (Abschnitt 5) |
-| Verschlüsselung: Passwortstärke, Klartext bei entsperrtem Laufwerk, keine Update-Signatur | 0.4.0, siehe Abschnitt 8 |
+| Verschlüsselung: Passwortstärke, Klartext bei entsperrtem Laufwerk | 0.4.0, siehe Abschnitt 8 |
+| Update-Signatur | seit 0.6.0 als Build-Option; Abweisung unsignierter und fremd signierter Dateien am Gerät geprüft; kein Schutz gegen Flashen per USB (Abschnitt 10) |
 | Beliebige Dateitypen ohne Inhaltsprüfung | bewusst so, abschaltbar (Abschnitt 2) |
 | Ordner in der Weboberfläche | seit 0.3.0 umgesetzt; PC-Ordner in der Anzeige noch nicht geprüft |
 | Zeitstempel aus der Browser-Uhr | seit 0.5.0 Uhr per NTP; ohne Internet weiter Browser-Uhr (Abschnitt 9) |
 | Netzlaufwerk (WebDAV), 0.5.0 | nur per API-Test am Gerät geprüft, mit echten Programmen ungetestet (Abschnitt 9) |
 | Automatisches Sperren während eines Drucks, 0.5.0 | Voreinstellung aus; Verhalten des X2D unbekannt (Abschnitt 9) |
 | HTTPS, 0.5.0 | Grundfunktion gemessen; iPhone mit Zertifikat, WebDAV über https und Dauerbetrieb ungetestet (Abschnitt 9) |
-| Unabhängige Sicherheitsprüfung 0.5.0 | läuft, Ergebnis steht aus |
+| Unabhängige Sicherheitsprüfung 0.5.0 | abgeschlossen, Befunde behoben (siehe oben) |
+| Downloads über HTTPS, 0.6.0 | bekannte Lücke: eine Statusabfrage kann einen langen Download noch abbrechen (Abschnitt 10) |
+| Feste IP-Adresse, 0.6.0 | am Gerät ungetestet; Rückweg nur über die Taste am Stick, die am Gerät ebenfalls ungetestet ist (Abschnitt 10) |
+| Verlust des Signierschlüssels, 0.6.0 | keine Web-Updates mehr, jedes Gerät per USB neu flashen (Abschnitt 10) |
 
 ## 8. Verschlüsselung des Laufwerks (seit 0.4.0)
 
@@ -170,7 +175,7 @@ von [12](12_api_v4.md) („Was die Verschlüsselung schützt“). Hier die Risik
 | Klartext bei entsperrtem Laufwerk | mittel | Drucker und PC sehen die Dateien im Klartext, solange das Laufwerk entsperrt ist. Das ist nötig, damit der Drucker drucken kann. | Stick nach Gebrauch im Browser sperren. Seit 0.5.0 gibt es das automatische Sperren (Voreinstellung aus; das Sperren nach Ablauf der Zeit ist noch nicht geprüft, Abschnitt 9). |
 | Keine Erkennung von Manipulation | mittel | Das Verfahren erkennt gezielte Änderungen an den verschlüsselten Daten nicht. | Kein Gegenmittel in 0.4.0. |
 | Passwörter durchs WLAN | mittel | Das Laufwerks-Passwort geht beim Entsperren im Klartext durchs WLAN, solange kein HTTPS aktiv ist. | Seit 0.5.0 HTTPS in den Einstellungen einschalten (Voreinstellung aus, Abschnitt 5 und 9). |
-| Updates nicht signiert | mittel | Wer Administrator-Zugriff hat, kann geänderte Firmware aufspielen. Die könnte das Passwort beim nächsten Entsperren mitlesen. | Signierte Updates sind in [14](14_vormerkliste.md) empfohlen, Entscheidung des Besitzers offen. |
+| Updates nicht signiert | mittel (bis 0.5.0); seit 0.6.0 mit signiertem Build niedrig | Wer Administrator-Zugriff hat, konnte geänderte Firmware aufspielen. Die könnte das Passwort beim nächsten Entsperren mitlesen. | Seit 0.6.0 signierte Updates ([17](17_signierte_updates.md)); am Gerät geprüft, dass unsignierte und fremd signierte Dateien abgewiesen werden. Gilt nur für den signierten Build des Besitzers; Flashen per USB bleibt möglich (Abschnitt 10). |
 | Einrichten löscht die Karte | hoch (Datenverlust) | Einrichten und Ausschalten löschen alle Dateien. Ohne Passwort und ohne Wiederherstellungsschlüssel ist der Inhalt endgültig verloren. | Die Oberfläche warnt vor dem Einrichten. Der Wiederherstellungsschlüssel wird nur einmal angezeigt. |
 | Stromausfall während Einrichtung oder Passwortwechsel | mittel | Der Kopfbereich wird mit einer Sicherungskopie und Prüfsummen geschrieben. Ein Stromausfall in diesen Vorgängen ist **noch nicht geprüft**. | Vor dem Einrichten die Daten sichern. |
 | Verschlüsselung auf dem internen Flash | mittel | Ohne Karte gilt dieselbe Schicht. Ein Test steht **noch aus**. | Nur die microSD-Karte verschlüsseln, bis der interne Flash geprüft ist. |
@@ -182,7 +187,7 @@ von [12](12_api_v4.md) („Was die Verschlüsselung schützt“). Hier die Risik
 ## 9. Neuerungen von 0.5.0
 
 Schnittstelle: [15](15_api_v5.md). Prüfstand: [05](05_testprotokoll.md) Phase 9 (API-Test am Gerät
-354/354). Die unabhängige Sicherheitsprüfung dieser Neuerungen läuft noch; ihr Ergebnis fehlt hier.
+354/354). Die unabhängige Sicherheitsprüfung dieser Neuerungen ist abgeschlossen, ihre Befunde sind behoben.
 
 | Risiko | Bew. | Details | Gegenmaßnahme / Stand |
 |---|---|---|---|
@@ -204,3 +209,22 @@ Schnittstelle: [15](15_api_v5.md). Prüfstand: [05](05_testprotokoll.md) Phase 9
 | HTTPS: Skripte und Symbole | niedrig | Mit HTTPS wird `http://` umgeleitet; „Senden an“, Kurzbefehl, Home-Bildschirm-Symbol und `api_test.py` müssen auf `https://` umgestellt werden. iPhone mit installiertem Zertifikat, Symbol und Kurzbefehl über `https` sind **noch nicht geprüft**. | Anleitung in der [README](../README.md), Abschnitt „HTTPS einschalten“. |
 | HTTPS: Download langsamer | niedrig | Download über HTTPS 389 kB/s gegenüber 487 kB/s über HTTP (gemessen). | Hingenommen. |
 | Display-Sprache Englisch | niedrig | Einstellung per API geprüft; ob die englischen Texte auf das LCD passen, ist **noch nicht geprüft**. | Bei Problemen Deutsch wählen. |
+
+## 10. Neuerungen von 0.6.0
+
+Schnittstelle: [16](16_api_v6.md), signierte Updates: [17](17_signierte_updates.md). Prüfstand:
+[05](05_testprotokoll.md) Phase 10 (Update über den Browser von 0.5.0 auf 0.6.0, signierte Updates,
+API-Test am Gerät 415/415 mit 7 übersprungenen Prüfungen).
+
+| Risiko | Bew. | Details | Gegenmaßnahme / Stand |
+|---|---|---|---|
+| Downloads über HTTPS | mittel | Die Oberfläche schickt ihre Anfragen seit 0.6.0 über eine Warteschlange, eine nach der anderen (Fix für „Stick nicht erreichbar“, T10.12). Downloads und ZIP-Downloads öffnen aber eine eigene Verbindung im Browser und laufen an der Warteschlange vorbei. Weil der Stick mit HTTPS nur eine Verbindung bedient, kann eine Statusabfrage während eines langen Downloads diese Verbindung noch schließen. Am Gerät **noch nicht geprüft** (T10.13). | Große Dateien per USB holen; bei Abbruch den Download neu starten. Behebung offen ([14](14_vormerkliste.md)). |
+| Warteschlange am echten Handy | niedrig | Der Fehler „Stick nicht erreichbar“ wurde mit einem Modell nachgestellt, das nur eine Verbindung annimmt, und dort behoben. Am iPhone ist die Korrektur **noch nicht nachgeprüft**. | Nachprüfen am iPhone (T10.12). |
+| Feste IP-Adresse sperrt aus | mittel | Eine falsche feste Adresse, Maske oder ein falsches Gateway macht den Stick im WLAN unerreichbar. Das Gerät weist nur Formfehler und offensichtlich unpassende Werte ab ([16](16_api_v6.md) Abschnitt 2.2), nicht eine Adresse, die im eigenen Netz belegt ist oder nicht passt. Umstellen auf feste Adresse oder neuen Namen ist am Gerät **noch nicht geprüft** (T10.8). | Rückweg: Taste 10 Sekunden halten, setzt Benutzer und Netzwerkeinstellungen zurück. Das geht nur am Stick selbst und ist am Gerät **noch nicht geprüft** (T10.9). Der Einrichtungs-Zugangspunkt behält `192.168.4.1`. |
+| Neuer Name mit HTTPS | niedrig | Ein neuer Gerätename erzeugt eine neue Zertifizierungsstelle; sie muss auf jedem Gerät neu installiert werden, bis dahin warnt jeder Browser. Eine neue Adresse erneuert nur das Serverzertifikat. Beides wirkt nach dem nächsten Neustart. Am Gerät **noch nicht geprüft**. | Namen vor dem Einschalten von HTTPS festlegen. |
+| Signierschlüssel verloren | hoch (für Web-Updates) | Ohne den privaten Schlüssel nimmt ein Stick mit signierter Firmware keine Updates über den Browser mehr an, auf Dauer. Er läuft aber normal weiter. | Schlüssel an einem zweiten Ort offline sichern. Abhilfe: neuer Schlüssel, jedes Gerät per USB flashen ([17](17_signierte_updates.md) Abschnitt 8). |
+| Signierschlüssel verraten | hoch | Wer den privaten Schlüssel hat, kann Updates bauen, die die Geräte annehmen (mit Admin-Zugang). | Schlüssel nie ins Repository, in Cloud-Freigaben oder zu GitHub. Bei Verdacht Admin-Passwörter ändern, neuer Schlüssel, alle Geräte per USB flashen ([17](17_signierte_updates.md) Abschnitt 8). |
+| Grenzen der Signatur | mittel | Kein Schutz gegen Flashen per USB (auch per Software über den USB-Log-Port), kein Secure Boot, keine Flash-Verschlüsselung, kein Schutz gegen Rückstufen auf eine ältere signierte Version. Builds aus dem öffentlichen Repository und aus Forks sind unsigniert und prüfen keine Updates. | Bewusst so ([17](17_signierte_updates.md) Abschnitt 2 und 4). Für die eigenen Geräte immer den signierten Build nehmen. |
+| Signaturprüfung, weitere Fälle | niedrig | Am Gerät geprüft: Annahme der signierten 0.6.0 auf 0.5.0, `UNSIGNED`, `BAD_SIGNATURE`, kein Neustart nach der Abweisung. **Noch nicht geprüft:** veränderte Datei, Rücksprung nach einem Fehlstart, Flashen per USB mit `-Signed`, Update über HTTPS (Speicher der HTTPS-Aufgabe für die RSA-Prüfung). | Testschritte 5 bis 12 in [17](17_signierte_updates.md) Abschnitt 9. |
+| HTTPS: freier Speicher mit 0.6.0 | mittel | Gemessen: 67 KiB frei im Leerlauf (HTTPS an, Laufwerk entsperrt; 0.5.0: 66 KiB). Der tiefste Wert während eines Uploads ist mit 0.6.0 nicht gemessen, Dauerbetrieb **noch nicht geprüft**. | Wie Abschnitt 9. |
+| Restzeit und Sperren | mittel | Die Restzeit und `touch` sind am Gerät geprüft (T10.4). Das Sperren selbst nach Ablauf der Zeit und der Zustand „wartet“ sind **noch nicht geprüft** (T10.5, T10.6). Für Drucke gilt weiter Abschnitt 9. | Voreinstellung aus. |

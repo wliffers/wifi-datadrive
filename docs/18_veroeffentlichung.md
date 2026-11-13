@@ -3,9 +3,14 @@
 Checkliste für den Besitzer. Stand: 2026-11-13. Nichts davon ist bisher ausgeführt: Es gibt noch
 kein GitHub-Repository, keinen Push, keinen Workflow-Lauf und keine Pages-Seite. Die Workflows
 unter `.github/workflows/` sind geschrieben, aber **noch nicht auf GitHub gelaufen** (noch nicht
-geprüft). Lokal geprüft wurden nur: `tools/api_test.py` gegen `tools/mock_server.py` (373/373 am
-2026-11-13 mit dem Stand dieses Tages) und `.github/scripts/merge_image.py` an einem vorhandenen
-lokalen Build (Abbild 1.478.800 Byte, von esptool als ESP32-S3-Abbild erkannt).
+geprüft). Lokal geprüft wurden für die Veröffentlichung nur: `tools/api_test.py` gegen
+`tools/mock_server.py` (373/373 am 2026-11-13; ein neuer Lauf gegen den Testserver ist hier nicht eingetragen) und
+`.github/scripts/merge_image.py` an einem vorhandenen lokalen Build (Abbild 1.478.800 Byte, von esptool
+als ESP32-S3-Abbild erkannt).
+
+Das erste Release wird **0.6.0**. Diese Version läuft am Gerät des Besitzers: signiert, über die
+Weboberfläche von 0.5.0 aus installiert, API-Test am Gerät 415/415; Einzelheiten und was noch nicht
+geprüft ist in [05_testprotokoll.md](05_testprotokoll.md) Phase 10.
 
 ## 1. Vor dem ersten Push
 
@@ -14,8 +19,8 @@ Diese Punkte sind offen und müssen vom Besitzer entschieden oder erledigt werde
 | Nr. | Punkt | Wo | Was tun |
 |---|---|---|---|
 | V1 | Name des Rechteinhabers fehlt | `LICENSE` Zeile 3: `Copyright (c) 2026 <NAME>` | Erledigt: Willi Liffers. |
-| V2 | E-Mail-Adresse in allen 33 Commits (Autor und Committer) | `git log --format='%an <%ae> / %cn <%ce>'` | Wird mit dem Push öffentlich. Entweder hinnehmen oder vor dem ersten Push den Verlauf mit einer GitHub-noreply-Adresse neu schreiben (z. B. `git filter-repo --mailmap`). Für neue Commits `git config user.email <id>+<name>@users.noreply.github.com` setzen und in den GitHub-Einstellungen „Keep my email addresses private“ einschalten |
-| V3 | Alle 33 Commit-Nachrichten enden mit einer Zeile Mitautor-Zeile mit fremdem Namen und fremder Adresse | `git log --all --format=%B` | Vor der Veröffentlichung entfernen (Verlauf neu schreiben, z. B. `git filter-repo --message-callback`). Geht nur zusammen mit V2 in einem Durchgang sinnvoll |
+| V2 | E-Mail-Adresse in allen Commits (Autor und Committer; Stand 2026-11-13: 38 Commits) | `git log --format='%an <%ae> / %cn <%ce>'` | Wird mit dem Push öffentlich. Entweder hinnehmen oder vor dem ersten Push den Verlauf mit einer GitHub-noreply-Adresse neu schreiben (z. B. `git filter-repo --mailmap`). Für neue Commits `git config user.email <id>+<name>@users.noreply.github.com` setzen und in den GitHub-Einstellungen „Keep my email addresses private“ einschalten |
+| V3 | 33 der 38 Commit-Nachrichten (Stand 2026-11-13) enden mit einer Zeile Mitautor-Zeile mit fremdem Namen und fremder Adresse | `git log --all --format=%B` | Vor der Veröffentlichung entfernen (Verlauf neu schreiben, z. B. `git filter-repo --message-callback`). Geht nur zusammen mit V2 in einem Durchgang sinnvoll |
 | V4 | Lokaler Pfad mit Benutzername | `docs/04_build_und_flash.md` Zeile 4 | Erledigt. |
 | V5 | Fest eingetragener Pfad in den lokalen Temp-Ordner des Benutzers | `tools/ui_test.py` Zeilen 92–93 (`_SCRATCH_SHOTS`) | Erledigt. |
 | V6 | Interne Arbeitsnotizen zur Arbeitsteilung | `docs/08_plan_v03.md` Zeilen 44–60 (Spalte „Modell“, „interne Notizen“), `docs/11_plan_v04.md` Zeilen 77–97 (ebenso), `docs/04_build_und_flash.md` Zeile 55, `docs/13_display_animation_briefing.md` Zeile 3 | Erledigt. |
@@ -73,7 +78,15 @@ vereinheitlichen (17 Dateien liegen mit CRLF im Repository). Vorgehen steht als 
 ## 4. Release erstellen
 
 Der wiederkehrende Ablauf (Version setzen, prüfen, taggen, Entwurf, signierte Dateien einsetzen,
-veröffentlichen) steht jetzt in [RELEASING.md](RELEASING.md). Für das erste Release gilt er genauso.
+veröffentlichen) steht jetzt in [RELEASING.md](RELEASING.md). Für das erste Release (0.6.0, Tag
+`v0.6.0`) gilt er genauso. Dabei zusätzlich:
+
+- In `CHANGELOG.md`, `README.md` und `README.en.md` die Vermerke „noch nicht veröffentlicht“ bzw.
+  „unveröffentlicht“/„unreleased“ entfernen ([RELEASING.md](RELEASING.md) Abschnitt 1).
+- Im Release-Text die Grenzen aus dem Abschnitt „Bekannte Grenzen“ von 0.6.0 im `CHANGELOG.md`
+  übernehmen, vor allem die Lücke bei Downloads über HTTPS und die am Gerät noch nicht geprüfte feste
+  IP-Adresse.
+- Nach dem Veröffentlichen den Browser-Flasher mit einem echten Dongle prüfen (Abschnitt 3).
 
 ## 5. Was von Hand bleibt
 

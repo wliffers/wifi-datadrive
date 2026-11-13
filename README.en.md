@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0%20in%20progress-2563eb">
+  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0%20unreleased-2563eb">
   <img alt="Board" src="https://img.shields.io/badge/Board-LILYGO%20T--Dongle--S3-0f766e">
   <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.6-6b7280">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-MIT-16a34a"></a>
@@ -56,9 +56,11 @@ connection and no app.
 > Bambu Lab. The software is provided without warranty and without liability. Details are in the
 > [disclaimer](HAFTUNGSAUSSCHLUSS.md) (German and English).
 
-> **Status 2026-11-13.** The source carries version 0.6.0. It is in progress: built and tested against the
-> mock server, but not yet run on the device. The last version tested on the device is 0.5.0. No release
-> has been published yet. What exactly is tested is listed under [Tested and untested](#tested-and-untested).
+> **Status 2026-11-13.** The source carries version 0.6.0. It runs on the device: installed by an update
+> in the browser, tested with the API test (415/415) and with signed updates. No release has been
+> published yet. Some parts of 0.6.0 are still untested, for example a static IP address on the device and
+> the lock itself after the timeout. What exactly is tested is listed under
+> [Tested and untested](#tested-and-untested).
 
 ## Features
 
@@ -240,8 +242,10 @@ important one.
 
 **Automatic lock** (Settings › Speicher & USB, off by default): the drive locks itself after the chosen
 time without access and, if you want, as soon as the USB host disconnects. While the USB host is writing
-or an upload runs, it waits. For long prints choose "off" or a generous time. The settings are tested on
-the device by the API test; the lock itself after the timeout is **untested**.
+or an upload runs, it waits. For long prints choose "off" or a generous time. From 0.6.0 the start page
+shows the time left; "Zeit zurücksetzen" (reset time) starts it again. The settings and the time left are
+tested on the device (with 15 minutes: 895 s after a few seconds, 900 s after the reset); the lock itself
+after the timeout is **untested**.
 
 **Forgot the drive password:** unlock with the recovery key, then set a new drive password under
 **Settings › Sicherheit › Verschlüsselung**. If both password and recovery key are lost, the data is gone.
@@ -302,25 +306,32 @@ Without HTTPS, passwords and files cross the Wi-Fi readably. HTTPS is built in, 
      Certificate Trust Settings: switch trust on.
 
 Afterwards scripts ("Send to", Shortcuts, your own scripts) must use `https://`, and you add a home screen
-icon again. The stick serves only one HTTPS connection at a time. From 0.6.0: a new network name creates a
-new certificate for the stick, which you install again.
+icon again. The stick serves only one HTTPS connection at a time; from 0.6.0 the interface therefore sends
+one request after the other. Also from 0.6.0: a new network name creates a new certificate for the stick,
+which you install again on every device. A new address only renews the server certificate; you do not
+need to install anything again.
 
 Measured on the device (0.5.0, drive encrypted and unlocked): 30 MB upload at 864 kB/s, the file was
-bit-identical afterwards; download 389 kB/s. **Untested:** installing the certificate on iPhone and
-Windows, network drive and scripts over `https`, running for many hours.
+bit-identical afterwards; download 389 kB/s. With 0.6.0 (HTTPS on, drive unlocked): 67 KiB free memory
+when idle. **Untested:** installing the certificate on iPhone and Windows, network drive and scripts over
+`https`, running for many hours. Known gap: downloads and ZIP downloads open their own connection in the
+browser. With HTTPS, a status poll during a long download can still close that connection.
 
 ## Updates
 
 **In the browser:** Settings › System › "Datei auswählen …" (choose file), then pick the file `…-app.bin`
 from the release. The new version first runs on probation; if it does not run stably, the stick returns
-to the previous one. Files and settings stay. This path is **untested** on the device; so far every
-version reached the stick over USB.
+to the previous one. Files and settings stay. Tested on the device: one update from 0.5.0 to 0.6.0,
+accepted after 13 seconds, restart into the second firmware slot, confirmed as good after 15 seconds.
+Returning to the old version after a failed start is **untested** on the device.
 
 **Signed updates (from 0.6.0):** firmware built with the option `CONFIG_PD_OTA_SIGNED` installs only files
-signed with the author's key through the browser. Then even an administrator with the right password
-cannot install modified firmware over the network. Signing happens only on the author's computer; the
-private key never goes to GitHub. The confirmation before an update shows "Nur signierte Updates" (signed
-updates only) and the key ID. This is **untested** on the device.
+signed with the author's key through the browser (RSA-3072). Then even an administrator with the right
+password cannot install modified firmware over the network. Signing happens only on the author's
+computer; the private key is kept outside the repository and never goes to GitHub. The confirmation before
+an update shows "Nur signierte Updates" (signed updates only) and the key ID. Tested on the device: an
+unsigned file is refused with `UNSIGNED`, a file signed with a different key with `BAD_SIGNATURE`; the
+stick keeps running without a restart.
 
 **Forks and own builds:** by default the repository builds without a signature. Such firmware accepts any
 valid update, like 0.5.0. Your own build reaches a stick with signed firmware only over USB. Own signed
@@ -344,14 +355,20 @@ built or runs against the mock server.
 | Encryption: set up, lock, unlock, recovery, switch off (0.4.0) | tested by the API test on the device (334/334) |
 | Encryption on the internal flash, power loss during setup | untested |
 | Network drive basics, time, resumable upload, ZIP, lock settings (0.5.0) | tested by the API test on the device (354/354) |
-| HTTPS (0.5.0) | basic function measured on the device; iPhone with certificate, WebDAV over `https`, long-term operation untested |
+| API test 0.6.0: scope of 0.3.0 to 0.5.0, plus time left, network settings and fields for signed updates | tested by the API test on the device (415/415, 7 skipped, list in the test protocol phase 10) |
+| HTTPS (0.5.0) | basic function measured on the device; with 0.6.0 67 KiB free memory when idle; iPhone with certificate, WebDAV over `https`, long-term operation untested |
 | Network drive with Explorer, Finder or phone apps | untested |
+| Time left until lock and "reset time" (0.6.0) | tested via the API on the device (15 minutes: 895 s, 900 s after the reset) |
 | Automatic lock after the timeout | untested |
+| Reading the network settings (0.6.0): DHCP, address, mask, gateway, DNS, name | tested on the device |
+| Setting a static IP address or a new network name (0.6.0) | untested (on purpose: a mistake would need the 10-second button on site) |
 | Setup page opening by itself, Wi-Fi scan on the setup network | untested |
-| Button (QR code, switching, reset), home screen icon, "Send to", iPhone shortcut | untested |
-| Firmware update in the browser, web flasher | untested |
-| Web interface | browser test against the mock server (Chromium, PC and phone profile); untested on a real phone |
-| New in 0.6.0: time left until lock, static address and network name, signed updates, new interface | tested against the mock server (API test 373/373, browser test PC 786/786 and phone 803/803); untested on the device |
+| Button (QR code, switching, reset of users and network), home screen icon, "Send to", iPhone shortcut | untested |
+| Firmware update in the browser (0.5.0 to 0.6.0) | tested (once; return after a failed start untested) |
+| Signed updates (0.6.0): unsigned and foreign-signed file refused | tested on the device (`UNSIGNED`, `BAD_SIGNATURE`, no restart) |
+| Web flasher | untested |
+| Web interface (0.6.0) | browser test against the mock server passed (Chromium, PC 872/872, phone profile 889/889); not tested systematically on a real phone |
+| Error "Stick nicht erreichbar" (stick not reachable) after changing the lock time (HTTPS) | fixed with a request queue, reproduced with a model that accepts only one connection; not yet re-checked on the iPhone |
 
 Measured with microSD 64 GB: USB write 832 KB/s, browser upload 1.3 to 1.6 MB/s. Encrypted: USB write
 820 KB/s, read 659 KB/s, upload 1.0 MB/s. Open risks and assumptions are in
@@ -379,7 +396,8 @@ Measured with microSD 64 GB: USB write 832 KB/s, browser upload 1.3 to 1.6 MB/s.
 - Built and tested only for the LILYGO T-Dongle-S3 with LCD.
 - Meant for trusted networks. By default the stick speaks plain HTTP; passwords then cross the Wi-Fi
   readably.
-- The stick handles one request after the other. During an upload, other devices wait.
+- The stick handles one request after the other. During an upload, other devices wait. With HTTPS a long
+  download can break off if the interface polls the status meanwhile.
 - No exFAT. Many cards above 32 GB come with exFAT and must be formatted to FAT32 in the browser, which
   erases them. At most 4 GB per file.
 - Change the card only while the stick is unplugged.
@@ -483,4 +501,4 @@ in [CHANGELOG.md](CHANGELOG.md) (all German).
 
 ---
 
-<p align="center">Version 0.6.0 (in progress, not released) · status 2026-11-13</p>
+<p align="center">Version 0.6.0 (tested on the device, not released) · status 2026-11-13</p>

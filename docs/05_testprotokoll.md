@@ -18,9 +18,10 @@ Prozeduren und erwarteten Texte unten beschreiben den Stand 0.2.0; Ergebniszeile
 wie sie am Testtag eingetragen wurden, und nennen deshalb zum Teil die alten Namen
 (`PrintDrive-54D5`, `PRINTDRIVE`, „Host …“ auf dem LCD) und die alte Weboberfläche.
 
-Stand 0.5.0: Die Ergebnisse für Anmeldung, Verschlüsselung und WLAN-Suche stehen in Phase 7 und 8,
+Stand 0.6.0: Die Ergebnisse für Anmeldung, Verschlüsselung und WLAN-Suche stehen in Phase 7 und 8,
 die für 0.5.0 (Netzlaufwerk, Uhrzeit, automatisches Sperren, Upload fortsetzen, ZIP, HTTPS) in
-Phase 9 am Ende dieses Dokuments. Die Übersicht gilt für 0.2.0: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
+Phase 9, die für 0.6.0 (Update über den Browser, signierte Updates, Restzeit, Netzwerkeinstellungen,
+neue Oberfläche) in Phase 10 am Ende dieses Dokuments. Die Übersicht gilt für 0.2.0: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
 `tools/api_test.py` weitgehend bestanden (T2.11: Flash 18/18, microSD 21/21), offen T2.2 (3),
 T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 6
 (Umbenennung, API v2 28/28, gzip-Auslieferung) bestanden, Browser-Test der neuen
@@ -641,4 +642,71 @@ noch nicht geprüft (er baut seine Adressen mit `http://`).
 | T8.14 | Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** (der Besitzer erwartet, dass es geht) |
 | T7.7 | Firmware-Update über die Weboberfläche | **noch nicht geprüft** |
 | T8.9 | WLAN-Suche im Einrichtungsmodus | **noch nicht geprüft** |
+| T8.13 | Stromausfall während der Einrichtung der Verschlüsselung | **noch nicht geprüft** |
+
+## Phase 10 – Update über den Browser, signierte Updates, Restzeit, Netzwerk (Firmware 0.6.0)
+
+Stand 2026-11-13. Schnittstelle: [16_api_v6.md](16_api_v6.md), signierte Updates:
+[17_signierte_updates.md](17_signierte_updates.md). Gerät: LILYGO T-Dongle-S3 (LCD-Variante),
+microSD 64 GB, Laufwerk verschlüsselt. Welcher Commit genau geflasht war und mit welcher
+Befehlszeile der API-Test lief, ist : `python tools/api_test.py <Gerät> --user <admin> --password … --drive E: --drive-password … --ota-probe` über HTTP (HTTPS für den Lauf ausgeschaltet).
+
+### T10.1 Update über die Weboberfläche (0.5.0 → 0.6.0)
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-13 | Die laufende 0.5.0 nahm die signierte 0.6.0 über die Weboberfläche an: angenommen nach 13 s, Neustart in den zweiten Firmware-Bereich, nach 15 s als gut bestätigt (Rücksprung abgebrochen). Erstes am Gerät geprüftes Web-Update; damit ist T7.7 erledigt. Ob die Verbindung dabei HTTP oder HTTPS war, ist nicht protokolliert |
+
+### T10.2 Signierte Updates
+
+Nummern der Schritte wie in [17_signierte_updates.md](17_signierte_updates.md) Abschnitt 9. Die
+Schlüssel-ID des Geräts steht hier bewusst nicht.
+
+| Nr. | Prüfpunkt | Ergebnis | Datum |
+|---|---|---|---|
+| T10.2a | Schritt 1: signierte 0.6.0 auf 0.5.0 über die Weboberfläche; danach `/api/status` | **bestanden**: siehe T10.1; `ota.signed_required: true`, `ota.key_id` = ID des Schlüssels des Besitzers | 2026-11-13 |
+| T10.2b | Schritt 2 oder 3: unsignierte 0.6.0 einspielen | **bestanden**: `422 UNSIGNED`; Gerät lief ohne Neustart weiter. Beide unsignierten Dateien wurden geprüft (normaler Build `build\printdrive.bin` und `build_signed\printdrive-unsigned.bin`), beide `422 UNSIGNED`; ist nicht protokolliert | 2026-11-13 |
+| T10.2c | Schritt 4: dieselbe 0.6.0 mit einem anderen Schlüssel signiert | **bestanden**: `422 BAD_SIGNATURE`; Gerät lief ohne Neustart weiter | 2026-11-13 |
+| T10.2d | Schritte 5 bis 12: veränderte Datei, Text- oder Bilddatei, erneutes Einspielen, Rücksprung nach Abziehen, Flashen per USB mit `-Signed`, Schutz von `flash.ps1`, Build ohne Schlüssel, Update über HTTPS | **noch nicht geprüft** | – |
+
+### T10.3 API-Test am Gerät
+
+| Ergebnis | Datum | Bemerkung |
+|---|---|---|
+| **bestanden** | 2026-11-13 | 415/415. Übersprungen (7): Schutz des letzten Administrators, Test-WLAN, Prüfungen, die ein unverschlüsseltes Laufwerk brauchen, das Sperren selbst nach Ablauf der Zeit, der Zustand `waiting`, die Prüfungen von Maske und Subnetz und das Übernehmen von Netzwerkeinstellungen (beide nur mit `--network-test`) |
+
+### T10.4 bis T10.13 Einzelpunkte
+
+| Nr. | Prüfpunkt | Ergebnis | Datum |
+|---|---|---|---|
+| T10.4 | Restzeit bis zum Sperren (`autolock.remaining_s`) und `POST /api/autolock/touch` | **bestanden**: Sperrzeit 15 Minuten, nach wenigen Sekunden `remaining_s` 895, nach `touch` 900 | 2026-11-13 |
+| T10.5 | Laufwerk sperrt nach Ablauf der Zeit (= T9.7) | **noch nicht geprüft** | – |
+| T10.6 | Zustand `waiting` (Sperren aufgeschoben, solange das USB-Gerät das Laufwerk hält oder schreibt) | **noch nicht geprüft** | – |
+| T10.7 | `GET /api/network` | **bestanden**: DHCP-Modus, aktuelle Adresse, Maske, Gateway, DNS und Gerätename | 2026-11-13 |
+| T10.8 | Feste Adresse einstellen, zurück auf DHCP, Gerätename ändern | **noch nicht geprüft** (bewusst: ein Fehler bräuchte die 10-s-Taste vor Ort) | – |
+| T10.9 | Taste 10 s halten setzt Benutzer und Netzwerkeinstellungen zurück | **noch nicht geprüft** | – |
+| T10.10 | Freier Heap mit HTTPS an, Laufwerk entsperrt | 67 KiB im Leerlauf (0.5.0: 66 KiB, T9.11). Tiefster Wert während eines Uploads mit 0.6.0 nicht gemessen | 2026-11-13 |
+| T10.11 | Browser-Test der Weboberfläche gegen den Testserver (`tools/ui_test.py`) | **bestanden**: PC 872/872, Handy-Profil 889/889 | 2026-11-13 |
+| T10.12 | Nach dem Ändern der Sperrzeit meldet die Oberfläche „Stick nicht erreichbar“ | **FEHLER** (behoben): Die Seite schickte parallele Anfragen, der Stick bedient mit HTTPS nur eine Verbindung. Fix: eine Warteschlange für die ganze Seite (eine Anfrage zur Zeit, Anfragen, die gefahrlos wiederholt werden können, einmal still wiederholt). Nachgestellt und als behoben geprüft mit einem Proxy-Modell, das nur eine Verbindung annimmt. Am iPhone vom Besitzer **noch nicht nachgeprüft** | 2026-11-13 |
+| T10.13 | Download oder ZIP-Download über HTTPS, währenddessen Statusabfrage der Oberfläche | **Befund** (offen): Downloads öffnen eine eigene Verbindung im Browser und laufen nicht durch die Warteschlange; eine Statusabfrage während eines langen Downloads kann diese Verbindung noch schließen. Am Gerät **noch nicht geprüft** | – |
+
+### Nachträge zu früheren Punkten
+
+| Nr. | Prüfpunkt | Stand nach 0.6.0 |
+|---|---|---|
+| T7.7 | Firmware-Update über die Weboberfläche | erledigt durch T10.1 |
+| T9.7 | Automatisches Sperren am Gerät | Restzeit geprüft (T10.4); das Sperren selbst, beim Trennen des USB-Geräts und nicht während eines Schreibvorgangs **noch nicht geprüft** |
+
+### Weiter offen nach 0.6.0
+
+| Nr. | Prüfpunkt | Ergebnis |
+|---|---|---|
+| T10.8 | Netzwerkeinstellungen am Gerät ändern | **noch nicht geprüft** |
+| T10.5 | Sperren nach Ablauf der Zeit | **noch nicht geprüft** |
+| T10.12 | Warteschlange am iPhone nachprüfen | **noch nicht geprüft** |
+| T8.14 | Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** |
+| T9.10 | Einrichtungsseite mit einem echten Handy | **noch nicht geprüft** |
+| T9.9 | Englische Texte auf dem LCD | **noch nicht geprüft** |
+| T9.11 | HTTPS: Zertifikat auf dem iPhone, Dauerbetrieb über viele Stunden | **noch nicht geprüft** |
+| T9.3 | Netzlaufwerk mit dem Windows-Explorer (und anderen Programmen) | **noch nicht geprüft** |
 | T8.13 | Stromausfall während der Einrichtung der Verschlüsselung | **noch nicht geprüft** |

@@ -7,29 +7,60 @@ Bisher ist keine Version als Release veröffentlicht. Das Datum ist der Tag, an 
 Repository entstand. „Am Gerät geprüft“ heißt: auf dem LILYGO T-Dongle-S3 mit LCD, Ergebnisse in
 [docs/05_testprotokoll.md](docs/05_testprotokoll.md).
 
-## [0.6.0] – in Arbeit, nicht veröffentlicht
+## [0.6.0] – 2026-11-13, noch nicht veröffentlicht
 
 ### Neu
-- **Restzeit bis zum Sperren:** Ist das automatische Sperren eingestellt, zeigt die Karte „Verschlüsselt“,
-  wann das Laufwerk sperrt („Sperrt in 12:34“). Arbeiten mit Dateien und „Zeit zurücksetzen“ starten die
-  Frist neu; eine nur geöffnete Seite hält das Laufwerk nicht offen. Bei Zeiten unter 10 Minuten wartet
-  das Sperren, bis das USB-Gerät das Laufwerk nicht mehr hält.
+- **Restzeit bis zum Sperren:** Ist das automatische Sperren eingestellt, zeigt die Karte „Verschlüsselt“
+  auf der Startseite, wann das Laufwerk sperrt („Sperrt in 12:34“). Arbeiten mit Dateien und „Zeit
+  zurücksetzen“ starten die Frist neu; eine nur geöffnete Seite hält das Laufwerk nicht offen. Bei Zeiten
+  unter 10 Minuten wartet das Sperren, bis das USB-Gerät das Laufwerk nicht mehr hält.
 - **Feste Adresse und Name im Netzwerk:** Unter Einstellungen › WLAN wählst du DHCP oder eine feste
-  IPv4-Adresse und einen eigenen Namen für `name.local`. Die Taste 10 Sekunden halten setzt das mit zurück.
+  IPv4-Adresse (vorbelegt mit den Werten aus DHCP) und einen eigenen Namen für `name.local`. Mit HTTPS
+  erzeugt ein neuer Name eine neue Zertifizierungsstelle, die auf jedem Gerät neu installiert werden muss;
+  eine neue Adresse erneuert nur das Serverzertifikat. Die Taste 10 Sekunden halten setzt jetzt auch die
+  Netzwerkeinstellungen zurück.
 - **Signierte Updates:** Mit der Option `CONFIG_PD_OTA_SIGNED` gebaut, nimmt die Firmware über den Browser
-  nur noch Updates an, die mit dem Schlüssel des Besitzers signiert sind. Im öffentlichen Repository ist
-  die Option aus, damit jeder Klon bauen und per USB flashen kann. Anleitung:
+  nur noch Updates an, die mit dem Schlüssel des Besitzers signiert sind (RSA-3072). Der Schlüssel liegt
+  außerhalb des Repositorys. Im öffentlichen Repository ist die Option aus, damit jeder Klon und jeder
+  Fork bauen und per USB flashen kann; solche Builds sind unsigniert. Anleitung:
   [docs/17_signierte_updates.md](docs/17_signierte_updates.md).
-- **Neue Oberfläche:** Karten-Layout, eine i-Kurzhilfe an jeder Einstellung und die Seite „Hilfe &
-  Anleitungen“, die ohne Internet im Gerät liegt.
+- **Neue Oberfläche:** Karten-Layout, Umschalter als Segmente, eine ⓘ-Kurzhilfe an jeder Einstellung und
+  die Seite „Hilfe & Anleitungen“, die ohne Internet im Gerät liegt. Keine Beschreibungstexte mehr zwischen
+  den Einstellungen, keine doppelten Aktionen. Die Farben des Projekts bleiben.
+- **Eine Anfrage nach der anderen:** Die Oberfläche schickt ihre Anfragen über eine gemeinsame
+  Warteschlange, weil der Stick mit HTTPS nur eine Verbindung bedient. Anfragen, die gefahrlos wiederholt
+  werden können, wiederholt sie einmal ohne Meldung.
 - **API Version 6:** [docs/16_api_v6.md](docs/16_api_v6.md).
 - **Vorbereitung für GitHub:** MIT-Lizenz, eigene Rechte für das Maskottchen LIO, Browser-Flasher,
   automatische Builds, Vorlagen für Issues und Pull Requests.
 
 ### Geprüft
-- Die Firmware baut ohne Signatur fehlerfrei.
-- Gegen den Testserver: API-Test 373/373, Browser-Test PC 786/786 und Handy 803/803.
-- **Am Gerät noch nicht gelaufen.**
+- **Update über den Browser am Gerät:** Die laufende 0.5.0 nahm die signierte 0.6.0 an (13 Sekunden),
+  startete in den zweiten Firmware-Bereich und bestätigte die neue Version nach 15 Sekunden. Das ist das
+  erste am Gerät geprüfte Web-Update.
+- **Signierte Updates am Gerät:** Der Status meldet `signed_required: true` und die Schlüssel-ID. Eine
+  unsignierte 0.6.0 wurde mit `422 UNSIGNED` abgewiesen, dieselbe Datei mit einem anderen Schlüssel
+  signiert mit `422 BAD_SIGNATURE`. Nach beiden Abweisungen lief der Stick ohne Neustart weiter.
+- API-Test am Gerät 415/415, 7 Prüfungen übersprungen (Liste in
+  [docs/05_testprotokoll.md](docs/05_testprotokoll.md) Phase 10).
+- Restzeit am Gerät: bei 15 Minuten nach wenigen Sekunden 895 s, nach „Zeit zurücksetzen“ 900 s.
+- Netzwerkeinstellungen am Gerät gelesen: DHCP, aktuelle Adresse, Maske, Gateway, DNS und Name.
+- Freier Speicher mit HTTPS und entsperrtem Laufwerk: 67 KiB im Leerlauf.
+- Browser-Test gegen den Testserver: PC 872/872, Handy 889/889.
+- Behoben: Nach dem Ändern der Sperrzeit meldete die Oberfläche „Stick nicht erreichbar“. Ursache waren
+  parallele Anfragen, während der Stick mit HTTPS nur eine Verbindung bedient. Nachgestellt und behoben mit
+  einem Modell, das nur eine Verbindung annimmt; am iPhone noch nicht nachgeprüft.
+- Nicht geprüft: feste Adresse und neuer Name am Gerät, das Sperren nach Ablauf der Zeit, der Zustand
+  „wartet“, das Zurücksetzen per Taste, die Rückkehr zur alten Version nach einem Fehlstart.
+
+### Bekannte Grenzen
+- Downloads und ZIP-Downloads öffnen eine eigene Verbindung im Browser. Mit HTTPS kann eine Statusabfrage
+  während eines langen Downloads diese Verbindung noch schließen.
+- Eine falsche feste Adresse macht den Stick im WLAN unerreichbar. Zurück geht es nur mit der Taste
+  (10 Sekunden halten) am Stick; das ist am Gerät noch nicht geprüft.
+- Geht der private Schlüssel verloren, nimmt ein Stick mit signierter Firmware keine Updates über den
+  Browser mehr an und muss per USB neu geflasht werden.
+- Signierte Updates schützen nicht vor dem Flashen per USB; es gibt kein Secure Boot.
 
 ## [0.5.0] – 2026-11-12
 

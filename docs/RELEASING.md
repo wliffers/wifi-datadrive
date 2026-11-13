@@ -6,7 +6,10 @@ Push (Repository anlegen, Einstellungen, GitHub Pages) stehen in
 [17_signierte_updates.md](17_signierte_updates.md).
 
 Stand 2026-11-13: Dieser Ablauf ist geschrieben, aber noch nie vollständig durchlaufen. Die Workflows unter
-`.github/workflows/` sind noch nicht auf GitHub gelaufen (noch nicht geprüft).
+`.github/workflows/` sind noch nicht auf GitHub gelaufen (noch nicht geprüft). Das erste Release wird
+**0.6.0**; die Versionen 0.1.0 bis 0.5.0 gibt es nur im Verlauf des Repositorys, nicht als Release. 0.6.0
+läuft bereits am Gerät des Besitzers (signiert, über die Weboberfläche von 0.5.0 aus installiert,
+API-Test 415/415, [05_testprotokoll.md](05_testprotokoll.md) Phase 10).
 
 ## 0. Einmalig: Signierschlüssel
 
@@ -30,9 +33,13 @@ Das Skript legt `%USERPROFILE%\.datadrive\ota_signing_key.pem` (privat) und `ota
 
 - `firmware/printdrive/CMakeLists.txt`: `PROJECT_VER` setzen (z. B. `0.6.0`). Der Tag muss später genau
   dazu passen, sonst bricht der Build ab.
-- `CHANGELOG.md`: Abschnitt der Version mit Datum statt „in Arbeit“.
-- `README.md` und `README.en.md`: Versions-Abzeichen oben, Kasten „Stand“, Tabelle „Geprüft und nicht
-  geprüft“ und Fußzeile (Nummer und Datum).
+- `CHANGELOG.md`: Abschnitt der Version mit Datum statt „in Arbeit“; beim Veröffentlichen den Vermerk
+  „noch nicht veröffentlicht“ entfernen (für 0.6.0 steht er heute im Abschnitt `[0.6.0] – 2026-11-13`).
+  Der Satz „Bisher ist keine Version als Release veröffentlicht“ am Anfang fällt mit dem ersten Release weg.
+- `README.md` und `README.en.md`: Versions-Abzeichen oben („unveröffentlicht“ bzw. „unreleased“ durch die
+  bloße Nummer ersetzen), Kasten „Stand“ (ohne „Ein Release ist noch nicht veröffentlicht“), Tabelle
+  „Geprüft und nicht geprüft“ und Fußzeile (Nummer und Datum). Mit dem ersten Release außerdem den Satz
+  „solange kein Release veröffentlicht ist, gibt es dort nichts zu installieren“ im Abschnitt Installation.
 - `docs/05_testprotokoll.md` und `docs/06_risiken.md`: Ergebnisse und offene Punkte der Version.
 - Optional: Platzhalter der Version in `.github/ISSUE_TEMPLATE/bug_report.yml`.
 
@@ -45,7 +52,8 @@ python tools/ui_test.py --base http://localhost:8090      # läuft nicht in GitH
 ```
 
 Am echten Gerät `tools/api_test.py` gegen den Stick laufen lassen und das Ergebnis in
-`docs/05_testprotokoll.md` eintragen. Was nicht am Gerät lief, bleibt in README und Release-Text als
+`docs/05_testprotokoll.md` eintragen (für 0.6.0 geschehen: 415/415, Phase 10; ändert sich der Quelltext
+bis zum Tag, den Lauf wiederholen). Was nicht am Gerät lief, bleibt in README und Release-Text als
 „noch nicht geprüft“ stehen.
 
 Vor dem Einchecken:
@@ -120,7 +128,8 @@ Signiert wird **nur auf dem eigenen Rechner**.
 
 Erst danach veröffentlichen. Ein Gerät mit 0.5.0 oder einer unsignierten Firmware nimmt die signierte Datei
 über die Weboberfläche an und verlangt ab dann selbst signierte Updates
-([17_signierte_updates.md](17_signierte_updates.md) Abschnitt 7; am Gerät noch nicht geprüft).
+([17_signierte_updates.md](17_signierte_updates.md) Abschnitt 7; am Gerät geprüft am 2026-11-13 für
+0.5.0 → 0.6.0 mit einer lokal signierten Datei, nicht mit einer Datei aus einem Release-Entwurf).
 
 ## 6. Veröffentlichen
 

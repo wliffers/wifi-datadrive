@@ -2,6 +2,12 @@
 
 Ergänzung zu [09_api_v3.md](09_api_v3.md), [12_api_v4.md](12_api_v4.md) und [15_api_v5.md](15_api_v5.md). Dieses Dokument nennt nur, was Version 6 hinzufügt oder ändert; alles andere gilt unverändert aus Version 3 bis 5 (Grundregeln, Anmeldung und Rollen, Pfade, Dateien, Verschlüsselung, Fehlerformat `{"ok":false,"code":"…","error":"…"}`).
 
+**Stand am Gerät (2026-11-13, Firmware 0.6.0, Ergebnisse in [05_testprotokoll.md](05_testprotokoll.md) Phase 10):** API-Test 415/415 mit 7 übersprungenen Prüfungen.
+
+- Abschnitt 1: `remaining_s` und `POST /api/autolock/touch` am Gerät geprüft (15 Minuten: 895, nach `touch` 900). **Noch nicht geprüft:** der Zustand `waiting` und das Sperren selbst nach Ablauf der Zeit.
+- Abschnitt 2: `GET /api/network` am Gerät geprüft (DHCP, aktuelle Adresse, Maske, Gateway, DNS, Gerätename). Von `POST /api/settings/network` lief am Gerät nur der Teil des API-Tests ohne `--network-test` (Anfragen, die schon durch ihre Form ungültig sind). **Noch nicht geprüft:** die Prüfungen von Maske und Subnetz, das Umstellen auf eine feste Adresse, ein neuer Gerätename, das Zurücksetzen per Taste.
+- Abschnitt 3: `signed_required:true` und `key_id` am Gerät geprüft; `422 UNSIGNED` (unsignierte Datei) und `422 BAD_SIGNATURE` (anderer Schlüssel) am Gerät geprüft, die laufende Firmware lief danach ohne Neustart weiter. **Noch nicht geprüft:** eine nach dem Signieren veränderte Datei, Update über HTTPS.
+
 Gemeinsam mit Version 3 bis 5 gilt: `POST` braucht den Header `X-PrintDrive: 1` (sonst `403 FORBIDDEN`). Ohne Anmeldung `401 UNAUTHORIZED`, bei zu geringer Rolle `403 FORBIDDEN_ROLE`, beim Auslieferungspasswort `403 MUST_CHANGE_PASSWORD`, bei unlesbarer Benutzerdatenbank `503 AUTH_UNAVAILABLE`. Die Einstellungen dieses Dokuments werden dauerhaft gespeichert und überstehen einen Neustart.
 
 ## 1. Restzeit bis zum automatischen Sperren
@@ -27,7 +33,7 @@ Das Objekt `autolock` in `GET /api/status` (Version 5, Abschnitt 2) bekommt zwei
 |---|---|---|---|---|
 | POST | `/api/autolock/touch` | user | – | „Ich arbeite noch“: startet die Frist der Zeitregel neu wie eine Datei-Anfrage. `{"ok":true,"remaining_s":1800}` mit der neuen Restzeit; `-1`, wenn kein Countdown läuft (Fälle wie in 1.1; dann ändert sich nichts). Auch im gesperrten Zustand erreichbar (`200`, `-1`). |
 
-Die Oberfläche zeigt die Restzeit an und bietet kurz vor Ablauf „Weiterarbeiten“ an, das `POST /api/autolock/touch` schickt. `on_detach` wird durch `touch` nicht aufgehalten.
+Die Oberfläche zeigt die Restzeit auf der Karte „Verschlüsselt“ an; der Knopf „Zeit zurücksetzen“ daneben schickt `POST /api/autolock/touch`. `on_detach` wird durch `touch` nicht aufgehalten.
 
 ## 2. Netzwerkeinstellungen
 
@@ -84,7 +90,7 @@ Eine abgewiesene Anfrage ändert nichts.
 
 ### 3.1 Status
 
-Das Objekt `ota` in `GET /api/status` bekommt `"signed_required":true` und `"key_id":"3fa1c07e"`:
+Das Objekt `ota` in `GET /api/status` bekommt `"signed_required":true` und `"key_id":"a1b2c3d4"` (Beispielwert):
 
 - `signed_required`: Diese Firmware installiert über `POST /api/ota` nur Abbilder, die mit ihrem eigenen Schlüssel signiert sind. `false` in Builds ohne signierte Updates (dann wird nichts geprüft, wie in Version 5).
 - `key_id`: die ersten 8 Hex-Ziffern (Kleinbuchstaben) des SHA-256 des öffentlichen Schlüssels in der laufenden Firmware; leer, wenn `signed_required` `false` ist. Damit lässt sich prüfen, ob eine Update-Datei zum Gerät passt. Schlüsselverwaltung und Signieren: [17_signierte_updates.md](17_signierte_updates.md).
@@ -112,7 +118,7 @@ Zusätzlich zu den bisherigen Antworten, nur mit `signed_required:true`:
 {
   "autolock": {"minutes": 30, "on_detach": false, "remaining_s": 1712, "waiting": false},
   "wifi": {"…": "…", "dhcp": true},
-  "ota": {"partition": "ota_0", "pending_verify": false, "signed_required": true, "key_id": "3fa1c07e"}
+  "ota": {"partition": "ota_0", "pending_verify": false, "signed_required": true, "key_id": "a1b2c3d4"}
 }
 ```
 

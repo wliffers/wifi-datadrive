@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0%20in%20Arbeit-2563eb">
+  <img alt="Version" src="https://img.shields.io/badge/Version-0.6.0%20unver%C3%B6ffentlicht-2563eb">
   <img alt="Board" src="https://img.shields.io/badge/Board-LILYGO%20T--Dongle--S3-0f766e">
   <img alt="ESP-IDF" src="https://img.shields.io/badge/ESP--IDF-5.5.6-6b7280">
   <a href="LICENSE"><img alt="Lizenz" src="https://img.shields.io/badge/Lizenz-MIT-16a34a"></a>
@@ -55,9 +55,10 @@ keine App.
 > Espressif oder Bambu Lab. Die Software wird ohne Gewährleistung und ohne Haftung bereitgestellt.
 > Einzelheiten stehen im [Haftungsausschluss](HAFTUNGSAUSSCHLUSS.md).
 
-> **Stand 2026-11-13.** Der Quelltext trägt die Version 0.6.0. Sie ist in Arbeit: gebaut und gegen den
-> Testserver geprüft, aber noch nicht am Gerät gelaufen. Am Gerät geprüft ist zuletzt 0.5.0. Ein Release
-> ist noch nicht veröffentlicht. Was genau geprüft ist, steht unter
+> **Stand 2026-11-13.** Der Quelltext trägt die Version 0.6.0. Sie läuft am Gerät: per Update über den
+> Browser installiert, mit dem API-Test geprüft (415/415) und mit signierten Updates. Ein Release ist noch
+> nicht veröffentlicht. Einiges ist auch in 0.6.0 noch nicht geprüft, zum Beispiel eine feste IP-Adresse am
+> Gerät und das Sperren nach Ablauf der Zeit. Was genau geprüft ist, steht unter
 > [Geprüft und nicht geprüft](#geprüft-und-nicht-geprüft).
 
 ## Funktionen
@@ -250,8 +251,9 @@ Mach vor einem wichtigen Druck einen Probedruck.
 **Automatisch sperren** (Einstellungen › Speicher & USB, Voreinstellung aus): Das Laufwerk sperrt sich
 nach der gewählten Zeit ohne Zugriff und, wenn du willst, sobald das USB-Gerät getrennt wird. Während das
 USB-Gerät schreibt oder ein Upload läuft, wartet es. Für lange Drucke wählst du „Aus“ oder eine großzügige
-Zeit. Die Einstellungen sind am Gerät per API-Test geprüft; das Sperren nach Ablauf der Zeit selbst ist
-**noch nicht geprüft**.
+Zeit. Ab 0.6.0 zeigt die Startseite die Restzeit; „Zeit zurücksetzen“ startet sie neu. Die Einstellungen
+und die Restzeit sind am Gerät geprüft (bei 15 Minuten nach wenigen Sekunden 895 s, nach dem Zurücksetzen
+900 s); das Sperren nach Ablauf der Zeit selbst ist **noch nicht geprüft**.
 
 **Passwort vergessen:** Entsperre mit dem Wiederherstellungsschlüssel und lege danach unter
 **Einstellungen › Sicherheit › Verschlüsselung** ein neues Laufwerks-Passwort fest. Sind Passwort und
@@ -315,25 +317,33 @@ auf aus.
      Allgemein › Info › Zertifikatsvertrauenseinstellungen: Vertrauen einschalten.
 
 Danach müssen Skripte („Senden an“, Kurzbefehl, eigene Skripte) `https://` benutzen, und ein Symbol auf
-dem Home-Bildschirm legst du neu an. Der Stick bedient immer nur eine HTTPS-Verbindung gleichzeitig. Ab
-0.6.0 gilt: Ein neuer Name im Netzwerk erzeugt ein neues Zertifikat des Sticks, das du neu installierst.
+dem Home-Bildschirm legst du neu an. Der Stick bedient immer nur eine HTTPS-Verbindung gleichzeitig; die
+Oberfläche schickt deshalb ab 0.6.0 eine Anfrage nach der anderen. Ab 0.6.0 gilt außerdem: Ein neuer Name
+im Netzwerk erzeugt ein neues Zertifikat des Sticks, das du auf jedem Gerät neu installierst. Eine neue
+Adresse erneuert nur das Serverzertifikat; neu installieren musst du dann nichts.
 
 Am Gerät gemessen (0.5.0, Laufwerk verschlüsselt und entsperrt): Upload von 30 MB mit 864 kB/s, die Datei
-war danach bitgleich; Download 389 kB/s. **Noch nicht geprüft:** die Installation des Zertifikats auf
-iPhone und Windows, Netzlaufwerk und Skripte über `https`, Betrieb über viele Stunden.
+war danach bitgleich; Download 389 kB/s. Mit 0.6.0 (HTTPS an, Laufwerk entsperrt): 67 KiB freier Speicher
+im Leerlauf. **Noch nicht geprüft:** die Installation des Zertifikats auf iPhone und Windows, Netzlaufwerk
+und Skripte über `https`, Betrieb über viele Stunden. Bekannte Lücke: Downloads und ZIP-Downloads öffnen
+eine eigene Verbindung im Browser. Mit HTTPS kann eine Statusabfrage während eines langen Downloads diese
+Verbindung noch schließen.
 
 ## Updates
 
 **Über den Browser:** Einstellungen › System › „Datei auswählen …“, dann die Datei `…-app.bin` aus dem
 Release wählen. Die neue Version läuft zuerst zur Probe; startet sie nicht stabil, kehrt der Stick zur
-bisherigen zurück. Dateien und Einstellungen bleiben. Dieser Weg ist am Gerät **noch nicht geprüft**;
-bisher kam jede Version per USB auf den Stick.
+bisherigen zurück. Dateien und Einstellungen bleiben. Am Gerät geprüft ist ein Update von 0.5.0 auf 0.6.0:
+angenommen nach 13 Sekunden, Neustart in den zweiten Firmware-Bereich, nach 15 Sekunden als gut bestätigt.
+Die Rückkehr zur alten Version nach einem Fehlstart ist am Gerät **noch nicht geprüft**.
 
 **Signierte Updates (ab 0.6.0):** Eine mit der Option `CONFIG_PD_OTA_SIGNED` gebaute Firmware installiert
-über den Browser nur noch Dateien, die mit dem Schlüssel des Autors signiert sind. Auch ein Administrator
-mit richtigem Passwort kann dann keine veränderte Firmware übers Netz einspielen. Signiert wird nur auf
-dem Rechner des Autors; der private Schlüssel kommt nie zu GitHub. Die Bestätigung vor dem Update zeigt
-„Nur signierte Updates“ und die Schlüssel-ID. Am Gerät ist das **noch nicht geprüft**.
+über den Browser nur noch Dateien, die mit dem Schlüssel des Autors signiert sind (RSA-3072). Auch ein
+Administrator mit richtigem Passwort kann dann keine veränderte Firmware übers Netz einspielen. Signiert
+wird nur auf dem Rechner des Autors; der private Schlüssel liegt außerhalb des Repositorys und kommt nie zu
+GitHub. Die Bestätigung vor dem Update zeigt „Nur signierte Updates“ und die Schlüssel-ID. Am Gerät
+geprüft: Eine unsignierte Datei wird mit `UNSIGNED` abgewiesen, eine mit einem anderen Schlüssel signierte
+mit `BAD_SIGNATURE`; der Stick läuft danach ohne Neustart weiter.
 
 **Forks und eigene Builds:** In der Voreinstellung baut das Repository ohne Signatur. So eine Firmware
 nimmt jedes gültige Update an, wie 0.5.0. Auf einen Stick mit signierter Firmware kommt dein eigener Build
@@ -357,14 +367,20 @@ gebaut ist oder am Testserver läuft.
 | Verschlüsselung: einrichten, sperren, entsperren, Wiederherstellung, ausschalten (0.4.0) | geprüft per API-Test am Gerät (334/334) |
 | Verschlüsselung auf dem internen Flash, Stromausfall beim Einrichten | nicht geprüft |
 | Netzlaufwerk-Grundfunktionen, Uhrzeit, Upload fortsetzen, ZIP, Einstellungen zum Sperren (0.5.0) | geprüft per API-Test am Gerät (354/354) |
-| HTTPS (0.5.0) | Grundfunktion am Gerät gemessen; iPhone mit Zertifikat, WebDAV über `https`, Dauerbetrieb nicht geprüft |
+| API-Test 0.6.0: Umfang von 0.3.0 bis 0.5.0, dazu Restzeit, Netzwerkeinstellungen und Felder für signierte Updates | geprüft per API-Test am Gerät (415/415, 7 übersprungen, Liste im Testprotokoll Phase 10) |
+| HTTPS (0.5.0) | Grundfunktion am Gerät gemessen; mit 0.6.0 67 KiB freier Speicher im Leerlauf; iPhone mit Zertifikat, WebDAV über `https`, Dauerbetrieb nicht geprüft |
 | Netzlaufwerk mit Explorer, Finder oder Handy-Apps | nicht geprüft |
+| Restzeit bis zum Sperren und „Zeit zurücksetzen“ (0.6.0) | geprüft per API am Gerät (15 Minuten: 895 s, nach dem Zurücksetzen 900 s) |
 | Automatisches Sperren nach Ablauf der Zeit | nicht geprüft |
+| Netzwerkeinstellungen lesen (0.6.0): DHCP, Adresse, Maske, Gateway, DNS, Name | geprüft am Gerät |
+| Feste IP-Adresse oder neuen Namen im Netzwerk einstellen (0.6.0) | nicht geprüft (bewusst: ein Fehler bräuchte die 10-Sekunden-Taste vor Ort) |
 | Einrichtungsseite öffnet sich von selbst, WLAN-Suche im Einrichtungs-WLAN | nicht geprüft |
-| Taste (QR-Code, Umschalten, Zurücksetzen), App-Symbol am Handy, „Senden an“, iPhone-Kurzbefehl | nicht geprüft |
-| Firmware-Update über den Browser, Browser-Flasher | nicht geprüft |
-| Weboberfläche | Browser-Test gegen den Testserver (Chromium, PC- und Handy-Profil); an einem echten Handy nicht geprüft |
-| Neu in 0.6.0: Restzeit bis zum Sperren, feste Adresse und Name im Netzwerk, signierte Updates, neue Oberfläche | gegen den Testserver geprüft (API-Test 373/373, Browser-Test PC 786/786 und Handy 803/803); am Gerät nicht geprüft |
+| Taste (QR-Code, Umschalten, Zurücksetzen von Benutzern und Netzwerk), App-Symbol am Handy, „Senden an“, iPhone-Kurzbefehl | nicht geprüft |
+| Firmware-Update über den Browser (0.5.0 auf 0.6.0) | geprüft (einmal; Rückkehr nach einem Fehlstart nicht geprüft) |
+| Signierte Updates (0.6.0): unsignierte und fremd signierte Datei abgewiesen | geprüft am Gerät (`UNSIGNED`, `BAD_SIGNATURE`, kein Neustart) |
+| Browser-Flasher | nicht geprüft |
+| Weboberfläche (0.6.0) | Browser-Test gegen den Testserver bestanden (Chromium, PC 872/872, Handy-Profil 889/889); an einem echten Handy nicht systematisch geprüft |
+| Fehler „Stick nicht erreichbar“ nach Ändern der Sperrzeit (HTTPS) | behoben mit einer Warteschlange für Anfragen, nachgestellt mit einem Modell, das nur eine Verbindung annimmt; am iPhone noch nicht nachgeprüft |
 
 Gemessen mit microSD 64 GB: USB schreiben 832 KB/s, Upload im Browser 1,3 bis 1,6 MB/s. Verschlüsselt:
 USB schreiben 820 KB/s, lesen 659 KB/s, Upload 1,0 MB/s. Offene Risiken und Annahmen stehen in
@@ -393,7 +409,8 @@ USB schreiben 820 KB/s, lesen 659 KB/s, Upload 1,0 MB/s. Offene Risiken und Anna
 - Gebaut und getestet nur für den LILYGO T-Dongle-S3 mit LCD.
 - Gedacht für vertrauenswürdige Netze. In der Voreinstellung spricht der Stick nur HTTP; Passwörter gehen
   dann lesbar durchs WLAN.
-- Der Stick bearbeitet eine Anfrage nach der anderen. Während eines Uploads warten andere Geräte.
+- Der Stick bearbeitet eine Anfrage nach der anderen. Während eines Uploads warten andere Geräte. Mit
+  HTTPS kann ein langer Download abbrechen, wenn die Oberfläche währenddessen den Status abfragt.
 - Kein exFAT. Viele Karten über 32 GB kommen mit exFAT und müssen im Browser auf FAT32 formatiert werden;
   dabei gehen ihre Daten verloren. Höchstens 4 GB pro Datei.
 - Die Karte wechselst du nur bei ausgestecktem Stick.
@@ -497,4 +514,4 @@ die Änderungen je Version in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
-<p align="center">Version 0.6.0 (in Arbeit, nicht veröffentlicht) · Stand 2026-11-13</p>
+<p align="center">Version 0.6.0 (am Gerät geprüft, nicht veröffentlicht) · Stand 2026-11-13</p>
