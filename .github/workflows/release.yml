@@ -1,0 +1,74 @@
+# Release: triggered by pushing a version tag (v0.5.0, v0.6.0, ...). The tag must match
+# PROJECT_VER in firmware/printdrive/CMakeLists.txt, otherwise the build step fails.
+#
+# CI builds UNSIGNED images and creates a DRAFT release with:
+#   wifi-datadrive-vX.Y.Z-esp32s3-merged.bin   fresh install, flash at 0x0 (also used by the web flasher)
+#   wifi-datadrive-vX.Y.Z-app.bin              update through the web UI (Settings -> System)
+#   wifi-datadrive-vX.Y.Z-build-files.zip      bootloader, partition table, otadata, app, ELF, flasher_args.json
+#   licenses.zip, LICENSE, THIRD_PARTY_NOTICES.md, SHA256SUMS.txt
+#
+# RELEASE SIGNING HAPPENS ON THE OWNER'S MACHINE, NOT IN CI. The private signing key never goes
+# to GitHub (no secret, no variable, no upload). CI builds with sdkconfig.defaults as committed,
+# i.e. without the optional signed-update setting. If signed updates are used, the owner builds
+# and signs the release images locally (see the signing documentation in docs/ and tools/signing/),
+# replaces the CI files in the draft with them under the SAME file names, replaces SHA256SUMS.txt
+# accordingly, and only then publishes the release. pages.yml checks the merged image against
+# SHA256SUMS.txt before it goes onto the web flasher.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test
+    uses: ./.github/workflows/build.yml
+
+  draft-release:
+    name: Create draft release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download firmware artefact
+        uses: actions/download-artifact@v8
+        with:
+          name: firmware
+          path: dist
+
+      - name: Create draft release with the files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          {
+            echo "WiFi DataDrive $TAG for the LILYGO T-Dongle-S3 (LCD variant, ESP32-S3, 16 MB flash)."
+            echo
+            echo "Built by GitHub Actions with ESP-IDF v5.5.6 (espressif/idf:v5.5.6), commit $GITHUB_SHA."
+            echo "The images are not signed by CI."
+            echo
+            echo "- \`*-esp32s3-merged.bin\`: fresh install, flash at offset 0x0 (browser flasher or esptool)."
+            echo "  Resets users (admin/admin), Wi-Fi and HTTPS keys. Files on the microSD card are not touched."
+            echo "- \`*-app.bin\`: update through the web UI (Settings -> System), keeps settings and files."
+            echo
+            echo "Test status of this version: see README.md (status table) and docs/05_testprotokoll.md."
+            echo "Licences: LICENSE, THIRD_PARTY_NOTICES.md and licenses.zip must be passed on with the binaries."
+            echo
+            echo "SHA-256:"
+            echo '```'
+            cat dist/SHA256SUMS.txt
+            echo '```'
+          } > notes.md
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --verify-tag \
+            --title "WiFi DataDrive $TAG" \
+            --notes-file notes.md

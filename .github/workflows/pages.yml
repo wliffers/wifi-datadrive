@@ -1,0 +1,98 @@
+# Publishes the browser flasher (web-flasher/) on GitHub Pages.
+#
+# The merged image of the latest PUBLISHED release is copied into the Pages site, so the
+# flasher loads it from the same origin (GitHub release downloads cannot be fetched from another
+# origin because of CORS). manifest.json gets the release tag as version. Drafts and
+# pre-releases are ignored. Without any published release the page is deployed with a notice
+# and no install button.
+#
+# One-time setup by the owner: Settings -> Pages -> Source: "GitHub Actions".
+
+name: Web flasher (GitHub Pages)
+
+on:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - "web-flasher/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Assemble site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Copy page and the latest release image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p site/firmware
+          cp -r web-flasher/. site/
+          cp LICENSE THIRD_PARTY_NOTICES.md site/firmware/
+          sed -i "s|__REPO_URL__|${REPO_URL}|g" site/index.html
+
+          # Latest published release (gh skips drafts and pre-releases here).
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+          if [ -z "$tag" ]; then
+            echo "No published release yet: deploying the page without firmware."
+            echo '{"version":"none"}' > site/firmware/info.json
+            exit 0
+          fi
+          echo "Latest release: $tag"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir dl \
+            --pattern '*-esp32s3-merged.bin' --pattern 'SHA256SUMS.txt' --pattern 'licenses.zip'
+          merged=$(ls dl/*-esp32s3-merged.bin | head -n 1)
+          (cd dl && sha256sum -c --ignore-missing SHA256SUMS.txt)
+          cp "$merged" site/firmware/wifi-datadrive-merged.bin
+          cp dl/licenses.zip site/firmware/
+          sha=$(sha256sum site/firmware/wifi-datadrive-merged.bin | cut -d' ' -f1)
+
+          TAG="$tag" SHA="$sha" FILE="$(basename "$merged")" python3 - <<'EOF'
+          import json, os
+          tag, sha, name = os.environ["TAG"], os.environ["SHA"], os.environ["FILE"]
+          path = "site/manifest.json"
+          m = json.load(open(path, encoding="utf-8"))
+          m["version"] = tag
+          m["builds"][0]["parts"][0]["path"] = "firmware/wifi-datadrive-merged.bin"
+          json.dump(m, open(path, "w", encoding="utf-8"), indent=2)
+          info = {"version": tag, "sha256": sha, "file": name,
+                  "release": os.environ["GITHUB_SERVER_URL"] + "/" + os.environ["GITHUB_REPOSITORY"]
+                             + "/releases/tag/" + tag}
+          json.dump(info, open("site/firmware/info.json", "w", encoding="utf-8"), indent=2)
+          print(json.dumps(m, indent=2))
+          EOF
+
+      - name: Upload Pages artefact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

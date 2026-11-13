@@ -1,0 +1,12 @@
+# Python packages for the development tools (Python 3.10 or newer).
+# The firmware build itself only needs ESP-IDF v5.5.6, which brings its own Python environment.
+#
+#   python -m pip install -r requirements-dev.txt
+#
+# tools/mock_server.py      standard library only
+# tools/api_test.py         requests
+# tools/ui_test.py          playwright (uses the installed Edge or Chrome, no `playwright install` needed)
+# tools/make_anim.py, tools/make_icons.py   Pillow
+requests>=2.31,<3
+playwright>=1.40
+Pillow>=10

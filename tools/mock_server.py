@@ -3,7 +3,9 @@
 
 Serves the single-file web UI and implements the HTTP API version 3 of docs/09_api_v3.md
 (login with roles, folders, Wi-Fi list, update; everything it does not mention follows
-docs/07_api.md) plus the additions of version 4 (docs/12_api_v4.md: Wi-Fi scan, drive encryption) with an in-memory file tree, so every state of the UI can be exercised on
+docs/07_api.md) plus the additions of version 4 (docs/12_api_v4.md: Wi-Fi scan, drive encryption), version 5
+(docs/15_api_v5.md) and version 6 (docs/16_api_v6.md: auto-lock countdown, network settings, signed updates)
+with an in-memory file tree, so every state of the UI can be exercised on
 the PC without the dongle. Python 3.10+, standard library only.
 
 Usage
@@ -140,6 +142,33 @@ Behaviour mirrored from the firmware
         curl -u admin:admin123 -X PROPFIND -H "Depth: 1" http://127.0.0.1:8080/dav/
         curl -u admin:admin123 -T Teil.3mf "http://127.0.0.1:8080/dav/Projekte/Teil.3mf"
 
+* API v6 (docs/16_api_v6.md):
+  - Auto-lock countdown: `autolock` in /api/status also carries `remaining_s` (seconds until the timer locks, -1 when no
+    countdown runs: timer off, drive not encrypted / locked / damaged, upload of another client running) and `waiting`
+    (true with remaining_s 0: the time is up, but the lock is postponed). Like the firmware, a timer of 1..9 minutes
+    never takes the drive from a USB host that holds it (owner usb, host connected, not ejected, not suspended for
+    60 s); the countdown then stays at 0 / waiting until the host lets go. Host reads/writes and file requests
+    restart the period, status polls do not. POST /api/autolock/touch (user) restarts it too:
+    {"ok":true,"remaining_s":S}. Mock controls: autolock_remaining=<s>, autolock_waiting=0|1 (see below).
+  - Network settings: GET /api/network (admin), POST /api/settings/network?dhcp=0|1[&ip=&mask=&gateway=&dns=]
+    [&hostname=] (admin; parameters as form body or, without a body, in the query; dhcp also true/false). Rules and
+    German texts of the firmware: 400 BAD_REQUEST naming the field in the text (no extra JSON key); mask /8../30;
+    ip and gateway unicast, not the network/broadcast address; gateway in the subnet and not = ip; ip not 192.168.4.1
+    (setup access point); dns empty = gateway; host name lower-cased, missing or empty keeps the stored one; with
+    dhcp=1 given addresses are ignored and the stored static values stay.
+    The answer {"ok":true,"restart":false,"ip":..,"hostname":..} is sent before the change is applied.
+    The mock keeps listening on its own address whatever is configured; `current` and status.wifi.ip show the static
+    address after a switch to static, 192.0.2.152 with DHCP. /mock/set?net_fail=1 makes it unreachable for 3 s after
+    the next change (imitates the address change). Default hostname of the mock: datadrive-mock (device: datadrive).
+    status.wifi gains `dhcp`, status.wifi.hostname follows the setting.
+  - Signed updates: status.ota gains `signed_required` and `key_id` (mock key 4d6f636b while required, else "").
+    With /mock/set?ota_signed=1 POST /api/ota checks a signature after the 0xE9 check, like the firmware explains a
+    refusal: size no multiple of 4096, or no signature block (magic 0xE7 and valid CRC-32) at the start of the last
+    4096-byte sector: 422 UNSIGNED; a block whose public key has another key id (first 8 hex digits of its SHA-256)
+    than the mock's 4d6f636b: 422 BAD_SIGNATURE (the mock cannot verify RSA; images signed with a real key therefore
+    get BAD_SIGNATURE). /mock/set?ota_sig=ok|bad|none overrides the result for the next upload that reaches the
+    check (ok: accepted and "flashed"). A refused image leaves the running firmware untouched (no restart).
+
 Scenarios (`--scenario NAME` or `GET /mock/scenario?name=NAME`)
 ---------------------------------------------------------------
     usb_active    default: drive provided to a connected USB host, a few files, 2 folders
@@ -226,6 +255,18 @@ Control endpoints (GET, no CSRF header, no login, exist only in the mock)
                             resumable upload keeps the whole 4 KiB blocks received); none clears
     idle_s=<n>              pretend the last file activity, host access, unplugging and suspend were n s ago (the automatic
                             lock strikes at once if due)
+    autolock_remaining=<s>  (API v6) shift the last activity so that the countdown shows s seconds (needs a timer,
+                            0 <= s <= minutes*60; 0 locks at once unless the lock is postponed). Same mechanism as
+                            idle_s, only expressed from the other end
+    autolock_waiting=0|1    (API v6) 1: the timer lock is postponed (as if a host or an operation kept the drive):
+                            when the time is up the status shows remaining_s 0 / waiting true; 0: locks when due
+    net_dhcp=0|1            (API v6) stored network mode; 0 without stored static values fills 192.0.2.152 /
+                            255.255.255.0 / gateway and DNS 192.0.2.1
+    net_fail=0|1|<s>        (API v6) the next successful POST /api/settings/network makes the mock unreachable (connections
+                            reset) for 3 s (1) or s seconds (2 or more), after the answer; 0 clears
+    ota_signed=0|1          (API v6) the device requires signed updates (status.ota.signed_required, key_id)
+    ota_sig=ok|bad|none     (API v6) result of the signature check for the next /api/ota that reaches it (ok: accepted,
+                            bad: 422 BAD_SIGNATURE, none: 422 UNSIGNED); clear|- clears
     reset=1                 back to the start of the current scenario
 """
 from __future__ import annotations
@@ -264,8 +305,8 @@ import uuid
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HTML = "firmware/printdrive/main/web/index.html"
 
-VERSION = "0.5.0"
-NEXT_VERSION = "0.5.1"           # reported after a successful POST /api/ota
+VERSION = "0.6.0"
+NEXT_VERSION = "0.6.1"           # reported after a successful POST /api/ota
 CSRF_HEADER = "X-PrintDrive"
 NAME_MAX = 120                      # DRIVE_NAME_MAX: bytes (UTF-8) of an uploaded/renamed name
 FILE_NAME_MAX = 255                 # DRIVE_FILE_NAME_MAX: existing (host-created) names
@@ -320,6 +361,17 @@ RESUME_BLOCK = 4096                 # a broken resumable upload keeps whole bloc
 ZIP_FILES_MAX = 4096                # more files in the tree: 413 TOO_MANY_FILES (firmware limit)
 DAV_PREFIX = "/dav"
 DAV_REALM = "DataDrive"
+# API v6 (docs/16_api_v6.md)
+AUTOLOCK_TAKE_MIN = 10              # shortest timer that may take the drive from a USB host holding it
+HOSTNAME_MOCK = "datadrive-mock"    # default host name of the mock (the device: "datadrive")
+HOSTNAME_RE = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?")      # 1..31, a-z 0-9 '-', not at either end
+NET_DHCP_CURRENT = {"ip": FAKE_IP, "mask": "255.255.255.0",
+                    "gateway": "192.0.2.1", "dns": "192.0.2.1"}           # what "DHCP" hands out in the mock
+NET_FAIL_S = 3                      # net_fail=1: unreachable this long after a network change
+MOCK_KEY_ID = "4d6f636b"            # key id of the mock's update signing key ("Mock" in hex)
+SIG_SECTOR = 4096                   # signature sector at the end of a signed image
+SIG_BLOCK_CRC_AT = 1196             # CRC-32 (little endian) of the first 1196 bytes of a signature block
+SIG_KEY_AT, SIG_KEY_LEN = 36, 776   # RSA-3072 public key inside the block (its SHA-256 gives the key id)
 OTA_MAX = 0x280000                 # size of one firmware partition
 OTA_VERIFY_S = 15                   # a new firmware counts as good after this uptime
 SESSION_COOKIE = "dd_session"
@@ -375,6 +427,9 @@ ERRORS = {
     # API v5 (docs/15_api_v5.md)
     "RESUME_MISMATCH": (409, "Der Upload kann an dieser Stelle nicht fortgesetzt werden."),
     "TOO_MANY_FILES": (413, "Der Ordner enthält zu viele Dateien für ein ZIP (höchstens 4096)."),
+    # API v6 (docs/16_api_v6.md)
+    "BAD_SIGNATURE": (422, "Die Update-Datei ist nicht mit dem Schlüssel dieses Geräts signiert."),
+    "UNSIGNED": (422, "Die Update-Datei ist nicht signiert. Dieses Gerät nimmt nur signierte Updates an."),
 }
 TEXT_NOT_A_DIR = "Das ist eine Datei, kein Ordner."
 TEXT_DEFAULT_PASSWORD = "Bitte ein anderes Passwort als das Auslieferungspasswort wählen."
@@ -394,7 +449,8 @@ LOCKED_ROUTES = {("GET", "/api/files"), ("GET", "/api/download"), ("POST", "/api
 # GET /api/upload/resume always answers (offset 0 while locked or owned by USB: nothing can be held then).
 # Requests that count as activity for the automatic lock (API v5); status polls do not.
 ACTIVITY_PATHS = {"/api/files", "/api/download", "/api/mode", "/api/mkdir", "/api/delete", "/api/move", "/api/copy",
-                  "/api/upload/check", "/api/upload", "/api/push", "/api/zip", "/api/upload/resume"}
+                  "/api/upload/check", "/api/upload", "/api/push", "/api/zip", "/api/upload/resume",
+                  "/api/autolock/touch"}        # API v6: the explicit touch
 
 SCENARIO_HELP = {
     "usb_active": "default: drive provided to a connected USB host, a few files and folders",
@@ -461,7 +517,7 @@ SET_HELP = {
     "wifi_count": "0..5 (number of stored networks)",
     "copy_kbps": "KiB/s for /api/copy, 0 = unlimited (makes the blocking visible)",
     "ota_fail": "error CODE for every /api/ota until 'none' (e.g. INVALID_FILE, IO)",
-    "next_version": "version reported after the next successful /api/ota (default 0.5.1)",
+    "next_version": "version reported after the next successful /api/ota (default 0.6.1)",
     "clock": "synced|unsynced|manual|<unix s> (device clock: NTP-synced, unknown (epoch 0), set from a browser; a "
              "number sets the clock to that time, not synced)",
     "resumable": "PATH|SIZE|OFFSET or none (pretend a broken resumable upload of PATH with SIZE bytes exists, "
@@ -470,6 +526,14 @@ SET_HELP = {
                          "resumable upload keeps the received whole 4 KiB blocks)",
     "idle_s": "seconds (pretend the last file activity, host access, unplugging and suspend were that long ago; triggers the automatic "
               "lock if due)",
+    "autolock_remaining": "seconds (API v6: shift the last activity so that the countdown shows that many seconds; needs a "
+                          "timer, 0..minutes*60; 0 locks at once unless postponed)",
+    "autolock_waiting": "0|1 (API v6: 1 postpones the timer lock; when the time is up the status shows remaining_s 0, "
+                        "waiting true)",
+    "net_dhcp": "0|1 (API v6: stored network mode; 0 without stored static values fills 192.0.2.152/24, gateway 192.0.2.1)",
+    "net_fail": "0|1|<s> (API v6: the next network change makes the mock unreachable for 3 s (1) or s seconds)",
+    "ota_signed": "0|1 (API v6: updates must be signed; status.ota.signed_required / key_id)",
+    "ota_sig": "ok|bad|none|clear (API v6: result of the signature check of the next /api/ota that reaches it)",
     "reset": "1",
 }
 
@@ -670,6 +734,110 @@ def parse_nonneg(v: str) -> float:
 
 def is_cleared(v: str) -> bool:
     return (v or "").strip().lower() in ("", "none", "off", "-1")
+
+
+_IPV4_OCTET = r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+_IPV4_RE = re.compile(rf"{_IPV4_OCTET}(?:\.{_IPV4_OCTET}){{3}}")
+
+
+def ipv4(s):
+    """Dotted decimal IPv4 address (exactly four parts 0..255, no leading zeros) as int, or None."""
+    if s is None or not _IPV4_RE.fullmatch(s):
+        return None
+    a, b, c, d = (int(x) for x in s.split("."))
+    return (a << 24) | (b << 16) | (c << 8) | d
+
+
+def mask_prefix(m: int):
+    """Prefix length of a contiguous netmask, or None (also for 0.0.0.0)."""
+    inv = ~m & 0xFFFFFFFF
+    if m == 0 or (inv & (inv + 1)) != 0:
+        return None
+    return 32 - inv.bit_length()
+
+
+NET_TEXT = {        # texts of the firmware (web_wifi.c); the field is named in the text, there is no extra JSON key
+    "dhcp": "Bitte „dhcp“ angeben: 1 = Adresse per DHCP, 0 = feste Adresse.",
+    "ip": "Ungültige IP-Adresse: bitte im Format a.b.c.d angeben (nicht die Netz- oder Broadcast-Adresse und "
+          "nicht die Adresse des Einrichtungs-WLANs).",
+    "mask": "Ungültige Subnetzmaske: zum Beispiel 255.255.255.0 (von 255.0.0.0 bis 255.255.255.252).",
+    "gateway": "Ungültiges Gateway: Es muss im selben Netz wie die IP-Adresse liegen und darf nicht die IP-Adresse "
+               "selbst sein.",
+    "dns": "Ungültiger DNS-Server: bitte im Format a.b.c.d angeben oder leer lassen (dann gilt das Gateway).",
+    "hostname": "Ungültiger Gerätename: 1 bis 31 Zeichen, nur a–z, 0–9 und Bindestrich, nicht am Anfang "
+                "oder Ende.",
+}
+AP_IP = "192.168.4.1"               # the setup access point keeps this address; a static ip must differ
+
+
+def ip_unicast(v: int) -> bool:
+    first = v >> 24
+    return first not in (0, 127) and first < 224
+
+
+def check_network(q: dict):
+    """POST /api/settings/network like the firmware: returns (None, settings) or (field, None).
+    Order: dhcp; with dhcp=0 ip, mask, gateway present (dns may be missing or empty); hostname; then the syntax of
+    ip, mask, gateway, dns; then mask (contiguous, /8../30), ip (unicast, not network/broadcast, not the setup
+    access point's address), gateway (unicast, same subnet, not ip, not network/broadcast), dns (unicast)."""
+    dhcp = q.get("dhcp")
+    if dhcp not in ("0", "1", "true", "false"):
+        return "dhcp", None
+    out = {"dhcp": dhcp in ("1", "true")}
+    if not out["dhcp"]:
+        for key in ("ip", "mask", "gateway"):
+            if q.get(key) is None:
+                return key, None
+        if "dns" in q and q["dns"] is None:
+            return "dns", None
+    h = (q.get("hostname") or "").lower()          # host names are case-insensitive: stored in lower case
+    if "hostname" in q and q["hostname"] is None:
+        return "hostname", None
+    if h:                                           # missing or empty: the stored host name stays
+        if not HOSTNAME_RE.fullmatch(h):
+            return "hostname", None
+        out["hostname"] = h
+    if out["dhcp"]:
+        return None, out                # addresses are ignored with DHCP (the stored static values stay)
+    vals = {}
+    for key in ("ip", "mask", "gateway", "dns"):
+        raw = q.get(key) or ""
+        if key == "dns" and raw == "":
+            continue
+        v = ipv4(raw)
+        if v is None:
+            return key, None
+        vals[key] = v
+    ip, mask, gw = vals["ip"], vals["mask"], vals["gateway"]
+    dns = vals.get("dns", gw)                      # no DNS server given: the gateway
+    p = mask_prefix(mask)
+    if p is None or not 8 <= p <= 30:
+        return "mask", None
+    host = ~mask & 0xFFFFFFFF
+    if not ip_unicast(ip) or ip & host in (0, host) or ip == ipv4(AP_IP):
+        return "ip", None
+    if not ip_unicast(gw) or gw == ip or gw & mask != ip & mask or gw & host in (0, host):
+        return "gateway", None
+    if not ip_unicast(dns):
+        return "dns", None
+    out.update({"ip": q["ip"], "mask": q["mask"], "gateway": q["gateway"],
+                "dns": q["dns"] if vals.get("dns") is not None else q["gateway"]})
+    return None, out
+
+
+def signature_state(length: int, tail: bytes) -> str:
+    """Signature of an update image as the mock sees it (like ota_upload_has_signature() of the firmware, the mock
+    cannot verify RSA): 'none' (size no multiple of 4096, or the last 4096-byte sector holds no signature block with
+    magic 0xE7 and a valid CRC-32), 'ok' (a block whose public key has the mock's key id: first 4 bytes of the
+    SHA-256 of the key) or 'bad' (a block with any other key)."""
+    if length < 2 * SIG_SECTOR or length % SIG_SECTOR or len(tail) < SIG_SECTOR:
+        return "none"
+    block = tail[-SIG_SECTOR:]
+    crc = struct.unpack_from("<I", block, SIG_BLOCK_CRC_AT)[0]
+    if block[0] != 0xE7 or zlib.crc32(block[:SIG_BLOCK_CRC_AT]) & 0xFFFFFFFF != crc:
+        return "none"
+    key_id = hashlib.sha256(block[SIG_KEY_AT:SIG_KEY_AT + SIG_KEY_LEN]).hexdigest()[:8]
+    return "ok" if key_id == MOCK_KEY_ID else "bad"
 
 
 # ============================================================== simulated device
@@ -924,6 +1092,15 @@ class Device:
         self.upload_kbps = self.default_upload_kbps
         self.copy_kbps = 0
         self.ota_fail = None
+        # API v6
+        self.autolock_hold = False        # /mock/set?autolock_waiting=1: the timer lock is postponed
+        self.net_dhcp = True              # network settings (one for all stored Wi-Fi networks)
+        self.net_static = {"ip": "", "mask": "", "gateway": "", "dns": ""}     # stored, empty until set
+        self.hostname = HOSTNAME_MOCK
+        self.net_fail_s = 0               # next network change: unreachable this long
+        self.net_down_until = None        # monotonic time until which connections are reset
+        self.ota_signed = False           # updates must be signed
+        self.ota_sig = None               # forced result of the next signature check: ok|bad|none
 
     # ---------------------------------------------------------- tree helpers
 
@@ -1185,10 +1362,72 @@ class Device:
                 and now - self.suspend_since >= SUSPEND_LOCK_S):
             self._crypt_lock("automatic: USB host suspended")
             return
-        if self.autolock_min > 0:
-            last = max(x for x in (self.last_activity, self.last_read, self.last_write) if x is not None)
-            if time.monotonic() - last >= self.autolock_min * 60:
-                self._crypt_lock(f"automatic: {self.autolock_min} min without activity")
+        if self.autolock_min > 0 and now - self.autolock_last() >= self.autolock_min * 60 and not self.autolock_postponed():
+            self._crypt_lock(f"automatic: {self.autolock_min} min without activity")
+
+    def autolock_last(self) -> float:
+        """Start of the current timer period: the last file request / touch, host read or host write."""
+        if self.write_hold:
+            return time.monotonic()
+        return max(x for x in (self.last_activity, self.last_read, self.last_write) if x is not None)
+
+    def host_holds(self) -> bool:
+        """A USB host holds the drive: provided to it, connected, not ejected, not suspended for SUSPEND_LOCK_S."""
+        suspended_long = (self.usb_suspended and self.suspend_since is not None
+                          and time.monotonic() - self.suspend_since >= SUSPEND_LOCK_S)
+        return self.owner == "usb" and self.usb_connected and not self.host_ejected and not suspended_long
+
+    def autolock_postponed(self) -> bool:
+        """The timer is due but may not lock: a timer of 1..9 minutes never takes the drive from a host holding it
+        (API v6, like the firmware); /mock/set?autolock_waiting=1 postpones as well."""
+        return self.autolock_hold or (self.autolock_min < AUTOLOCK_TAKE_MIN and self.host_holds())
+
+    def autolock_countdown(self):
+        """(remaining_s, waiting) of status.autolock (API v6)."""
+        if (not (self.crypt_enabled and self.crypt_unlocked and not self.crypt_damaged) or self.autolock_min == 0
+                or self.other_upload is not None or self.pending_boot):
+            return -1, False
+        left = self.autolock_min * 60 - (time.monotonic() - self.autolock_last())
+        if left > 0:
+            return int(math.ceil(left)), False
+        return 0, True                   # due, but postponed (or the lock is refused right now)
+
+    def autolock_json(self) -> dict:
+        remaining, waiting = self.autolock_countdown()
+        return {"minutes": self.autolock_min, "on_detach": self.autolock_detach, "remaining_s": remaining,
+                "waiting": waiting}
+
+    # ---------------------------------------------------------- network settings (API v6)
+
+    def net_connected(self) -> bool:
+        return self.wifi_mode == "sta"
+
+    def net_current(self) -> dict:
+        """What the station interface has now (empty strings while not connected)."""
+        if not self.net_connected():
+            return {"ip": "", "mask": "", "gateway": "", "dns": ""}
+        return dict(NET_DHCP_CURRENT) if self.net_dhcp else dict(self.net_static)
+
+    def network_json(self) -> dict:
+        return {"ok": True, "dhcp": self.net_dhcp, **self.net_static, "hostname": self.hostname,
+                "current": self.net_current(), "connected": self.net_connected()}
+
+    def net_apply(self, s: dict):
+        """Applies validated settings (after the answer was sent, like the firmware)."""
+        self.net_dhcp = s["dhcp"]
+        if not s["dhcp"]:
+            self.net_static = {k: s[k] for k in ("ip", "mask", "gateway", "dns")}
+        if "hostname" in s:
+            self.hostname = s["hostname"]
+        cur = self.net_current()
+        self.log("I", "wifi", "network: " + ("DHCP" if self.net_dhcp else
+                                            f"static {self.net_static['ip']}/{self.net_static['mask']} "
+                                            f"gw {self.net_static['gateway']} dns {self.net_static['dns']}")
+                 + f", hostname {self.hostname}" + (f", IP {cur['ip']}" if cur["ip"] else ""))
+        if self.net_fail_s:
+            self.net_down_until = time.monotonic() + self.net_fail_s
+            self.log("I", "mock", f"unreachable for {self.net_fail_s} s (net_fail)")
+            self.net_fail_s = 0
 
     def crypt_check_any(self, secret) -> bool:
         """Drive password or (current) recovery key."""
@@ -1247,8 +1486,9 @@ class Device:
             boot.append(("I", "wifi", f"started, station {self.ssid}"))
             boot.append(("I", "wifi", f"connecting to '{self.ssid}' ..."))
             if self.wifi_mode == "sta":
-                boot.append(("I", "wifi", f"connected to '{self.ssid}', IP {FAKE_IP}"))
-        boot.append(("I", "wifi", "mDNS: http://datadrive-mock.local"))
+                boot.append(("I", "wifi", f"connected to '{self.ssid}', IP {self.net_current()['ip']}"
+                                          + ("" if self.net_dhcp else " (static)")))
+        boot.append(("I", "wifi", f"mDNS: http://{self.hostname}.local"))
         boot.append(("I", "web", "web server started on port 80"))
         if self.owner == "usb":
             if self.usb_connected:
@@ -1277,11 +1517,13 @@ class Device:
         if self.wifi_connect_at is not None and now >= self.wifi_connect_at:
             self.wifi_connect_at = None
             self.wifi_mode = "sta"
-            self.log("I", "wifi", f"connected to '{self.ssid}', IP {FAKE_IP}")
+            self.log("I", "wifi", f"connected to '{self.ssid}', IP {self.net_current()['ip']}")
         self.autolock_tick()
 
     def is_offline(self) -> bool:
-        return not self.online or self.pending_boot
+        if self.net_down_until is not None and time.monotonic() >= self.net_down_until:
+            self.net_down_until = None
+        return not self.online or self.pending_boot or self.net_down_until is not None
 
     def restart(self, download: bool = False):
         """The answer has been sent; the device is now gone for a while."""
@@ -1739,14 +1981,15 @@ class Device:
             "wifi": {
                 "sta_configured": self.wifi_mode != "ap", "sta_connected": sta,
                 "ssid": "" if self.wifi_mode == "ap" else self.ssid,
-                "ip": FAKE_IP if sta else "", "rssi": -61 + random.randrange(-2, 3) if sta else 0,
+                "ip": self.net_current()["ip"], "rssi": -61 + random.randrange(-2, 3) if sta else 0,
                 "ap_active": ap, "ap_ssid": "DataDrive-54D5", "ap_ip": "192.168.4.1" if ap else "",
-                "hostname": "datadrive-mock",
+                "hostname": self.hostname, "dhcp": self.net_dhcp,
             },
             "ota": {"partition": self.ota_partition,
-                    "pending_verify": self.ota_verify_until is not None and time.monotonic() < self.ota_verify_until},
+                    "pending_verify": self.ota_verify_until is not None and time.monotonic() < self.ota_verify_until,
+                    "signed_required": self.ota_signed, "key_id": MOCK_KEY_ID if self.ota_signed else ""},
             "time": self.time_json(),
-            "autolock": {"minutes": self.autolock_min, "on_detach": self.autolock_detach},
+            "autolock": self.autolock_json(),
             "lang": self.lang,
             "webdav": self.webdav,
         }
@@ -1828,7 +2071,13 @@ class Device:
                          "idle_s": round(time.monotonic() - max(x for x in (self.last_activity, self.last_read,
                                                                             self.last_write) if x is not None), 1),
                          "lock_after_detach_s": None if self.detach_at is None else
-                         round(max(0.0, self.detach_at + DETACH_LOCK_S - time.monotonic()), 1)},
+                         round(max(0.0, self.detach_at + DETACH_LOCK_S - time.monotonic()), 1),
+                         "remaining_s": self.autolock_countdown()[0], "waiting": self.autolock_countdown()[1],
+                         "postponed": self.autolock_postponed(), "hold": self.autolock_hold},
+            "network": {**self.network_json(), "net_fail_s": self.net_fail_s,
+                        "down_remaining_s": None if self.net_down_until is None else
+                        round(max(0.0, self.net_down_until - time.monotonic()), 1)},
+            "ota_signed": self.ota_signed, "ota_sig": self.ota_sig,
             "resumable": self.partial_json(), "upload_drop_after": self.upload_drop_after,
             "webdav": self.webdav, "dav_locks": len(self.dav_locks),
             "wifi_networks": [{"ssid": n, "active": self.wifi_mode == "sta" and n == self.ssid}
@@ -1958,6 +2207,27 @@ class Device:
             v["upload_drop_after"] = None if is_cleared(q["upload_drop_after"]) else parse_size(q["upload_drop_after"])
         if "idle_s" in q:
             v["idle_s"] = parse_nonneg(q["idle_s"])
+        for key in ("autolock_waiting", "net_dhcp", "ota_signed"):
+            if key in q:
+                v[key] = parse_bool(q[key])
+        if "autolock_remaining" in q:
+            s = parse_nonneg(q["autolock_remaining"])
+            if self.autolock_min == 0:
+                raise ValueError("autolock_remaining: the timer is off (POST /api/settings/autolock?minutes=N first)")
+            if s > self.autolock_min * 60:
+                raise ValueError(f"autolock_remaining must be 0..{self.autolock_min * 60} (minutes * 60)")
+            v["autolock_remaining"] = s
+        if "net_fail" in q:
+            n = int(parse_nonneg(q["net_fail"]))
+            v["net_fail"] = NET_FAIL_S if n == 1 else n
+        if "ota_sig" in q:
+            sig = q["ota_sig"].strip().lower()
+            if sig in ("clear", "-", ""):
+                v["ota_sig"] = None
+            elif sig in ("ok", "bad", "none"):
+                v["ota_sig"] = sig
+            else:
+                raise ValueError("ota_sig must be ok, bad, none or clear")
 
         notes = []
         if v.get("reset"):
@@ -2159,8 +2429,37 @@ class Device:
                 self.detach_at -= back
             if self.suspend_since is not None:
                 self.suspend_since -= back
+        if "autolock_waiting" in v:
+            self.autolock_hold = v["autolock_waiting"]
+            notes.append("timer lock " + ("postponed while due (waiting)" if self.autolock_hold else "locks when due"))
+        if "autolock_remaining" in v:
+            start = time.monotonic() - (self.autolock_min * 60 - v["autolock_remaining"])
+            self.last_activity = start
+            if self.last_read is not None:
+                self.last_read = min(self.last_read, start)
+            if self.last_write is not None:
+                self.last_write = min(self.last_write, start)
+            if self.write_hold:
+                notes.append("host_writing=hold keeps restarting the period: the countdown stays at the full time")
+        if "net_dhcp" in v:
+            self.net_dhcp = v["net_dhcp"]
+            if not self.net_dhcp and not self.net_static["ip"]:
+                self.net_static = {"ip": FAKE_IP, "mask": "255.255.255.0", "gateway": "192.0.2.1", "dns": "192.0.2.1"}
+            notes.append("network: " + ("DHCP" if self.net_dhcp else f"static {self.net_static['ip']}"))
+        if "net_fail" in v:
+            self.net_fail_s = v["net_fail"]
+            if self.net_fail_s:
+                notes.append(f"the next network change makes the mock unreachable for {self.net_fail_s} s")
+        if "ota_signed" in v:
+            self.ota_signed = v["ota_signed"]
+            notes.append("updates " + (f"must be signed (key id {MOCK_KEY_ID})" if self.ota_signed else "need no signature"))
+        if "ota_sig" in v:
+            self.ota_sig = v["ota_sig"]
         self.autolock_tick()
-        if "idle_s" in v or "usb_connected" in v:
+        if "autolock_remaining" in v or "autolock_waiting" in v:
+            r, w = self.autolock_countdown()
+            notes.append(f"countdown: remaining_s {r}, waiting {str(w).lower()}")
+        if "idle_s" in v or "usb_connected" in v or "autolock_remaining" in v or "autolock_waiting" in v:
             notes.append("drive is " + ("locked" if self.drive_locked() else "unlocked" if self.crypt_enabled
                                         else "not encrypted"))
         return notes
@@ -2320,6 +2619,10 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "/api/settings/webdav"): (self._api_settings_webdav, "admin"),
             ("GET", "/api/upload/resume"): (self._api_upload_resume, "user"),
             ("GET", "/api/zip"): (self._api_zip, "user"),
+            # API v6
+            ("POST", "/api/autolock/touch"): (self._api_autolock_touch, "user"),
+            ("GET", "/api/network"): (self._api_network, "admin"),
+            ("POST", "/api/settings/network"): (self._api_settings_network, "admin"),
         }
         entry = routes.get((method, path))
         if entry is None:
@@ -3190,6 +3493,37 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True, "autolock": {"minutes": minutes, "on_detach": detach}},
                    f"autolock {minutes} min, on_detach={int(detach)}")
 
+    # ---------------------------------------------------------- API v6: countdown, network settings
+
+    def _api_autolock_touch(self, q, clen):
+        self._drain(clen)
+        dev = self.dev
+        dev.last_activity = time.monotonic()        # (also set by ACTIVITY_PATHS; here before the answer is built)
+        remaining = dev.autolock_countdown()[0]
+        self._json(200, {"ok": True, "remaining_s": remaining}, f"touch: remaining_s {remaining}")
+
+    def _api_network(self, q):
+        self._json(200, self.dev.network_json())
+
+    def _api_settings_network(self, q, clen):
+        dev = self.dev
+        if clen:                                    # like the firmware: a form body, else the query string
+            q = self._form(clen, 384)
+            if q is None:
+                return
+        field, s = check_network(q)
+        if field:
+            self._error("BAD_REQUEST", NET_TEXT[field], f"({field})")
+            return
+        hostname = s.get("hostname", dev.hostname)
+        ip = "" if s["dhcp"] else s["ip"]
+        down = dev.net_fail_s
+        self._json(200, {"ok": True, "restart": False, "ip": ip, "hostname": hostname},
+                   ("DHCP" if s["dhcp"] else f"static {ip}") + f", hostname {hostname}"
+                   + (f" (unreachable for {down} s)" if down else ""))
+        self.wfile.flush()
+        dev.net_apply(s)                            # applied after the answer, like the firmware
+
     def _api_settings_lang(self, q, clen):
         self._drain(clen)
         value = q.get("value")
@@ -3374,10 +3708,14 @@ class Handler(BaseHTTPRequestHandler):
             self._error(err)
             return
         first = bytearray()
+        tail = bytearray()                       # last bytes: the signature sector of a signed image (API v6)
 
         def on_data(data: bytes):
             if not first:
                 first.append(data[0])
+            tail.extend(data)
+            if len(tail) > 2 * SIG_SECTOR:
+                del tail[:-SIG_SECTOR]
 
         t0 = time.monotonic()
         self._read_body(clen, throttled=True, on_data=on_data)      # throttled like an upload
@@ -3385,6 +3723,12 @@ class Handler(BaseHTTPRequestHandler):
             err = dev.ota_fail
         elif clen == 0 or first[0] != 0xE9:
             err = "INVALID_FILE"
+        elif dev.ota_signed:                     # API v6: signature check after the image check
+            sig = dev.ota_sig or signature_state(clen, bytes(tail))
+            dev.ota_sig = None
+            err = {"bad": "BAD_SIGNATURE", "none": "UNSIGNED"}.get(sig)
+            if not err:
+                dev.log("I", "ota", f"signature ok (key {MOCK_KEY_ID})")
         if err:
             dev.log("W", "ota", f"update rejected: {err}")
             self._error(err, TEXT_BAD_FIRMWARE if err == "INVALID_FILE" else "", f"{clen} B")

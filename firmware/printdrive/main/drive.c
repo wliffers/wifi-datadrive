@@ -3097,6 +3097,10 @@ drive_result_t drive_crypt_lock(bool force)
 //       AUTOLOCK_TAKE_MIN_MINUTES (10 min). With 1..9 minutes the timer waits until no host holds
 //       the drive any more. (Without the >= 10 min exception a host that never ejects, e.g. a
 //       printer, would keep the drive unlocked forever.)
+//     drive_autolock_touch() (the "still working" button of the web UI) restarts the period like
+//     a file operation. Status reads (drive_get_status(), drive_autolock_remaining_s(), i.e. an
+//     open web page polling /api/status) never count: an open tab must not keep the drive
+//     unlocked forever.
 // The poll runs in drive_task (AUTOLOCK_POLL_MS) and only pre-checks without the lock; the final
 // decision is made by autolock_try() under s_lock, which re-checks every condition right before
 // locking (activity between the poll and the lock always wins). The rules of drive_crypt_lock()
@@ -3320,6 +3324,51 @@ void drive_autolock_get(uint16_t *minutes, bool *on_detach)
 {
     *minutes = s_al_minutes;
     *on_detach = s_al_on_detach;
+}
+
+/**
+ * Countdown of the timer rule (2) for the web UI, without s_lock and without counting as activity
+ * (only volatile reads; the poll state is drive_task's, a stale value is off by one poll at most).
+ */
+static int32_t autolock_remaining(uint32_t now, bool *waiting)
+{
+    *waiting = false;
+    const uint32_t minutes = s_al_minutes;
+    if (minutes == 0 || crypt_state_public() != DRIVE_CRYPT_UNLOCKED || s_long_op || s_st.upload_active ||
+        s_open_downloads > 0) {
+        return -1;                          // no countdown: off, not unlocked, or busy (counts as activity)
+    }
+    const uint32_t period = minutes * 60000UL;
+    if (!s_al_unlocked || s_al_gen != s_al_seen_gen) {
+        return (int32_t)(period / 1000);    // the poll has not seen the unlock yet: the period starts now
+    }
+    uint32_t idle = min_u32(ms_since(now, s_al_touch_ms), ms_since(now, s_app_activity_ms));
+    idle = min_u32(idle, autolock_host_io_idle());
+    if (idle < period) {
+        return (int32_t)((period - idle + 999) / 1000);
+    }
+    // Time is up. The next poll (<= AUTOLOCK_POLL_MS) locks - unless a host still holds the drive
+    // with a 1..9 minute setting, or the last attempt was refused (host writing, busy).
+    const al_host_t host = autolock_host_now();
+    *waiting = !autolock_idle_due(now, host, autolock_host_for(now, host)) || s_al_last_result != DRIVE_OK;
+    return 0;
+}
+
+int32_t drive_autolock_remaining_s(bool *waiting)
+{
+    bool w = false;
+    const int32_t s = autolock_remaining(now_ms(), &w);
+    if (waiting) {
+        *waiting = w;
+    }
+    return s;
+}
+
+int32_t drive_autolock_touch(void)
+{
+    s_al_touch_ms = now_ms();               // read by the poll and by autolock_try() under s_lock
+    bool w;
+    return autolock_remaining(now_ms(), &w);
 }
 
 esp_err_t drive_autolock_set(uint16_t minutes, bool on_detach)

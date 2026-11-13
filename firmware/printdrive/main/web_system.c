@@ -1,5 +1,6 @@
 #include "web_system.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "anim.h"
@@ -45,8 +46,12 @@ static long idle_json(uint32_t ms)
 }
 
 // ---- clock, auto-lock, display language (0.5.0) ---------------------------------------------
-// Status fields (about 160 bytes at most, the TZ string is <= 63 characters):
-//   "time":{"epoch":N,"synced":B,"tz":"..."}, "autolock":{"minutes":N,"on_detach":B}, "lang":"de|en"
+// Status fields (about 200 bytes at most, the TZ string is <= 63 characters):
+//   "time":{"epoch":N,"synced":B,"tz":"..."},
+//   "autolock":{"minutes":N,"on_detach":B,"remaining_s":S,"waiting":B}, "lang":"de|en"
+// remaining_s: seconds until the timer locks if nothing happens, -1 = no countdown; 0 with
+// waiting=true: time is up but the lock is postponed (see drive_autolock_remaining_s()). Reading
+// it does not count as activity, so an open page does not keep the drive unlocked.
 static void append_clock_settings(char *buf, size_t len)
 {
     char tz[PD_TIME_TZ_MAX + 1];
@@ -57,8 +62,21 @@ static void append_clock_settings(char *buf, size_t len)
     uint16_t minutes;
     bool on_detach;
     drive_autolock_get(&minutes, &on_detach);
-    web_appendf(buf, len, "},\"autolock\":{\"minutes\":%u,\"on_detach\":%s},\"lang\":\"%s\"", (unsigned)minutes,
-                on_detach ? "true" : "false", ui_get_lang());
+    bool waiting = false;
+    const int32_t remaining = drive_autolock_remaining_s(&waiting);
+    web_appendf(buf, len,
+                "},\"autolock\":{\"minutes\":%u,\"on_detach\":%s,\"remaining_s\":%ld,\"waiting\":%s},\"lang\":\"%s\"",
+                (unsigned)minutes, on_detach ? "true" : "false", (long)remaining, waiting ? "true" : "false",
+                ui_get_lang());
+}
+
+// POST /api/autolock/touch (user): "still working" - the auto-lock period starts again.
+// Answer {"ok":true,"remaining_s":S}, S = -1 if no countdown runs.
+static esp_err_t h_autolock_touch(httpd_req_t *req)
+{
+    char json[48];
+    snprintf(json, sizeof(json), "{\"ok\":true,\"remaining_s\":%ld}", (long)drive_autolock_touch());
+    return web_send_json(req, "200 OK", json);
 }
 
 /** Unsigned decimal query parameter (1..10 digits) -> *out. */
@@ -227,12 +245,14 @@ static esp_err_t h_status(httpd_req_t *req)
     web_json_str(buf, STATUS_BUF_SIZE, w.ap_ssid);
     web_appendf(buf, STATUS_BUF_SIZE, ",\"ap_ip\":\"%s\",\"hostname\":", w.ap_ip);
     web_json_str(buf, STATUS_BUF_SIZE, w.hostname);
-    web_appendf(buf, STATUS_BUF_SIZE, "}");
-    char part[17];
-    bool pending;
+    web_appendf(buf, STATUS_BUF_SIZE, ",\"dhcp\":%s}", w.sta_dhcp ? "true" : "false");
+    char part[17], key_id[9];
+    bool pending, signed_required;
     ota_get_info(part, sizeof(part), &pending);
-    web_appendf(buf, STATUS_BUF_SIZE, ",\"ota\":{\"partition\":\"%s\",\"pending_verify\":%s}", part,
-                pending ? "true" : "false");
+    ota_get_signing(&signed_required, key_id, sizeof(key_id));   // docs/17_signierte_updates.md
+    web_appendf(buf, STATUS_BUF_SIZE,
+                ",\"ota\":{\"partition\":\"%s\",\"pending_verify\":%s,\"signed_required\":%s,\"key_id\":\"%s\"}",
+                part, pending ? "true" : "false", signed_required ? "true" : "false", key_id);
     web_appendf(buf, STATUS_BUF_SIZE, ",\"webdav\":%s", web_dav_enabled() ? "true" : "false");
     web_appendf(buf, STATUS_BUF_SIZE, ",\"crypt\":{\"enabled\":%s,\"unlocked\":%s,\"damaged\":%s}",
                 d.crypt != DRIVE_CRYPT_OFF ? "true" : "false", locked ? "false" : "true",
@@ -367,6 +387,7 @@ static const web_route_t s_routes[] = {
     {"/api/time", HTTP_POST, h_set_time, WEB_ROLE_USER},
     {"/api/settings/autolock", HTTP_POST, h_set_autolock, WEB_ROLE_ADMIN},
     {"/api/settings/lang", HTTP_POST, h_set_lang, WEB_ROLE_USER},
+    {"/api/autolock/touch", HTTP_POST, h_autolock_touch, WEB_ROLE_USER},
 };
 
 esp_err_t web_system_register(httpd_handle_t server)

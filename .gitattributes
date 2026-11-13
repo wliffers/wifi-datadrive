@@ -1,0 +1,36 @@
+# Line endings
+# -----------
+# The repository currently holds both LF and CRLF text files (17 files are stored with CRLF,
+# see `git ls-files --eol`). A global `* text=auto` would make git report those files as
+# modified and convert them on the next commit that touches them. To avoid surprise diffs while
+# work is in progress, this file does NOT normalise text files yet; it only marks binary types
+# and generated files. Recommended later, in one separate commit when nobody else has open
+# changes (see docs/18_veroeffentlichung.md):
+#
+#     * text=auto
+#     *.ps1 text eol=crlf
+#     *.sh  text eol=lf
+#     # then: git add --renormalize .  &&  git commit -m "Zeilenenden vereinheitlichen"
+
+# Binary files: never diff or merge as text, never convert line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.bin   binary
+*.elf   binary
+*.zip   binary
+*.gz    binary
+*.pdf   binary
+*.der   binary
+*.cer   binary
+
+# Generated files: collapsed in GitHub diffs, not counted in the language statistics.
+firmware/printdrive/main/anim_data.inc        linguist-generated
+firmware/components/pd_crypt/xts_vectors.h    linguist-generated
+firmware/*/dependencies.lock                  linguist-generated
+# Vendored third-party code (see THIRD_PARTY_NOTICES.md).
+firmware/components/st7735/**                 linguist-vendored
+firmware/components/display/font5x7.c         linguist-vendored

@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WiFi DataDrive Flasher</title>
+<meta name="description" content="WiFi DataDrive im Browser auf den LILYGO T-Dongle-S3 spielen / flash WiFi DataDrive from the browser">
+<!-- ESP Web Tools (https://github.com/esphome/esp-web-tools), exact version pinned. Loaded from the CDN
+     only on this GitHub Pages site; the device firmware itself loads nothing from the internet. -->
+<script type="module" src="https://unpkg.com/esp-web-tools@10.5.2/dist/web/install-button.js?module"></script>
+<style>
+:root{--bg:#f6f7f8;--card:#fff;--text:#1b1f23;--muted:#5b636b;--line:#dde1e5;--accent:#0b7a75;--warn-bg:#fff4e0;--warn-line:#e8b45a;--code:#eef1f3}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#111416;--card:#1a1e21;--text:#e6e9ec;--muted:#9aa3ab;--line:#2c3237;--accent:#3cc2b9;--warn-bg:#2e2615;--warn-line:#8a6a2c;--code:#23292d}}
+:root[data-theme="dark"]{--bg:#111416;--card:#1a1e21;--text:#e6e9ec;--muted:#9aa3ab;--line:#2c3237;--accent:#3cc2b9;--warn-bg:#2e2615;--warn-line:#8a6a2c;--code:#23292d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:760px;margin:0 auto;padding:24px 16px 48px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:8px}
+h1{font-size:1.6rem;margin:0}
+h2{font-size:1.15rem;margin:1.6em 0 .4em}
+.lang{display:flex;gap:4px}
+.lang button{border:1px solid var(--line);background:var(--card);color:var(--text);padding:6px 12px;border-radius:8px;cursor:pointer;font:inherit}
+.lang button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
+.warn{background:var(--warn-bg);border-color:var(--warn-line)}
+.muted{color:var(--muted)}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.92em;word-break:break-all}
+pre{background:var(--code);padding:10px 12px;border-radius:8px;overflow-x:auto;font-size:.88em}
+ol,ul{padding-left:1.3em}
+li{margin:.25em 0}
+a{color:var(--accent)}
+.install{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.btn{display:inline-block;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:12px 20px;font:inherit;font-weight:600;cursor:pointer}
+[hidden]{display:none!important}
+html[lang="de"] [lang="en"],html[lang="en"] [lang="de"]{display:none}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>WiFi DataDrive</h1>
+  <div class="lang" role="group" aria-label="Sprache / Language">
+    <button type="button" data-set-lang="de" aria-pressed="true">Deutsch</button>
+    <button type="button" data-set-lang="en" aria-pressed="false">English</button>
+  </div>
+</header>
+
+<p lang="de">Firmware für den <b>LILYGO T-Dongle-S3 in der Variante mit LCD</b> (ESP32-S3, 16 MB Flash):
+USB-Stick für 3D-Drucker und PCs mit Dateiverwaltung im Browser über WLAN. Andere Varianten
+(T-Dongle-S3 Plus, Dual) sind <b>nicht getestet</b>.</p>
+<p lang="en">Firmware for the <b>LILYGO T-Dongle-S3, LCD variant</b> (ESP32-S3, 16 MB flash): a USB
+stick for 3D printers and PCs with a browser file manager over Wi-Fi. Other variants
+(T-Dongle-S3 Plus, Dual) are <b>not tested</b>.</p>
+
+<div class="card warn">
+  <p lang="de" style="margin:0"><b>Prüfstand:</b> Diese Flasher-Seite ist noch nicht mit einem echten Gerät
+  geprüft. Bisher wurde die Firmware nur per Kommandozeile (esptool) aufgespielt.</p>
+  <p lang="en" style="margin:0"><b>Test status:</b> this flasher page has not been tried with a real device
+  yet. So far the firmware has only been flashed from the command line (esptool).</p>
+</div>
+
+<div class="card">
+  <p id="version" class="muted" style="margin-top:0">
+    <span lang="de">Version wird geladen …</span><span lang="en">Loading version …</span>
+  </p>
+  <p id="norelease" hidden>
+    <span lang="de">Es ist noch keine Version veröffentlicht.</span>
+    <span lang="en">No version has been published yet.</span>
+  </p>
+  <div class="install" id="install" hidden>
+    <esp-web-install-button manifest="manifest.json">
+      <button slot="activate" class="btn" type="button"><span lang="de">Installieren</span><span lang="en">Install</span></button>
+      <span slot="unsupported"><span lang="de">Dieser Browser kann nicht auf USB-Geräte zugreifen. Bitte Chrome oder Edge am PC oder Mac verwenden.</span><span lang="en">This browser cannot access USB devices. Please use Chrome or Edge on a PC or Mac.</span></span>
+      <span slot="not-allowed"><span lang="de">Die Seite muss über https:// geöffnet werden.</span><span lang="en">The page has to be opened via https://.</span></span>
+    </esp-web-install-button>
+  </div>
+</div>
+
+<section lang="de">
+  <h2>1. Was du brauchst</h2>
+  <ul>
+    <li><b>Chrome oder Edge</b> auf einem PC oder Mac (Web Serial). Laut ESP Web Tools gehen auch Firefox und Chrome
+      unter Android; das ist hier nicht geprüft. iPhone und iPad gehen nicht.</li>
+    <li>Den T-Dongle-S3 (LCD-Variante) und einen freien USB-A-Anschluss (oder Adapter).</li>
+    <li>Optional eine microSD-Karte (FAT32). Ohne Karte nutzt der Stick seinen internen Speicher (ca. 11 MB).</li>
+  </ul>
+
+  <h2>2. Dongle in den Download-Modus bringen</h2>
+  <ol>
+    <li>Dongle abziehen.</li>
+    <li>Die <b>Taste</b> am Dongle (BOOT) gedrückt halten.</li>
+    <li>Dongle mit gedrückter Taste einstecken, Taste nach etwa 2 Sekunden loslassen.</li>
+  </ol>
+  <p>Läuft schon WiFi DataDrive, geht es auch so: Taste 5 bis 10 Sekunden halten und dann loslassen
+    (Wartungsmodus; laut Quelltext, am Gerät noch nicht als eigener Test geprüft).</p>
+
+  <h2>3. Installieren</h2>
+  <ol>
+    <li>Oben auf <b>Installieren</b> klicken und im Fenster den Anschluss des Dongles wählen. Er heißt meist
+      „USB JTAG/serial debug unit“ (USB-ID 303A:1001).</li>
+    <li>Die Seite fragt (auf Englisch, „Erase device“), ob das Gerät gelöscht werden soll:
+      <ul>
+        <li><b>Erstinstallation</b> (Werks-Firmware von LILYGO oder unbekannter Stand): <b>Löschen</b> wählen. Das löscht den
+          ganzen internen Flash, auch Dateien im internen Speicher.</li>
+        <li><b>Ohne Löschen</b> wird nur der vordere Teil überschrieben (Bootloader, Partitionstabelle, Einstellungen,
+          Firmware). Ob Dateien im internen Speicher dabei erhalten bleiben, ist nicht geprüft. Vorher sichern.</li>
+      </ul>
+    </li>
+    <li>Warten, bis die Seite „fertig“ meldet. Dann den Dongle <b>abziehen und wieder einstecken</b>. Ohne das bleibt er
+      nach dem manuellen Download-Modus im Download-Modus hängen (beobachtet).</li>
+  </ol>
+
+  <h2>4. Was mit vorhandenen Daten passiert</h2>
+  <ul>
+    <li><b>In jedem Fall zurückgesetzt:</b> Benutzer (wieder <code>admin</code> / <code>admin</code>), gespeicherte WLANs,
+      vertraute Geräte, Einstellungen und ein HTTPS-Zertifikat des Sticks. Ein früher installiertes Zertifikat muss nach dem
+      Einschalten von HTTPS neu installiert werden.</li>
+    <li><b>Die microSD-Karte</b> wird beim Flashen nicht beschrieben. Eine verschlüsselte Karte bleibt verschlüsselt;
+      Laufwerks-Passwort und Wiederherstellungsschlüssel gelten laut Quelltext weiter (nach einem Neu-Flashen nicht geprüft).</li>
+    <li><b>Nur ein Update</b> einer laufenden WiFi DataDrive? Dafür ist die Datei <code>…-app.bin</code> aus dem Release für das
+      Update in der Weboberfläche gedacht (Einstellungen → System); sie behält Einstellungen und Dateien. Dieser Weg ist am
+      Gerät <b>noch nicht geprüft</b>.</li>
+  </ul>
+
+  <h2>5. Erster Start</h2>
+  <ol>
+    <li>Ohne gespeichertes WLAN öffnet der Dongle das Einrichtungs-WLAN <code>DataDrive-XXXX</code>. Das Passwort steht
+      auf dem Display.</li>
+    <li>Mit dem Handy oder PC verbinden. Öffnet sich die Seite nicht von selbst, im Browser
+      <code>http://192.168.4.1</code> aufrufen.</li>
+    <li>Anmelden mit <b><code>admin</code> / <code>admin</code></b>. Die Oberfläche verlangt sofort ein neues Passwort;
+      <code>admin</code> ist dabei nicht erlaubt.</li>
+    <li>Unter Einstellungen → Netzwerk das Heim-WLAN eintragen. Danach ist der Stick unter
+      <code>http://datadrive.local</code> oder der IP vom Display erreichbar.</li>
+  </ol>
+  <p>Passwörter gehen ohne HTTPS unverschlüsselt durchs WLAN. HTTPS lässt sich in den Einstellungen einschalten.
+    Mehr dazu und der vollständige Prüfstand: <a href="__REPO_URL__#readme">README</a>.</p>
+
+  <h2>Ohne Browser</h2>
+  <pre>python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin</pre>
+</section>
+
+<section lang="en">
+  <h2>1. What you need</h2>
+  <ul>
+    <li><b>Chrome or Edge</b> on a PC or Mac (Web Serial). According to ESP Web Tools, Firefox and Chrome on Android work
+      too; that is not tested here. iPhone and iPad do not work.</li>
+    <li>The T-Dongle-S3 (LCD variant) and a free USB-A port (or an adapter).</li>
+    <li>Optionally a microSD card (FAT32). Without a card the stick uses its internal storage (about 11 MB).</li>
+  </ul>
+
+  <h2>2. Put the dongle into download mode</h2>
+  <ol>
+    <li>Unplug the dongle.</li>
+    <li>Press and hold the <b>button</b> on the dongle (BOOT).</li>
+    <li>Plug the dongle in while holding the button, release it after about 2 seconds.</li>
+  </ol>
+  <p>If WiFi DataDrive is already running, this also works: hold the button for 5 to 10 seconds, then release it
+    (maintenance mode; according to the source code, not yet tested on the device as a separate test).</p>
+
+  <h2>3. Install</h2>
+  <ol>
+    <li>Click <b>Install</b> above and pick the dongle's port in the dialog. It is usually called
+      "USB JTAG/serial debug unit" (USB ID 303A:1001).</li>
+    <li>The page asks whether to erase the device ("Erase device"):
+      <ul>
+        <li><b>First install</b> (LILYGO factory firmware or unknown state): choose <b>erase</b>. This erases the whole
+          internal flash, including files in the internal storage.</li>
+        <li><b>Without erasing</b> only the first part is overwritten (bootloader, partition table, settings, firmware).
+          Whether files in the internal storage survive is not tested. Back them up first.</li>
+      </ul>
+    </li>
+    <li>Wait until the page reports that it is done. Then <b>unplug the dongle and plug it in again</b>. Otherwise it stays
+      in download mode after the manual download mode (observed).</li>
+  </ol>
+
+  <h2>4. What happens to existing data</h2>
+  <ul>
+    <li><b>Always reset:</b> users (back to <code>admin</code> / <code>admin</code>), saved Wi-Fi networks, trusted
+      devices, settings and the stick's HTTPS certificate. A previously installed certificate has to be installed again
+      after HTTPS is switched on.</li>
+    <li><b>The microSD card</b> is not written by the flasher. An encrypted card stays encrypted; the drive password and
+      recovery key keep working according to the source code (not tested after re-flashing).</li>
+    <li><b>Only updating</b> a running WiFi DataDrive? The <code>…-app.bin</code> file of the release is meant for the
+      update in the web UI (Settings → System); it keeps settings and files. That path is <b>not yet tested</b> on the
+      device.</li>
+  </ul>
+
+  <h2>5. First start</h2>
+  <ol>
+    <li>Without a saved Wi-Fi network the dongle opens the setup network <code>DataDrive-XXXX</code>. The password is
+      shown on the display.</li>
+    <li>Connect with a phone or PC. If the page does not open by itself, go to <code>http://192.168.4.1</code>.</li>
+    <li>Sign in with <b><code>admin</code> / <code>admin</code></b>. The UI asks for a new password right away;
+      <code>admin</code> is not allowed.</li>
+    <li>Add your home Wi-Fi under Settings → Network. The stick is then reachable at <code>http://datadrive.local</code>
+      or at the IP shown on the display.</li>
+  </ol>
+  <p>Without HTTPS, passwords travel unencrypted over Wi-Fi. HTTPS can be switched on in the settings. Details and the
+    full test status: <a href="__REPO_URL__/blob/main/README.en.md">README (English)</a>.</p>
+
+  <h2>Without a browser</h2>
+  <pre>python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin</pre>
+</section>
+
+<div class="card muted">
+  <p style="margin:0">
+    <span lang="de">Quelltext und Releases:</span><span lang="en">Source code and releases:</span>
+    <a href="__REPO_URL__">__REPO_URL__</a> ·
+    <span lang="de">Lizenzen:</span><span lang="en">Licences:</span>
+    <a href="firmware/LICENSE">LICENSE</a>, <a href="firmware/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>,
+    <a href="firmware/licenses.zip">licenses.zip</a>
+  </p>
+</div>
+</main>
+<script>
+(function () {
+  var root = document.documentElement;
+  function setLang(l) {
+    root.lang = l;
+    document.querySelectorAll("[data-set-lang]").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-set-lang") === l));
+    });
+    try { localStorage.setItem("lang", l); } catch (e) {}
+  }
+  var saved = null;
+  try { saved = localStorage.getItem("lang"); } catch (e) {}
+  setLang(saved || ((navigator.language || "de").toLowerCase().indexOf("de") === 0 ? "de" : "en"));
+  document.querySelectorAll("[data-set-lang]").forEach(function (b) {
+    b.addEventListener("click", function () { setLang(b.getAttribute("data-set-lang")); });
+  });
+
+  var v = document.getElementById("version");
+  fetch("firmware/info.json", { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function (info) {
+      if (!info.version || info.version === "none") {
+        v.hidden = true;
+        document.getElementById("norelease").hidden = false;
+        return;
+      }
+      v.textContent = "";
+      var a = document.createElement("a");
+      a.href = info.release; a.textContent = info.version;
+      v.append("Version ", a, " · SHA-256 ");
+      var c = document.createElement("code");
+      c.textContent = info.sha256;
+      v.append(c);
+      document.getElementById("install").hidden = false;
+    })
+    .catch(function () {
+      v.hidden = true;
+      document.getElementById("norelease").hidden = false;
+    });
+})();
+</script>
+</body>
+</html>

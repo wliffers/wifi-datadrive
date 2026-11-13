@@ -81,4 +81,30 @@ menu "DataDrive"
             does not allow (22 KiB lowest during an upload). Plain HTTP has the same
             exposure with more sockets; the USB drive itself is never affected.
 
+    config PD_OTA_SIGNED
+        bool "Accept only signed firmware updates over the web UI (RSA-3072)"
+        default n
+        depends on !SECURE_BOOT
+        select SECURE_SIGNED_APPS_NO_SECURE_BOOT
+        select SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+        help
+            Turns on ESP-IDF's "signed app verification without hardware secure boot"
+            (Secure Boot V2 signature block, RSA-3072 / RSA-PSS, the only scheme the
+            ESP32-S3 offers). POST /api/ota then installs an image only if it is signed
+            with the same key as the running firmware; esp_ota_end() checks this before
+            the boot partition is switched, so a refused image never replaces the
+            running firmware.
+
+            The image built with this option MUST be signed (the release build signs it
+            during the build, see tools/signing/README.md). An unsigned image built with
+            this option aborts at start ("This app is not signed..."): over the web the
+            bootloader then rolls back, over USB it needs a new USB flash.
+
+            Off in the repository (sdkconfig.defaults) so that every clone builds and
+            flashes without a key. The owner's release build turns it on through the
+            overlay sdkconfig.signed (tools/signing/build_signed.ps1).
+
+            Not protected: flashing over USB (physical access), no hardware secure boot,
+            no flash encryption. See docs/17_signierte_updates.md.
+
 endmenu

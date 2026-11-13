@@ -1,0 +1,130 @@
+# Builds the firmware and runs the API test against the mock server.
+#
+# Firmware: official ESP-IDF container espressif/idf:v5.5.6 (same version as dependencies.lock).
+# The container is used directly as the job container instead of espressif/esp-idf-ci-action:
+# the action wraps the same image, but runs one command per step in a fresh `docker run`; here
+# build, merged image, licence bundle and checksums need several steps in the same environment.
+#
+# The build uses firmware/printdrive/sdkconfig.defaults as committed. No signing key is used or
+# needed here: CI produces UNSIGNED images. If update signing is used, signing happens on the
+# owner's machine (see docs/18_veroeffentlichung.md); the private key never goes to GitHub.
+#
+# Also called by release.yml (workflow_call) to build the release files.
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    name: Firmware (ESP-IDF v5.5.6)
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.5.6
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Build printdrive (main firmware)
+        run: |
+          # The job container does not run the image's entrypoint, so load the environment here.
+          . "$IDF_PATH/export.sh"
+          # The workspace belongs to the runner user, the container runs as root.
+          git config --global --add safe.directory '*'
+          idf.py -C firmware/printdrive build
+
+      - name: Build smoke_test (hardware test, shares the components)
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py -C firmware/smoke_test build
+
+      - name: Collect images, licences and checksums
+        run: |
+          . "$IDF_PATH/export.sh"
+          set -euo pipefail
+          ver=$(sed -n 's/^set(PROJECT_VER "\(.*\)")/\1/p' firmware/printdrive/CMakeLists.txt)
+          if [ -z "$ver" ]; then echo "PROJECT_VER not found"; exit 1; fi
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            label="${GITHUB_REF_NAME}"
+            if [ "$label" != "v$ver" ]; then
+              echo "Tag $label does not match PROJECT_VER $ver in firmware/printdrive/CMakeLists.txt"
+              exit 1
+            fi
+          else
+            label="v${ver}-g${GITHUB_SHA::7}"
+          fi
+          b=firmware/printdrive/build
+          name="wifi-datadrive-${label}"
+          mkdir -p dist "stage/${name}-build-files"
+
+          # Merged image for a fresh install (flash at 0x0); offsets from build/flasher_args.json.
+          python .github/scripts/merge_image.py "$b" "dist/${name}-esp32s3-merged.bin"
+          # Plain application image for the update in the web UI (Settings -> System).
+          cp "$b/printdrive.bin" "dist/${name}-app.bin"
+
+          # Individual parts, flash arguments and the ELF (for decoding crash backtraces).
+          cp "$b/bootloader/bootloader.bin" "$b/partition_table/partition-table.bin" \
+             "$b/ota_data_initial.bin" "$b/printdrive.bin" "$b/printdrive.elf" \
+             "$b/flasher_args.json" "$b/flash_args" "firmware/printdrive/sdkconfig" \
+             "stage/${name}-build-files/"
+          (cd stage && python -m zipfile -c "../dist/${name}-build-files.zip" "${name}-build-files")
+
+          # Licence texts that must accompany binaries (THIRD_PARTY_NOTICES.md, section 4).
+          python .github/scripts/collect_licenses.py "$IDF_PATH" firmware/printdrive stage/licenses
+          (cd stage && python -m zipfile -c ../dist/licenses.zip licenses)
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/
+
+          (cd dist && sha256sum -- *.bin *.zip > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - name: Upload firmware artefact
+        uses: actions/upload-artifact@v7
+        with:
+          name: firmware
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  api-test:
+    name: API test against the mock server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Run tools/api_test.py against tools/mock_server.py
+        run: |
+          # Mock start state: admin / admin123 (see the header of tools/mock_server.py).
+          # --upload-kbps 0 removes the mock's upload rate limit (default 400 KiB/s).
+          python tools/mock_server.py --port 8080 --upload-kbps 0 > mock.log 2>&1 &
+          mock=$!
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null http://127.0.0.1:8080/api/session && break
+            sleep 1
+          done
+          rc=0
+          python tools/api_test.py 127.0.0.1:8080 --user admin --password admin123 || rc=$?
+          kill "$mock" || true
+          exit $rc
+
+      - name: Show mock server log
+        if: failure()
+        run: cat mock.log || true

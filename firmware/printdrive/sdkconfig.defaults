@@ -73,6 +73,10 @@ CONFIG_MBEDTLS_CUSTOM_MEM_ALLOC=y
 
 # ---- OTA: new firmware must confirm itself (ota_init), otherwise the bootloader rolls back ----
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# Signed updates (docs/17_signierte_updates.md): off here, so that every clone builds and
+# flashes over USB without a key. The release build adds the overlay sdkconfig.signed and the
+# owner's key (tools/signing/build_signed.ps1); only such an image requires signed updates.
+# CONFIG_PD_OTA_SIGNED is not set
 
 # Throughput (measured before: download 487 kB/s HTTP, 389 kB/s HTTPS; upload about 1 MB/s)
 CONFIG_COMPILER_OPTIMIZATION_PERF=y

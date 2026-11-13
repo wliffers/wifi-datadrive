@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Sicherheitslücke melden / Report a security vulnerability
+    url: https://docs.github.com/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability
+    about: Vertraulich über „Security → Report a vulnerability“ in diesem Repository, nicht als öffentliches Issue (siehe SECURITY.md). / Privately via "Security → Report a vulnerability" in this repository, not as a public issue (see SECURITY.md).

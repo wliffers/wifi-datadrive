@@ -1,0 +1,40 @@
+name: Wunsch / Feature request
+description: Eine neue Funktion oder Verbesserung vorschlagen. / Suggest a new feature or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Vorher bitte in `docs/14_vormerkliste.md` nachsehen, ob der Punkt schon vorgemerkt ist.
+        Please check `docs/14_vormerkliste.md` first; the idea may already be listed.
+
+        Eine Regel gilt immer: Das Laufwerk hat zu jedem Zeitpunkt genau einen Besitzer (USB-Gerät oder Firmware). Vorschläge, die das aufweichen, werden nicht umgesetzt.
+        One rule always applies: the drive has exactly one owner at any time (USB host or firmware). Proposals that weaken this will not be implemented.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Wofür? / What problem does it solve?
+      description: Die Situation, in der die Funktion fehlt. / The situation in which the feature is missing.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Vorschlag / Proposal
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Andere Lösungen / Alternatives considered
+  - type: input
+    id: setup
+    attributes:
+      label: Umgebung / Setup
+      description: Drucker oder Rechner, Board-Variante, Firmware-Version / printer or host, board variant, firmware version
+  - type: checkboxes
+    id: test
+    attributes:
+      label: Testen / Testing
+      options:
+        - label: Ich kann eine Testversion an meiner Hardware ausprobieren und das Ergebnis berichten. / I can try a test build on my hardware and report the result.

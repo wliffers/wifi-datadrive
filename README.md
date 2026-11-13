@@ -507,8 +507,44 @@ kommen kann, steht ebenfalls in der Vormerkliste.
 | [docs/14_vormerkliste.md](docs/14_vormerkliste.md) | Vormerkliste: was in 0.5.0 umgesetzt wurde, was offen und noch nicht entschieden ist |
 | [docs/15_api_v5.md](docs/15_api_v5.md) | HTTP-API Version 5 (0.5.0): Uhrzeit, automatisches Sperren, Display-Sprache, Upload fortsetzen, ZIP, WebDAV, Einrichtungsseite |
 | [tools/webdav/README.md](tools/webdav/README.md) | Netzlaufwerk verbinden: Windows, iPhone, Android, macOS, Linux, Fehlermeldungen |
+| [docs/18_veroeffentlichung.md](docs/18_veroeffentlichung.md) | Checkliste für die Veröffentlichung auf GitHub: vor dem ersten Push, Pages, Releases |
+| [README.en.md](README.en.md) | Kurzfassung auf Englisch |
 
 ## Lizenzen von Fremdcode
 
 - `firmware/components/st7735/` – ST7735-Treiber aus dem LILYGO-Repository, MIT (`LICENSE.LILYGO`).
 - `firmware/components/display/font5x7.c` – Adafruit-GFX-Font, BSD (`LICENSE.Adafruit_GFX`).
+
+## Flashen im Browser
+
+Ohne ESP-IDF lässt sich die Firmware mit Chrome oder Edge direkt aus dem Browser aufspielen:
+Seite `web-flasher/` auf GitHub Pages (`https://<OWNER>.github.io/<REPO>/`), sie nutzt ESP Web
+Tools und holt das zusammengeführte Abbild der neuesten Version.
+
+1. Dongle abziehen, die Taste gedrückt halten, Dongle einstecken, Taste nach etwa 2 Sekunden
+   loslassen (Download-Modus).
+2. Auf der Seite **Installieren** wählen und den Anschluss des Dongles auswählen. Bei der
+   Erstinstallation die Frage nach dem Löschen („Erase device“) bejahen.
+3. Nach dem Flashen den Dongle einmal ab- und wieder anstecken.
+4. Erste Anmeldung mit `admin` / `admin`, danach wird sofort ein neues Passwort verlangt.
+
+Das Abbild setzt Benutzer, gespeicherte WLANs und Einstellungen zurück; die microSD-Karte wird
+nicht beschrieben. Für ein Update einer laufenden Version ist die Datei `…-app.bin` aus dem
+Release gedacht (Einstellungen → System), dieser Weg ist am Gerät noch nicht geprüft.
+**Prüfstand:** Die Flasher-Seite ist mit einem echten Gerät **noch nicht geprüft**.
+
+Ohne Browser: `python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin`.
+
+## Mitmachen
+
+Fehlerberichte, Testergebnisse von echter Hardware und Korrekturen sind willkommen. Die Regeln
+(jede Aussage als verifiziert oder noch nicht geprüft markiert, keine Kompatibilitätsaussage ohne
+echten Test, die Ein-Besitzer-Regel des Laufwerks bleibt unangetastet) und die Tests stehen in
+[.github/CONTRIBUTING.md](.github/CONTRIBUTING.md). Sicherheitslücken bitte vertraulich melden:
+[.github/SECURITY.md](.github/SECURITY.md).
+
+## Lizenz
+
+Der eigene Code steht unter der [MIT-Lizenz](LICENSE). Fremdcode, Komponenten aus ESP-IDF und dem
+ESP Component Registry sowie die Pflichten bei der Weitergabe von Firmware-Dateien:
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

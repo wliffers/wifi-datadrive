@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "ota.h"
 #include "sdkconfig.h"
 #include "web_common.h"
 
@@ -18,8 +19,26 @@ static const char *TAG = "ota";
 #define HDR_BYTES (sizeof(esp_image_header_t))
 #define LOG_STEP  (256 * 1024)
 
-#define MSG_INVALID "Das ist keine gültige Gerätesoftware für dieses Laufwerk."
-#define MSG_IO      "Fehler beim Schreiben in den Speicher des Geräts."
+#define MSG_INVALID       "Das ist keine gültige Gerätesoftware für dieses Laufwerk."
+#define MSG_IO            "Fehler beim Schreiben in den Speicher des Geräts."
+#define MSG_BAD_SIGNATURE "Die Update-Datei ist nicht mit dem Schlüssel dieses Geräts signiert."
+#define MSG_UNSIGNED      "Die Update-Datei ist nicht signiert. Dieses Gerät nimmt nur signierte Updates an."
+
+#if CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+/** esp_ota_end() refused the image (signed updates required): tell UNSIGNED from BAD_SIGNATURE
+ *  (wrong key, or changed/damaged after signing - the signature no longer matches). */
+static esp_err_t send_signature_error(httpd_req_t *req, const esp_partition_t *part, size_t total)
+{
+    char got[9], own[9];
+    if (!ota_upload_has_signature(part, total, got, sizeof(got))) {
+        ESP_LOGW(TAG, "rejected: image carries no signature");
+        return web_send_error(req, "422 Unprocessable Entity", "UNSIGNED", MSG_UNSIGNED);
+    }
+    ota_get_signing(NULL, own, sizeof(own));
+    ESP_LOGW(TAG, "rejected: signature does not verify (image key id %s, device key id %s)", got, own);
+    return web_send_error(req, "422 Unprocessable Entity", "BAD_SIGNATURE", MSG_BAD_SIGNATURE);
+}
+#endif
 
 static bool drain_body(httpd_req_t *req, size_t remaining)
 {
@@ -108,6 +127,14 @@ static esp_err_t h_ota(httpd_req_t *req)
                 ESP_LOGW(TAG, "rejected: not an ESP32-S3 image");
                 return fail(req, remaining, "422 Unprocessable Entity", "INVALID_FILE", MSG_INVALID);
             }
+#if CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+            // A signed file always ends with a 4 KiB signature sector on a 4 KiB boundary
+            // (espsecure.py sign_data): any other size cannot be signed - refuse before erasing.
+            if (total % 4096 != 0) {
+                ESP_LOGW(TAG, "rejected: size %u is no multiple of 4096, cannot carry a signature", (unsigned)total);
+                return fail(req, remaining, "422 Unprocessable Entity", "UNSIGNED", MSG_UNSIGNED);
+            }
+#endif
             const esp_err_t err = esp_ota_begin(part, total, &handle);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "esp_ota_begin: %s", esp_err_to_name(err));
@@ -134,11 +161,18 @@ static esp_err_t h_ota(httpd_req_t *req)
         }
     }
 
-    esp_err_t err = esp_ota_end(handle);   // validates the image; frees the handle
+    // Validates the image (checksum, hash and - with signed updates - the signature against the
+    // key of the running firmware); frees the handle. On failure nothing else changes: the boot
+    // partition still points to the running firmware.
+    esp_err_t err = esp_ota_end(handle);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_end: %s", esp_err_to_name(err));
         if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
+#if CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+            return send_signature_error(req, part, total);
+#else
             return web_send_error(req, "422 Unprocessable Entity", "INVALID_FILE", MSG_INVALID);
+#endif
         }
         return web_send_error(req, "500 Internal Server Error", "IO", MSG_IO);
     }

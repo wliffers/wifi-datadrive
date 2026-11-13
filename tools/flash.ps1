@@ -11,18 +11,21 @@
 #   .\tools\flash.ps1 -Project printdrive
 #   .\tools\flash.ps1 -Project printdrive -Build -Monitor
 #   .\tools\flash.ps1 -Project smoke_test -Port COM4
+#   .\tools\flash.ps1 -Project printdrive -Signed [-Build]   (signed release build in build_signed,
+#                                                             see tools/signing/README.md)
 #
 # ESP-IDF location can be overridden with $env:PD_IDF_PATH.
 param(
     [Parameter(Mandatory = $true, Position = 0)][ValidateSet('smoke_test', 'printdrive')][string]$Project,
     [string]$Port,
     [switch]$Build,
-    [switch]$Monitor
+    [switch]$Monitor,
+    [switch]$Signed
 )
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path $PSScriptRoot -Parent
-$buildDir = Join-Path $root "firmware\$Project\build"
+$buildDir = Join-Path $root ("firmware\$Project\" + $(if ($Signed) { 'build_signed' } else { 'build' }))
 $idfPath = if ($env:PD_IDF_PATH) { $env:PD_IDF_PATH } else { Join-Path $env:USERPROFILE 'esp\esp-idf-v5.5.6' }
 
 function Fail([string]$msg) {
@@ -89,15 +92,37 @@ function Invoke-Touch1200([string]$com) {
 }
 
 # ---------------------------------------------------------------- build
+if ($Signed -and $Project -ne 'printdrive') { Fail "-Signed gibt es nur für printdrive." }
 if ($Build) {
     Write-Host "== Build $Project =="
-    & (Join-Path $PSScriptRoot 'idf.ps1') $Project build
+    if ($Signed) {
+        & (Join-Path $PSScriptRoot 'signing\build_signed.ps1')
+    } else {
+        & (Join-Path $PSScriptRoot 'idf.ps1') $Project build
+    }
     if ($LASTEXITCODE -ne 0) { Fail "Build fehlgeschlagen (Exit-Code $LASTEXITCODE)." }
 }
 
 $flashArgs = Join-Path $buildDir 'flash_args'
 if (-not (Test-Path $flashArgs)) {
-    Fail "$flashArgs fehlt. Erst bauen: .\tools\flash.ps1 -Project $Project -Build"
+    $hint = if ($Signed) { "-Signed -Build" } else { "-Build" }
+    Fail "$flashArgs fehlt. Erst bauen: .\tools\flash.ps1 -Project $Project $hint"
+}
+
+# Firmware built for signed updates must itself be signed, otherwise it aborts at every start
+# (ESP-IDF: "This app is not signed...") - then only a new USB flash helps. Check before flashing.
+$cfgJson = Join-Path $buildDir 'config\sdkconfig.json'
+if ($Project -eq 'printdrive' -and (Test-Path $cfgJson)) {
+    $cfg = Get-Content $cfgJson -Raw | ConvertFrom-Json
+    if ($cfg.SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT -eq $true) {
+        $bin = Join-Path $buildDir 'printdrive.bin'
+        $b = if (Test-Path $bin) { [System.IO.File]::ReadAllBytes($bin) } else { [byte[]]@() }
+        $o = $b.Length - 4096
+        if ($b.Length -lt 8192 -or ($b.Length % 4096) -ne 0 -or $b[$o] -ne 0xE7) {
+            Fail "$bin ist für signierte Updates gebaut, trägt aber keine Signatur. Mit .\tools\signing\build_signed.ps1 bauen (oder signieren) - so nicht flashen."
+        }
+        Write-Host "Signierte Firmware (signierte Updates verlangt): $bin"
+    }
 }
 if (-not (Test-Path (Join-Path $idfPath 'export.ps1'))) {
     Fail "ESP-IDF nicht gefunden unter $idfPath (Override: `$env:PD_IDF_PATH)."

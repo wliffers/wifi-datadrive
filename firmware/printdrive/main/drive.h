@@ -452,6 +452,18 @@ void drive_autolock_get(uint16_t *minutes, bool *on_detach);
  */
 esp_err_t drive_autolock_set(uint16_t minutes, bool on_detach);
 
+/**
+ * Seconds until the inactivity timer would lock the drive if nothing happens, or -1 if no
+ * countdown runs (timer off, drive not encrypted or locked, upload/download/long operation
+ * running). 0 once the time is up; *waiting (may be NULL) is then true if the lock is postponed
+ * (a host still holds the drive with a 1..9 minute setting, host writing, busy). Cheap, takes no
+ * lock and does not count as activity (status polls).
+ */
+int32_t drive_autolock_remaining_s(bool *waiting);
+
+/** "Still working": restart the inactivity period now. Returns drive_autolock_remaining_s(). */
+int32_t drive_autolock_touch(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -23,19 +23,123 @@
  * Power loss during an update: the data goes to the inactive slot and the boot partition
  * (otadata) is switched only at the very end, after the image has been validated. So the old
  * firmware keeps running and the half-written slot is simply ignored and overwritten next time.
+ *
+ * Signed updates (CONFIG_PD_OTA_SIGNED -> CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT, see
+ * docs/17_signierte_updates.md): ESP-IDF's "signed app verification without hardware secure
+ * boot". esp_ota_end() (esp_image_verify) then also checks the Secure Boot V2 signature block
+ * (RSA-3072, RSA-PSS) appended to the image, against the public key in the signature block of
+ * the RUNNING firmware (only block 0 counts). A failed check returns ESP_ERR_OTA_VALIDATE_FAILED
+ * before esp_ota_set_boot_partition() runs (which verifies once more), so a refused image never
+ * becomes bootable. The bootloader does not check signatures in this mode (RSA scheme), so no new
+ * bootloader is needed and the rollback after a crash works as before. At start-up ESP-IDF aborts
+ * an app built with this option that carries no signature (esp_secure_boot_init_checks()) - over
+ * OTA the bootloader then rolls back, over USB a signed image must be flashed.
  */
 #include "ota.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_timer.h"
+#include "sdkconfig.h"
+
+#if CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+#if !CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME
+#error "Signed updates on the ESP32-S3 use the RSA-3072 scheme (CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME)"
+#endif
+#include "esp_rom_crc.h"
+#include "esp_secure_boot.h"
+#include "mbedtls/sha256.h"
+#endif
 
 static const char *TAG = "ota";
 
 #define OTA_CONFIRM_DELAY_US (15LL * 1000000)
 
 static esp_timer_handle_t s_confirm_timer;
+
+#if CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+#define SIG_SECTOR_SIZE 4096u   // the signature sector espsecure.py appends (4 KiB aligned)
+
+static char s_key_id[9];        // key id of the running firmware, computed once
+static int s_key_id_done;       // 1 once s_key_id is complete (__atomic acquire/release)
+
+static void key_id_from_digest(const uint8_t *digest, char *out, size_t len)
+{
+    snprintf(out, len, "%02x%02x%02x%02x", digest[0], digest[1], digest[2], digest[3]);
+}
+
+/** Key id of the running firmware. Only block 0 is used for update checks in this mode. */
+static const char *running_key_id(void)
+{
+    if (__atomic_load_n(&s_key_id_done, __ATOMIC_ACQUIRE)) {
+        return s_key_id;
+    }
+    esp_image_sig_public_key_digests_t d = {0};
+    if (esp_secure_boot_get_signature_blocks_for_running_app(true, &d) != ESP_OK || d.num_digests == 0) {
+        return "";   // not reachable in practice: ESP-IDF aborts an unsigned app at start-up
+    }
+    // Two first callers at the same time write the same bytes; readers wait for the flag.
+    key_id_from_digest(d.key_digests[0], s_key_id, sizeof(s_key_id));
+    __atomic_store_n(&s_key_id_done, 1, __ATOMIC_RELEASE);
+    return s_key_id;
+}
+#endif
+
+void ota_get_signing(bool *required, char *key_id, size_t len)
+{
+#if CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+    if (required) {
+        *required = true;
+    }
+    if (key_id && len) {
+        strlcpy(key_id, running_key_id(), len);
+    }
+#else
+    if (required) {
+        *required = false;
+    }
+    if (key_id && len) {
+        key_id[0] = '\0';
+    }
+#endif
+}
+
+bool ota_upload_has_signature(const esp_partition_t *part, size_t image_size, char *key_id, size_t len)
+{
+    if (key_id && len) {
+        key_id[0] = '\0';
+    }
+#if CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+    // espsecure.py sign_data pads the image to 4 KiB and appends one 4 KiB signature sector, so
+    // a signed file is a multiple of 4 KiB and its signature blocks start 4 KiB before the end.
+    if (!part || image_size < 2 * SIG_SECTOR_SIZE || image_size % SIG_SECTOR_SIZE != 0) {
+        return false;
+    }
+    ets_secure_boot_sig_block_t *blk = malloc(sizeof(*blk));   // 1216 bytes, not on the httpd stack
+    if (!blk) {
+        return false;
+    }
+    bool found = false;
+    if (esp_partition_read(part, image_size - SIG_SECTOR_SIZE, blk, sizeof(*blk)) == ESP_OK &&
+        blk->magic_byte == ETS_SECURE_BOOT_V2_SIGNATURE_MAGIC &&
+        blk->block_crc == esp_rom_crc32_le(0, (const uint8_t *)blk, CRC_SIGN_BLOCK_LEN)) {
+        found = true;
+        uint8_t digest[32];
+        if (key_id && len && mbedtls_sha256((const unsigned char *)&blk->key, sizeof(blk->key), digest, 0) == 0) {
+            key_id_from_digest(digest, key_id, len);
+        }
+    }
+    free(blk);
+    return found;
+#else
+    (void)part;
+    (void)image_size;
+    return false;
+#endif
+}
 
 static void confirm_cb(void *arg)
 {
@@ -68,6 +172,11 @@ void ota_get_info(char *partition_label, size_t len, bool *pending_verify)
 
 esp_err_t ota_init(void)
 {
+#if CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT
+    ESP_LOGI(TAG, "web updates must be signed, key id %s", running_key_id());
+#else
+    ESP_LOGI(TAG, "web updates are not signature checked (CONFIG_PD_OTA_SIGNED off)");
+#endif
     if (!running_pending_verify()) {
         return ESP_OK;
     }

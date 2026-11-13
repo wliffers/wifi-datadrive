@@ -1,0 +1,36 @@
+# Editor settings (https://editorconfig.org). Line endings are deliberately not set here: the
+# repository holds both LF and CRLF files, and editors would convert whole files on save
+# (see .gitattributes). Trailing whitespace is not trimmed automatically for the same reason.
+root = true
+
+[*]
+charset = utf-8
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+
+[*.{html,css,js,json,webmanifest,yml,yaml}]
+indent_size = 2
+
+[*.md]
+indent_size = 2
+
+[{CMakeLists.txt,*.cmake}]
+indent_size = 4
+
+[Kconfig*]
+indent_size = 4
+
+# Windows PowerShell 5.1 reads UTF-8 scripts with umlauts correctly only with a byte order mark.
+[*.ps1]
+charset = utf-8-bom
+
+[*.csv]
+insert_final_newline = unset
+
+# Vendored code keeps its original style (tabs).
+[firmware/components/display/font5x7.c]
+indent_style = tab
+
+[Makefile]
+indent_style = tab

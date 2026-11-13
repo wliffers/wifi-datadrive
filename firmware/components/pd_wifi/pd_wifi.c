@@ -1,5 +1,6 @@
 #include "pd_wifi.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "esp_check.h"
@@ -88,6 +89,234 @@ static void nvs_get_str_or(nvs_handle_t h, const char *key, char *out, size_t le
     }
 }
 
+// ---- network settings: DHCP or static IPv4, hostname ----------------------------------------
+// ONE setting for the station interface, whatever stored network it connects to (not per
+// network): a static address fits one LAN only, so with several networks DHCP is the right choice.
+// The setup access point is a separate interface with its own fixed address and DHCP server and
+// is never affected. No reachability test (the device cannot verify it): strict validation, the
+// usual fallback to the setup access point when no network can be joined at all, and the 10-s
+// button reset (pd_wifi_reset_network()) as the way back.
+// Addresses in host byte order (a.b.c.d = a << 24 | b << 16 | c << 8 | d), 0 = not set.
+// NVS keys (namespace pd_wifi): "dhcp" u8, "ip" / "mask" / "gateway" / "dns" u32, "hostname" str.
+
+#define NET_APPLY_DELAY_MS 1000   // after the HTTP answer has left
+
+typedef struct {
+    bool dhcp;
+    uint32_t ip, mask, gw, dns;
+} netaddr_t;
+
+static netaddr_t s_net = {.dhcp = true};             // stored setting (s_lock; writers also hold s_cfg_lock)
+static char s_cfg_host[PD_WIFI_HOSTNAME_MAX + 1];    // stored hostname; s_st.hostname = the one in effect
+static volatile bool s_net_apply;                    // stored setting not applied yet ...
+static int64_t s_net_apply_at_ms;                    // ... apply from this time on (s_lock)
+static bool s_net_addr_dirty;                        // address part changed since the last apply (s_lock)
+static volatile uint32_t s_dns_applied;              // static DNS server in effect, 0 with DHCP
+static uint8_t s_net_cb_pending;                     // PD_WIFI_CHG_* waiting for the station address (s_lock)
+static bool s_ip_event, s_ip_event_changed;          // GOT_IP seen (event task -> wifi task; s_lock)
+static pd_wifi_netcfg_cb_t s_net_cb;
+static bool s_mdns_ok;
+
+bool pd_wifi_hostname_valid(const char *h)
+{
+    const size_t n = h ? strlen(h) : 0;
+    if (n == 0 || n > PD_WIFI_HOSTNAME_MAX || h[0] == '-' || h[n - 1] == '-') {
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        const char c = h[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static const char *default_hostname(void)
+{
+    return pd_wifi_hostname_valid(CONFIG_PD_WIFI_HOSTNAME) ? CONFIG_PD_WIFI_HOSTNAME : "datadrive";
+}
+
+/** Strict "a.b.c.d": decimal, 1-3 digits per part, no leading zeros (no octal ambiguity). */
+static bool parse_ip4(const char *s, uint32_t *out)
+{
+    if (!s) {
+        return false;
+    }
+    uint32_t v = 0;
+    for (int i = 0; i < 4; i++) {
+        const char *start = s;
+        unsigned part = 0;
+        int digits = 0;
+        while (*s >= '0' && *s <= '9') {
+            if (++digits > 3) {
+                return false;
+            }
+            part = part * 10 + (unsigned)(*s++ - '0');
+        }
+        if (digits == 0 || part > 255 || (digits > 1 && *start == '0') || *s != (i < 3 ? '.' : '\0')) {
+            return false;
+        }
+        if (i < 3) {
+            s++;
+        }
+        v = (v << 8) | part;
+    }
+    *out = v;
+    return true;
+}
+
+static void ip4_str(uint32_t h, char out[16])
+{
+    if (h == 0) {
+        out[0] = '\0';
+        return;
+    }
+    snprintf(out, 16, "%u.%u.%u.%u", (unsigned)(h >> 24), (unsigned)((h >> 16) & 255u), (unsigned)((h >> 8) & 255u),
+             (unsigned)(h & 255u));
+}
+
+static esp_ip4_addr_t ip4_net(uint32_t h)
+{
+    const esp_ip4_addr_t a = {.addr = esp_netif_htonl(h)};
+    return a;
+}
+
+static uint32_t ip4_host(esp_ip4_addr_t a)
+{
+    return esp_netif_htonl(a.addr);
+}
+
+static bool ip4_unicast(uint32_t a)
+{
+    const uint32_t first = a >> 24;
+    return first != 0 && first != 127 && first < 224;
+}
+
+static pd_wifi_net_check_t check_static(uint32_t ip, uint32_t mask, uint32_t gw, uint32_t dns)
+{
+    const uint32_t host = ~mask;
+    if ((host & (host + 1)) != 0 || mask < 0xFF000000u || mask > 0xFFFFFFFCu) {
+        return PD_WIFI_NET_BAD_MASK;          // not contiguous, or not /8../30
+    }
+    if (!ip4_unicast(ip) || (ip & host) == 0 || (ip & host) == host || ip == ip4_host(s_ap_ip)) {
+        return PD_WIFI_NET_BAD_IP;
+    }
+    if (!ip4_unicast(gw) || gw == ip || (gw & mask) != (ip & mask) || (gw & host) == 0 || (gw & host) == host) {
+        return PD_WIFI_NET_BAD_GATEWAY;
+    }
+    if (!ip4_unicast(dns)) {
+        return PD_WIFI_NET_BAD_DNS;
+    }
+    return PD_WIFI_NET_OK;
+}
+
+static void set_static_dns(void)
+{
+    const uint32_t d = s_dns_applied;
+    if (d == 0 || !s_sta_netif) {
+        return;
+    }
+    esp_netif_dns_info_t dns = {0};
+    dns.ip.type = ESP_IPADDR_TYPE_V4;
+    dns.ip.u_addr.ip4 = ip4_net(d);
+    const esp_err_t err = esp_netif_set_dns_info(s_sta_netif, ESP_NETIF_DNS_MAIN, &dns);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "DNS server not set: %s", esp_err_to_name(err));
+    }
+}
+
+/** DHCP client on, or off with the static address (Wi-Fi task, or pd_wifi_start() before the
+ *  first connect). With the station connected the change is immediate: a static address posts
+ *  IP_EVENT_STA_GOT_IP at once, the DHCP client posts it with the lease. */
+static void apply_ip_mode(const netaddr_t *n)
+{
+    esp_err_t err;
+    if (n->dhcp) {
+        s_dns_applied = 0;
+        err = esp_netif_dhcpc_start(s_sta_netif);
+        if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED) {
+            ESP_LOGE(TAG, "DHCP client start failed: %s", esp_err_to_name(err));
+        }
+    } else {
+        err = esp_netif_dhcpc_stop(s_sta_netif);
+        if (err != ESP_OK && err != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED) {
+            ESP_LOGE(TAG, "DHCP client stop failed: %s", esp_err_to_name(err));
+        }
+        s_dns_applied = n->dns;             // before the GOT_IP event below re-applies it
+        const esp_netif_ip_info_t info = {.ip = ip4_net(n->ip), .netmask = ip4_net(n->mask), .gw = ip4_net(n->gw)};
+        err = esp_netif_set_ip_info(s_sta_netif, &info);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "static address not set: %s", esp_err_to_name(err));
+        }
+        set_static_dns();                   // after esp_netif_set_ip_info(), which clears the DNS servers
+    }
+    lock();
+    s_st.sta_dhcp = n->dhcp;
+    unlock();
+}
+
+/** Deliver pending PD_WIFI_CHG_* (call without s_lock). ip_changed false drops CHG_ADDRESS. */
+static void fire_net_cb(bool ip_changed)
+{
+    lock();
+    unsigned bits = s_net_cb_pending;
+    s_net_cb_pending = 0;
+    const pd_wifi_netcfg_cb_t cb = s_net_cb;
+    unlock();
+    if (!ip_changed) {
+        bits &= ~(unsigned)PD_WIFI_CHG_ADDRESS;
+    }
+    if (bits && cb) {
+        cb(bits);
+    }
+}
+
+/** Apply the stored setting (Wi-Fi task). */
+static void apply_netcfg(void)
+{
+    char host[PD_WIFI_HOSTNAME_MAX + 1];
+    lock();
+    s_net_apply = false;
+    const netaddr_t n = s_net;
+    const bool addr = s_net_addr_dirty;
+    s_net_addr_dirty = false;
+    strlcpy(host, s_cfg_host, sizeof(host));
+    const bool host_changed = strcmp(host, s_st.hostname) != 0;
+    if (host_changed) {
+        strlcpy(s_st.hostname, host, sizeof(s_st.hostname));
+    }
+    s_net_cb_pending |= (host_changed ? PD_WIFI_CHG_HOSTNAME : 0) | (addr ? PD_WIFI_CHG_ADDRESS : 0);
+    const bool connected = s_st.sta_connected;
+    unlock();
+
+    if (host_changed) {
+        esp_netif_set_hostname(s_sta_netif, host);   // DHCP option 12 from the next DHCP message on
+        if (s_mdns_ok) {
+            const esp_err_t err = mdns_hostname_set(host);   // re-announces, the service follows the name
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "mDNS hostname not changed: %s", esp_err_to_name(err));
+            }
+        }
+        ESP_LOGI(TAG, "hostname now '%s' (http://%s.local)", host, host);
+    }
+    if (addr) {
+        if (n.dhcp) {
+            ESP_LOGI(TAG, "station address: DHCP");
+        } else {
+            char a[16], m[16], g[16], d[16];
+            ip4_str(n.ip, a);
+            ip4_str(n.mask, m);
+            ip4_str(n.gw, g);
+            ip4_str(n.dns, d);
+            ESP_LOGI(TAG, "station address: static %s mask %s gateway %s DNS %s", a, m, g, d);
+        }
+        apply_ip_mode(&n);
+    } else if (connected) {
+        fire_net_cb(false);                 // nothing to wait for (hostname only)
+    }
+}
+
 static void load_config(void)
 {
     nvs_handle_t h = 0;
@@ -149,6 +378,28 @@ static void load_config(void)
             nvs_commit(h);
         }
     }
+
+    // Network settings (see "network settings" above). A stored static setting that does not
+    // validate (any more) falls back to DHCP.
+    uint8_t dhcp = 1;
+    netaddr_t n = {0};
+    if (h) {
+        nvs_get_u8(h, "dhcp", &dhcp);
+        nvs_get_u32(h, "ip", &n.ip);
+        nvs_get_u32(h, "mask", &n.mask);
+        nvs_get_u32(h, "gateway", &n.gw);
+        nvs_get_u32(h, "dns", &n.dns);
+    }
+    n.dhcp = dhcp != 0;
+    if (!n.dhcp && check_static(n.ip, n.mask, n.gw, n.dns) != PD_WIFI_NET_OK) {
+        ESP_LOGW(TAG, "stored static address not valid - using DHCP");
+        n.dhcp = true;
+    }
+    s_net = n;
+    nvs_get_str_or(h, "hostname", s_cfg_host, sizeof(s_cfg_host), "");
+    if (!pd_wifi_hostname_valid(s_cfg_host)) {
+        strlcpy(s_cfg_host, default_hostname(), sizeof(s_cfg_host));
+    }
     if (h) {
         nvs_close(h);
     }
@@ -156,7 +407,8 @@ static void load_config(void)
     uint8_t mac[6];
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     snprintf(s_st.ap_ssid, sizeof(s_st.ap_ssid), "DataDrive-%02X%02X", mac[4], mac[5]);
-    strlcpy(s_st.hostname, CONFIG_PD_WIFI_HOSTNAME, sizeof(s_st.hostname));
+    strlcpy(s_st.hostname, s_cfg_host, sizeof(s_st.hostname));
+    s_st.sta_dhcp = s_net.dhcp;
 }
 
 static void slot_key(char *out, char kind, int slot)
@@ -369,6 +621,9 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         s_retry_delay_ms = RETRY_MIN_MS;
         s_last_ip_change_ms = now_ms();
         snprintf(s_st.sta_ip, sizeof(s_st.sta_ip), IPSTR, IP2STR(&e->ip_info.ip));
+        // DNS and the settings callback are handled by the wifi task (small event task stack).
+        s_ip_event = true;
+        s_ip_event_changed = s_ip_event_changed || e->ip_changed;
         unlock();
         ESP_LOGI(TAG, "connected to '%s', IP %s", s_st.sta_ssid, s_st.sta_ip);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
@@ -460,6 +715,23 @@ static void wifi_task(void *arg)
     while (true) {
         const int64_t t = now_ms();
 
+        if (s_net_apply) {
+            lock();
+            const bool due = t >= s_net_apply_at_ms;
+            unlock();
+            if (due) {
+                apply_netcfg();
+            }
+        }
+        lock();
+        const bool ip_event = s_ip_event, ip_changed = s_ip_event_changed;
+        s_ip_event = s_ip_event_changed = false;
+        unlock();
+        if (ip_event) {
+            set_static_dns();               // static setting only (no-op with DHCP)
+            fire_net_cb(ip_changed);        // a changed setting is in effect now (no-op if none pending)
+        }
+
         if (s_reconfigure) {
             s_reconfigure = false;
             esp_wifi_disconnect();
@@ -547,6 +819,7 @@ static void start_mdns(void)
         ESP_LOGW(TAG, "mDNS init failed");
         return;
     }
+    s_mdns_ok = true;
     mdns_hostname_set(s_st.hostname);
     mdns_instance_name_set("WiFi DataDrive");
     mdns_service_add(NULL, "_http", "_tcp", 80, NULL, 0);
@@ -569,6 +842,14 @@ esp_err_t pd_wifi_start(void)
     s_sta_netif = esp_netif_create_default_wifi_sta();
     s_ap_netif = esp_netif_create_default_wifi_ap();
     esp_netif_set_hostname(s_sta_netif, s_st.hostname);
+    if (!s_net.dhcp) {
+        // Static setting: DHCP client off before the first connect; the address is taken over
+        // with every association (esp_netif posts IP_EVENT_STA_GOT_IP itself).
+        char a[16];
+        ip4_str(s_net.ip, a);
+        ESP_LOGI(TAG, "station address: static %s", a);
+        apply_ip_mode(&s_net);
+    }
     esp_netif_ip_info_t ap_info;
     if (esp_netif_get_ip_info(s_ap_netif, &ap_info) == ESP_OK && ap_info.ip.addr != 0) {
         s_ap_ip = ap_info.ip;
@@ -851,4 +1132,194 @@ esp_err_t pd_wifi_remove(const char *ssid)
     xSemaphoreGive(s_cfg_lock);
     ESP_LOGI(TAG, "network '%s' removed", ssid);
     return ESP_OK;
+}
+
+// ---- network settings (public) -------------------------------------------------------------
+
+void pd_wifi_get_netcfg(pd_wifi_netcfg_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    lock();
+    const netaddr_t n = s_net;
+    strlcpy(out->hostname, s_cfg_host, sizeof(out->hostname));
+    unlock();
+    out->dhcp = n.dhcp;
+    ip4_str(n.ip, out->addr.ip);
+    ip4_str(n.mask, out->addr.mask);
+    ip4_str(n.gw, out->addr.gateway);
+    ip4_str(n.dns, out->addr.dns);
+}
+
+bool pd_wifi_get_current_ipv4(pd_wifi_ipv4_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    lock();
+    const bool connected = s_st.sta_connected;
+    unlock();
+    if (!connected || !s_sta_netif) {
+        return false;
+    }
+    esp_netif_ip_info_t info;
+    if (esp_netif_get_ip_info(s_sta_netif, &info) == ESP_OK) {
+        ip4_str(ip4_host(info.ip), out->ip);
+        ip4_str(ip4_host(info.netmask), out->mask);
+        ip4_str(ip4_host(info.gw), out->gateway);
+    }
+    esp_netif_dns_info_t dns;
+    if (esp_netif_get_dns_info(s_sta_netif, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK && dns.ip.type == ESP_IPADDR_TYPE_V4) {
+        ip4_str(ip4_host(dns.ip.u_addr.ip4), out->dns);
+    }
+    return true;
+}
+
+static esp_err_t store_netcfg(const netaddr_t *n, const char *host)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = nvs_set_u8(h, "dhcp", n->dhcp ? 1 : 0);
+    if (err == ESP_OK) {
+        err = nvs_set_u32(h, "ip", n->ip);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u32(h, "mask", n->mask);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u32(h, "gateway", n->gw);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u32(h, "dns", n->dns);
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_str(h, "hostname", host);
+    }
+    if (err == ESP_OK) {
+        err = nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
+
+/** New stored setting in RAM, applied by the Wi-Fi task from now + delay_ms (caller holds s_cfg_lock). */
+static void schedule_netcfg(const netaddr_t *n, const char *host, int64_t delay_ms)
+{
+    lock();
+    const netaddr_t old = s_net;
+    if (n->dhcp != old.dhcp ||
+        (!n->dhcp && (n->ip != old.ip || n->mask != old.mask || n->gw != old.gw || n->dns != old.dns))) {
+        s_net_addr_dirty = true;
+    }
+    s_net = *n;
+    strlcpy(s_cfg_host, host, sizeof(s_cfg_host));
+    s_net_apply_at_ms = now_ms() + delay_ms;
+    s_net_apply = true;
+    unlock();
+}
+
+esp_err_t pd_wifi_set_netcfg(const pd_wifi_netcfg_t *cfg, pd_wifi_net_check_t *bad)
+{
+    pd_wifi_net_check_t dummy;
+    if (!bad) {
+        bad = &dummy;
+    }
+    *bad = PD_WIFI_NET_OK;
+    ESP_RETURN_ON_FALSE(cfg && s_lock, ESP_ERR_INVALID_ARG, TAG, "no config / not started");
+
+    xSemaphoreTake(s_cfg_lock, portMAX_DELAY);
+    lock();
+    netaddr_t n = s_net;
+    char host[PD_WIFI_HOSTNAME_MAX + 1];
+    strlcpy(host, s_cfg_host, sizeof(host));
+    unlock();
+
+    if (cfg->hostname[0]) {
+        if (!pd_wifi_hostname_valid(cfg->hostname)) {
+            *bad = PD_WIFI_NET_BAD_HOSTNAME;
+        } else {
+            strlcpy(host, cfg->hostname, sizeof(host));
+        }
+    }
+    n.dhcp = cfg->dhcp;
+    if (*bad == PD_WIFI_NET_OK && !cfg->dhcp) {
+        uint32_t ip = 0, mask = 0, gw = 0, dns = 0;
+        if (!parse_ip4(cfg->addr.ip, &ip)) {
+            *bad = PD_WIFI_NET_BAD_IP;
+        } else if (!parse_ip4(cfg->addr.mask, &mask)) {
+            *bad = PD_WIFI_NET_BAD_MASK;
+        } else if (!parse_ip4(cfg->addr.gateway, &gw)) {
+            *bad = PD_WIFI_NET_BAD_GATEWAY;
+        } else if (cfg->addr.dns[0] && !parse_ip4(cfg->addr.dns, &dns)) {
+            *bad = PD_WIFI_NET_BAD_DNS;
+        } else {
+            if (!cfg->addr.dns[0]) {
+                dns = gw;                   // no DNS server given: the router usually is one
+            }
+            *bad = check_static(ip, mask, gw, dns);
+        }
+        n.ip = ip;
+        n.mask = mask;
+        n.gw = gw;
+        n.dns = dns;
+    }
+    if (*bad != PD_WIFI_NET_OK) {
+        xSemaphoreGive(s_cfg_lock);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const esp_err_t err = store_netcfg(&n, host);
+    if (err != ESP_OK) {
+        xSemaphoreGive(s_cfg_lock);
+        ESP_LOGE(TAG, "network settings not stored: %s", esp_err_to_name(err));
+        return err;
+    }
+    schedule_netcfg(&n, host, NET_APPLY_DELAY_MS);
+    xSemaphoreGive(s_cfg_lock);
+    return ESP_OK;
+}
+
+esp_err_t pd_wifi_reset_network(void)
+{
+    if (!s_lock || !s_cfg_lock) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreTake(s_cfg_lock, portMAX_DELAY);
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) {
+        static const char *const keys[] = {"dhcp", "ip", "mask", "gateway", "dns", "hostname"};
+        for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+            const esp_err_t e = nvs_erase_key(h, keys[i]);
+            if (e != ESP_OK && e != ESP_ERR_NVS_NOT_FOUND && err == ESP_OK) {
+                err = e;
+            }
+        }
+        const esp_err_t c = nvs_commit(h);
+        if (err == ESP_OK) {
+            err = c;
+        }
+        nvs_close(h);
+    }
+    // In effect even if NVS failed (the owner pressed the button): DHCP and the default name now.
+    const netaddr_t n = {.dhcp = true};
+    schedule_netcfg(&n, default_hostname(), 0);
+    xSemaphoreGive(s_cfg_lock);
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, "network settings reset: DHCP, hostname '%s'", default_hostname());
+    } else {
+        ESP_LOGE(TAG, "network settings reset in RAM only (NVS: %s)", esp_err_to_name(err));
+    }
+    return err;
+}
+
+void pd_wifi_set_netcfg_callback(pd_wifi_netcfg_cb_t cb)
+{
+    if (!s_lock) {
+        s_net_cb = cb;
+        return;
+    }
+    lock();
+    s_net_cb = cb;
+    unlock();
 }

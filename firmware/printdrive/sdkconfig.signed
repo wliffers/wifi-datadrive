@@ -1,0 +1,15 @@
+# Release overlay: firmware that accepts only signed updates (docs/17_signierte_updates.md).
+#
+# Use tools/signing/build_signed.ps1 - it adds the path of the private key as a third defaults
+# file (build_signed/sdkconfig.signing_key, never in the repository) and builds into build_signed:
+#   idf.py -B build_signed "-DSDKCONFIG=build_signed/sdkconfig"
+#          "-DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.signed;build_signed/sdkconfig.signing_key" build
+# Result: build_signed/printdrive.bin is signed during the build (espsecure.py sign_data --version 2);
+# build_signed/printdrive-unsigned.bin is the same image without signature - never install it.
+CONFIG_PD_OTA_SIGNED=y
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+# Sign during the build: a missing key stops the build ("Secure Boot Signing Key ... does not
+# exist") instead of producing an unsigned image that would abort at start.
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y

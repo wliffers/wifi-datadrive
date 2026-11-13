@@ -1,0 +1,84 @@
+name: Fehler melden / Bug report
+description: Etwas funktioniert nicht wie beschrieben. / Something does not work as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Sicherheitslücken bitte nicht hier melden**, sondern vertraulich (siehe SECURITY.md).
+        **Please do not report security vulnerabilities here**; report them privately (see SECURITY.md).
+
+        Bitte keine Passwörter, Wiederherstellungsschlüssel, WLAN-Namen oder -Passwörter in Logs und Screenshots stehen lassen.
+        Please remove passwords, recovery keys and Wi-Fi names/passwords from logs and screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: Firmware-Version / Firmware version
+      description: Steht in der Weboberfläche unter Einstellungen → System oder in `/api/status` (`version`). / Shown in the web UI under Settings → System or in `/api/status`.
+      placeholder: "0.5.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: board
+    attributes:
+      label: Board-Variante / Board variant
+      options:
+        - LILYGO T-Dongle-S3 mit LCD / with LCD (die getestete Variante / the tested variant)
+        - LILYGO T-Dongle-S3 Plus (nicht getestet / not tested)
+        - LILYGO T-Dongle-S3 Dual (nicht getestet / not tested)
+        - Andere / other
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Woher stammt die Firmware? / Where does the firmware come from?
+      description: Release-Datei, Browser-Flasher, selbst gebaut (ESP-IDF-Version, geänderte Optionen?) / release file, web flasher, own build (ESP-IDF version, changed options?)
+    validations:
+      required: true
+  - type: input
+    id: storage
+    attributes:
+      label: Speicher / Storage
+      description: microSD (Größe, FAT32/exFAT) oder interner Flash; verschlüsselt ja/nein / microSD (size, FAT32/exFAT) or internal flash; encrypted yes/no
+  - type: input
+    id: host
+    attributes:
+      label: Drucker oder Rechner am USB / Printer or host on USB
+      description: z. B. Bambu Lab X2D (Firmware-Version), Windows 11, macOS, Linux / e.g. Bambu Lab X2D (firmware version), Windows 11, macOS, Linux
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Browser oder Programm / Browser or client
+      description: z. B. Edge unter Windows, Safari auf iOS, WebDAV-Programm, Skript / e.g. Edge on Windows, Safari on iOS, WebDAV client, script
+  - type: textarea
+    id: steps
+    attributes:
+      label: Schritte zum Nachstellen / Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Erwartet und tatsächlich / Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: |
+        Serielles Log (TinyUSB-CDC-Port, `tools/monitor.ps1`, oder UART0) oder Einstellungen → System → Protokoll (`/api/log`). Sensible Daten entfernen.
+        Serial log (TinyUSB CDC port, `tools/monitor.ps1`, or UART0) or Settings → System → Log (`/api/log`). Remove sensitive data.
+      render: text
+  - type: textarea
+    id: more
+    attributes:
+      label: Sonstiges / Anything else
+      description: Screenshots, Häufigkeit, seit welcher Version / screenshots, how often, since which version

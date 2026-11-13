@@ -546,6 +546,7 @@ static void handle_button(void)
             reset_done = true;
             click_pending = false;
             s_reset_ok = (auth_reset_users() == ESP_OK);
+            pd_wifi_reset_network();   // also back to DHCP and the default hostname (logs itself)
             ESP_LOGW(TAG, "button: user reset %s", s_reset_ok ? "done" : "FAILED");
             s_overlay = OV_RESET;
             s_overlay_until_ms = t + RESET_SHOW_MS;

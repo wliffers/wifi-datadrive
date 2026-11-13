@@ -1,14 +1,14 @@
 """End-to-end test of the WiFi DataDrive web API (version 3, docs/09_api_v3.md, plus version 4,
 docs/12_api_v4.md: Wi-Fi scan and drive encryption incl. recovery key renewal, erase, damaged state,
 plus version 5, docs/15_api_v5.md: clock, automatic lock, display language, resumable upload,
-folder ZIP, WebDAV).
+folder ZIP, WebDAV, plus version 6, docs/16_api_v6.md: auto-lock countdown, network settings, signed updates).
 
 Works against the mock (tools/mock_server.py) and a real dongle.
 
 Usage (the ESP-IDF Python env and the system Python provide 'requests'):
     python tools/api_test.py HOST[:PORT] --user admin --password PW
                              [--drive E:] [--size-kb 512] [--skip-destructive]
-                             [--wifi-test] [--ota-probe] [--drive-password PW]
+                             [--wifi-test] [--ota-probe] [--network-test] [--drive-password PW]
                              [--crypt-test --i-know-this-erases-the-drive [--keep-encrypted]]
                              [--only SECTION[,SECTION...]]
 
@@ -17,16 +17,18 @@ Sections: 1 authentication, 2 users and roles, 3 trusted devices, 4 mode and fil
 8 Wi-Fi scan (v4), 9 drive encryption, non-destructive (v4), 9c optional HTTPS (read-only checks),
 10 drive encryption, destructive (v4, opt-in),
 11 clock and time zone (v5), 12 automatic lock settings (v5), 13 display language (v5),
-14 resumable upload (v5), 15 folder as ZIP (v5), 16 WebDAV smoke test (v5; skipped if /dav/ answers 404).
+14 resumable upload (v5), 15 folder as ZIP (v5), 16 WebDAV smoke test (v5; skipped if /dav/ answers 404),
+17 auto-lock countdown and touch (v6), 18 network settings (v6), 19 signed updates (v6).
 
   --only time,zip     run only these sections (after the login, which always runs). Names: users, devices,
                       files, wifi, status, drive, scan, crypt, https, crypt_test, time, autolock, lang, resume,
-                      zip, webdav; "v5" = time,autolock,lang,resume,zip,webdav. The v5 file sections create their
-                      own test folder if section 4 does not run.
+                      zip, webdav, countdown, network, otasig; "v5" = time,autolock,lang,resume,zip,webdav;
+                      "v6" = countdown,network,otasig. The v5 file sections create their own test folder if
+                      section 4 does not run.
 
 The target is left as found: owner mode restored, everything created (test folder
 _apitest_<random>, temporary user apitest_<random>, trusted devices, Wi-Fi entry) removed,
-changed settings (automatic lock, display language) restored, own sessions logged out. Never
+changed settings (automatic lock, display language, network settings) restored, own sessions logged out. Never
 formats, reboots or flashes; only touches what it created. Section 11 may set the device clock
 to this PC's time if the device clock is not NTP-synced (like the web UI does).
 
@@ -36,7 +38,22 @@ Options
                       the USB-mode checks and the take-over push are skipped).
   --wifi-test         also add and remove a dummy Wi-Fi network (a real device tries to
                       reconnect after an add, so this is opt-in).
-  --ota-probe         POST a 16 byte invalid body to /api/ota (expects INVALID_FILE).
+  --ota-probe         POST a 16 byte invalid body to /api/ota (expects INVALID_FILE). With API v6 and
+                      status.ota.signed_required true also an image whose size is no multiple of 4096, an
+                      unsigned image and one with a signature block of a foreign key (expects 422 UNSIGNED,
+                      UNSIGNED, BAD_SIGNATURE; INVALID_FILE accepted). The bodies are an ESP32-S3 image header
+                      followed by zeros: never bootable, so nothing can be flashed even by a firmware that
+                      skipped the signature check. Skipped when signed_required is false.
+  --network-test      section 18 applies settings: a device on DHCP is switched to static with its CURRENT
+                      address (and a temporary host name), then back to DHCP; a static device only gets a
+                      temporary host name with the same addresses. The test waits for the device after every
+                      change (the address stays the same; under DHCP the router normally hands out the same
+                      lease again). Also runs the validation probes a firmware without the check would apply
+                      (non-contiguous mask, gateway in another subnet, network/broadcast address). Without
+                      this option section 18 only reads the settings and sends requests that are invalid by
+                      construction (missing or unparseable values, invalid host names with the current mode
+                      and addresses); a probe the device accepts anyway is undone at once. Against the mock
+                      (GET /mock answers) everything runs without the option.
   --drive E:          after providing the drive to USB, compare the pushed file on the
                       Windows drive letter.
 
@@ -124,6 +141,9 @@ class S:                # run state (also used by the cleanup)
     damaged = False     # the target reports crypt.damaged (only the mock can)
     autolock_orig = None    # (minutes, on_detach) to restore
     lang_orig = None        # display language to restore
+    mock = None             # target is tools/mock_server.py (None: not asked yet)
+    net_orig = None         # network settings to restore (API v6)
+    net_dirty = False       # a network change was sent that was (or may have been) applied
 
 
 def check(name, cond, info=""):
@@ -901,8 +921,9 @@ def sec_status(a):
     if a.ota_probe:
         before = (ota or {}).get("partition")
         r = call("POST", "/api/ota", body=b"\x00" * 16, timeout=30, retry=False)
-        check("ota probe: invalid body refused (INVALID_FILE / TOO_LARGE)", r.status_code in (422, 413)
-              and jcode(r) in ("INVALID_FILE", "TOO_LARGE"), f"{r.status_code} {jcode(r)}")
+        check("ota probe: invalid body refused (INVALID_FILE / TOO_LARGE; v6 with signing: UNSIGNED)",
+              r.status_code in (422, 413) and jcode(r) in ("INVALID_FILE", "TOO_LARGE", "UNSIGNED", "BAD_SIGNATURE"),
+              f"{r.status_code} {jcode(r)}")
         check("ota probe: nothing flashed (same partition)", status().get("ota", {}).get("partition") == before)
     else:
         skip("/api/ota probe", "opt-in with --ota-probe")
@@ -1520,14 +1541,21 @@ def sec_time(a):
           okr(r) and abs(e.get("mtime", 0) - 1790000000) <= 2, e.get("mtime"))
 
 
+def al_settings():
+    """The two settings of status.autolock (without the v6 countdown fields)."""
+    al = status().get("autolock") or {}
+    return {"minutes": al.get("minutes"), "on_detach": al.get("on_detach")}
+
+
 def sec_autolock(a):
     head("12. Automatic lock of the encrypted drive: settings (API v5)")
-    al = status().get("autolock")
+    al = al_settings()
     ok = check("status.autolock = {minutes: 0..1440, on_detach: bool}",
                isinstance(al, dict) and is_int(al.get("minutes")) and 0 <= al["minutes"] <= 1440
                and isinstance(al.get("on_detach"), bool), al)
     if not ok:
         return
+    al = {"minutes": al["minutes"], "on_detach": al["on_detach"]}    # v6 adds remaining_s / waiting (section 17)
     m, d = al["minutes"], al["on_detach"]
     print(f"       automatic lock: {m} min ({'off' if not m else 'on'}), on detach {d}")
     expect("401 without login: POST settings/autolock",
@@ -1542,24 +1570,24 @@ def sec_autolock(a):
                           ("minutes=abc", {"minutes": "abc"}), ("on_detach=2", {"on_detach": "2"})):
         expect(f"settings/autolock with {label} -> BAD_REQUEST", call("POST", "/api/settings/autolock", params=params),
                400, "BAD_REQUEST")
-    check("... nothing changed", status().get("autolock") == al, status().get("autolock"))
+    check("... nothing changed", al_settings() == al, al_settings())
 
     S.autolock_orig = (m, d)
     m2 = 30 if m != 30 else 45
     r = call("POST", "/api/settings/autolock", params={"minutes": str(m2), "on_detach": "0" if d else "1"})
     check(f"set minutes={m2}, on_detach={not d}: 200, status shows it",
-          okr(r) and status().get("autolock") == {"minutes": m2, "on_detach": not d}, r.text[:120])
+          okr(r) and al_settings() == {"minutes": m2, "on_detach": not d}, r.text[:120])
     r = call("POST", "/api/settings/autolock", params={"on_detach": "true" if d else "false"})
-    check("on_detach accepts true/false too", okr(r) and status().get("autolock", {}).get("on_detach") is d,
+    check("on_detach accepts true/false too", okr(r) and al_settings()["on_detach"] is d,
           r.text[:120])
     r = call("POST", "/api/settings/autolock", params={"on_detach": "0" if d else "1"})
     r = call("POST", "/api/settings/autolock", params={"minutes": str(m)})
     check("only minutes given: on_detach keeps its value", okr(r)
-          and status().get("autolock") == {"minutes": m, "on_detach": not d}, status().get("autolock"))
+          and al_settings() == {"minutes": m, "on_detach": not d}, al_settings())
     r = call("POST", "/api/settings/autolock", params={"on_detach": "1" if d else "0"})
-    check("only on_detach given: back to the original settings", okr(r) and status().get("autolock") == al,
-          status().get("autolock"))
-    if status().get("autolock") == al:
+    check("only on_detach given: back to the original settings", okr(r) and al_settings() == al,
+          al_settings())
+    if al_settings() == al:
         S.autolock_orig = None
     skip("the automatic lock itself", "takes minutes; on the mock: /mock/set?idle_s=N and usb_connected=0")
 
@@ -1877,6 +1905,404 @@ def sec_webdav(a):
     check("... gone from /api/files too", "DAV Ordner ä" not in ls(T)[1])
 
 
+# ------------------------------------------------------------------ API v6 (docs/16_api_v6.md)
+
+def target_is_mock():
+    """True if the target is tools/mock_server.py (GET /mock answers {"mock": true}; a device answers 404/401)."""
+    if S.mock is None:
+        try:
+            r = requests.get(S.base + "/mock", timeout=5)
+            S.mock = r.status_code == 200 and jr(r).get("mock") is True
+        except requests.RequestException:
+            S.mock = False
+    return S.mock
+
+
+def touch(tok=DEF):
+    return call("POST", "/api/autolock/touch", tok=tok)
+
+
+def sec_countdown(a):
+    head("17. Automatic lock: countdown and touch (API v6)")
+    st = status()
+    al = st.get("autolock") or {}
+    ok = check("status.autolock has remaining_s (integer >= -1) and waiting (bool)",
+               is_int(al.get("remaining_s")) and al["remaining_s"] >= -1 and isinstance(al.get("waiting"), bool), al)
+    if not ok or not is_int(al.get("minutes")):
+        return
+    check("waiting only together with remaining_s 0", not al["waiting"] or al["remaining_s"] == 0, al)
+    if al["minutes"] == 0:
+        check("timer off: remaining_s -1, waiting false", al["remaining_s"] == -1 and al["waiting"] is False, al)
+    else:
+        check("remaining_s never above minutes*60", al["remaining_s"] <= al["minutes"] * 60, al)
+    expect("401 without login: POST autolock/touch", touch(tok=None), 401, "UNAUTHORIZED")
+    expect("403 FORBIDDEN without X-PrintDrive header: POST autolock/touch",
+           call("POST", "/api/autolock/touch", csrf=False), 403, "FORBIDDEN")
+    u = role_token()
+    r = touch(tok=u or DEF)
+    check("POST autolock/touch" + (" as role user" if u else "") + ": 200, ok, remaining_s integer >= -1",
+          okr(r) and is_int(jr(r).get("remaining_s")) and jr(r)["remaining_s"] >= -1, r.text[:120])
+
+    crypt = st.get("crypt") or {}
+    running = crypt.get("enabled") is True and crypt.get("unlocked") is True and not crypt.get("damaged")
+    m, d = al["minutes"], al["on_detach"]
+    if S.autolock_orig is None:
+        S.autolock_orig = (m, d)
+    m2 = 30 if m != 30 else 45                   # long enough to never strike during the test
+    full = m2 * 60
+    r = call("POST", "/api/settings/autolock", params={"minutes": str(m2)})
+    if not check(f"timer set to {m2} min for the test (restored afterwards)", okr(r), r.text[:120]):
+        return
+    al2 = status().get("autolock") or {}
+    if not running:
+        why = "drive not encrypted" if not crypt.get("enabled") else "drive locked or damaged"
+        check(f"{why}: remaining_s -1, waiting false even with a timer", al2.get("remaining_s") == -1
+              and al2.get("waiting") is False, al2)
+        r = touch()
+        check("touch without a countdown: remaining_s -1", okr(r) and jr(r).get("remaining_s") == -1, r.text[:120])
+    elif (status().get("upload") or {}).get("active"):
+        skip("countdown checks", "an upload is running (no countdown while a transfer runs)")
+    else:
+        r0 = al2.get("remaining_s", -9)
+        check(f"changed timer: countdown starts at the full period ({full} s, -5 s tolerance)",
+              full - 5 <= r0 <= full and al2.get("waiting") is False, al2)
+        t0 = time.time()
+        for _ in range(4):                       # status polls must not restart the period
+            status()
+            time.sleep(1)
+        st3 = status()
+        el = time.time() - t0
+        al3 = st3.get("autolock") or {}
+        host_idle = (st3.get("drive") or {}).get("host_idle_ms", -1)
+        if is_int(host_idle) and 0 <= host_idle < el * 1000 + 1000:
+            skip("countdown keeps running during status polls", "the USB host accessed the drive (restarts the period)")
+        else:
+            check(f"status polls do not count: after {el:.1f} s remaining_s went down by about as much",
+                  is_int(al3.get("remaining_s")) and r0 - el - 2.5 <= al3["remaining_s"] <= r0 - el + 1.5
+                  and al3["remaining_s"] < r0, f"{r0} -> {al3.get('remaining_s')}")
+        r = touch()
+        j = jr(r)
+        check("touch restarts the period: remaining_s back at the full time", okr(r) and is_int(j.get("remaining_s"))
+              and full - 2 <= j["remaining_s"] <= full, r.text[:120])
+        check("... status shows it too", full - 3 <= (status().get("autolock") or {}).get("remaining_s", -9) <= full)
+        if (st3.get("drive") or {}).get("owner") == "app":
+            time.sleep(2.5)
+            before = (status().get("autolock") or {}).get("remaining_s", -9)
+            ls("")
+            after = (status().get("autolock") or {}).get("remaining_s", -9)
+            check("a file request (GET /api/files) restarts the period", before <= full - 2 and after >= full - 1,
+                  f"{before} -> {after}")
+        else:
+            skip("file request restarts the period", "the file manager does not own the drive")
+    skip("state waiting (time up, lock postponed)", "needs a 1..9 minute timer and a USB host holding the drive; "
+         "on the mock: /mock/set?autolock_remaining=0&autolock_waiting=1")
+    r = call("POST", "/api/settings/autolock", params={"minutes": str(m), "on_detach": "1" if d else "0"})
+    al4 = status().get("autolock") or {}
+    if check("timer restored", okr(r) and al4.get("minutes") == m and al4.get("on_detach") is d, al4):
+        S.autolock_orig = None
+
+
+NET_KEYS = ("ip", "mask", "gateway", "dns")
+IPV4_RE = re.compile(r"(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}")
+HOSTNAME_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?")
+
+
+def is_ip(v):
+    return isinstance(v, str) and IPV4_RE.fullmatch(v) is not None
+
+
+def ip_int(s):
+    a, b, c, d = (int(x) for x in s.split("."))
+    return (a << 24) | (b << 16) | (c << 8) | d
+
+
+def ip_str(v):
+    return ".".join(str((v >> s) & 0xFF) for s in (24, 16, 8, 0))
+
+
+def get_network():
+    r = call("GET", "/api/network")
+    return r, jr(r)
+
+
+def net_settings(j):
+    """The stored part of GET /api/network (what POST settings/network sets)."""
+    return {"dhcp": j.get("dhcp"), **{k: j.get(k) for k in NET_KEYS}, "hostname": j.get("hostname")}
+
+
+def net_params(s, **over):
+    """Parameters of POST settings/network that re-apply the settings `s` (with overrides; None drops a key)."""
+    p = {"dhcp": "1" if s["dhcp"] else "0", "hostname": s["hostname"]}
+    if not s["dhcp"]:
+        p.update({k: s[k] for k in NET_KEYS if s.get(k)})
+    p.update(over)
+    return {k: v for k, v in p.items() if v is not None}
+
+
+def net_post(params):
+    r = call("POST", "/api/settings/network", params=params, timeout=30)
+    if okr(r):
+        S.net_dirty = True                        # accepted: the device applies it after the answer
+    return r
+
+
+def net_back_online(what):
+    """After a network change: the device answers again (same address); also refreshes nothing else."""
+    ok = wait_online(90)
+    if not ok:
+        note(f"the device did not answer within 90 s after {what}. If its address changed, find it on the router "
+             "(or hold the button 10 s: resets users AND network settings to DHCP)")
+    return ok
+
+
+def net_restore(why):
+    """Re-applies S.net_orig and waits for the device. True if GET /api/network matches again."""
+    orig = S.net_orig
+    r = net_post(net_params(orig))
+    if not okr(r):
+        check(f"network settings restored ({why})", False, f"{r.status_code} {r.text[:120]!r}")
+        return False
+    net_back_online("restoring the network settings")
+    j = get_network()[1]
+    now = net_settings(j)
+    same = now["dhcp"] == orig["dhcp"] and now["hostname"] == orig["hostname"] and \
+        (orig["dhcp"] or all(now[k] == orig[k] for k in NET_KEYS))
+    check(f"network settings restored ({why}): mode and host name" + ("" if orig["dhcp"] else ", addresses"), same,
+          now)
+    if same:
+        S.net_orig, S.net_dirty = None, False
+    return same
+
+
+NET_FIELD_WORDS = {"dhcp": ("dhcp",), "ip": ("ip-adresse", "ip:"), "mask": ("subnetzmaske", "mask"),
+                   "gateway": ("gateway",), "dns": ("dns",), "hostname": ("gerätename", "hostname")}
+
+
+def names_field(r, field):
+    """BAD_REQUEST names the field: an extra JSON key `field` if the device sends one, else the error text - the
+    field whose word comes FIRST in the text (the gateway text also mentions the IP address)."""
+    j = jr(r)
+    if "field" in j:
+        return j["field"] == field
+    text = (j.get("error") or "").lower()
+    hits = [(text.find(w), f) for f, words in NET_FIELD_WORDS.items() for w in words if w in text]
+    return bool(hits) and min(hits)[1] == field
+
+
+def net_probe(name, params, field):
+    """One validation probe: must answer 400 BAD_REQUEST naming `field`. A wrongly accepted probe is undone."""
+    r = net_post(params)
+    good = r.status_code == 400 and jcode(r) == "BAD_REQUEST" and names_field(r, field)
+    check(name, good, f"-> 400 BAD_REQUEST ({field})" if good else
+          f"expected 400 BAD_REQUEST naming '{field}', got {r.status_code} {r.text[:140]!r}")
+    if okr(r):
+        note("WARNING: the device ACCEPTED an invalid setting; restoring the previous network settings")
+        net_back_online("the accepted probe")
+        net_restore("after an accepted invalid probe")
+    return good
+
+
+def sec_network(a):
+    head("18. Network settings (API v6)")
+    bad = {"dhcp": "2"}                           # every request below is invalid anyway: nothing can be applied
+    expect("401 without login: GET /api/network", call("GET", "/api/network", tok=None), 401, "UNAUTHORIZED")
+    expect("401 without login: POST settings/network", call("POST", "/api/settings/network", params=bad, tok=None),
+           401, "UNAUTHORIZED")
+    expect("403 FORBIDDEN without X-PrintDrive header: POST settings/network",
+           call("POST", "/api/settings/network", params=bad, csrf=False), 403, "FORBIDDEN")
+    u = role_token()
+    if u:
+        expect("FORBIDDEN_ROLE for user: GET /api/network", call("GET", "/api/network", tok=u), 403, "FORBIDDEN_ROLE")
+        expect("FORBIDDEN_ROLE for user: POST settings/network",
+               call("POST", "/api/settings/network", params=bad, tok=u), 403, "FORBIDDEN_ROLE")
+    else:
+        skip("role checks for the network settings", "no temporary user possible")
+
+    r, j = get_network()
+    cur = j.get("current")
+    ok = check("GET /api/network: ok, dhcp (bool), ip/mask/gateway/dns/hostname (strings), current {ip, mask, gateway, "
+               "dns}, connected (bool)",
+               okr(r) and isinstance(j.get("dhcp"), bool) and all(isinstance(j.get(k), str) for k in NET_KEYS + ("hostname",))
+               and isinstance(cur, dict) and all(isinstance(cur.get(k), str) for k in NET_KEYS)
+               and isinstance(j.get("connected"), bool), r.text[:200])
+    if not ok:
+        return
+    orig = net_settings(j)
+    dhcp, conn = orig["dhcp"], j["connected"]
+    print(f"       network: {'DHCP' if dhcp else 'static ' + orig['ip'] + ' / ' + orig['mask'] + ' gw ' + orig['gateway']}"
+          f", hostname {orig['hostname']!r}, connected {conn}, current IP {cur['ip'] or '-'}")
+    check("hostname follows the rules (1-31 characters a-z 0-9 '-', no '-' at either end)",
+          HOSTNAME_RE.fullmatch(orig["hostname"]) is not None, orig["hostname"])
+    check("stored addresses: empty or IPv4", all(orig[k] == "" or is_ip(orig[k]) for k in NET_KEYS), orig)
+    if not dhcp:
+        check("static: ip, mask, gateway, dns stored", all(is_ip(orig[k]) for k in NET_KEYS), orig)
+    if conn:
+        check("connected: current ip, mask, gateway are IPv4 addresses", all(is_ip(cur[k]) for k in ("ip", "mask", "gateway")),
+              cur)
+        if not dhcp:
+            check("static and connected: current = stored addresses", all(cur[k] == orig[k] for k in ("ip", "mask", "gateway")),
+                  (cur, orig))
+    else:
+        check("not connected: current addresses empty", all(cur[k] == "" for k in NET_KEYS), cur)
+    w = status().get("wifi") or {}
+    check("status.wifi.dhcp (bool) = GET /api/network dhcp", w.get("dhcp") is dhcp, w.get("dhcp"))
+    check("status.wifi.hostname = GET /api/network hostname", w.get("hostname") == orig["hostname"], w.get("hostname"))
+    if conn:
+        check("status.wifi.ip = current ip", w.get("ip") == cur["ip"], (w.get("ip"), cur["ip"]))
+
+    mock = target_is_mock()
+    full = mock or a.network_test
+    S.net_orig = orig                             # from here on the cleanup restores if anything was applied
+    # Base of the static probes: the current addresses (if a check were missing, nothing but the probed field differs)
+    if conn and all(is_ip(cur[k]) for k in ("ip", "mask", "gateway")):
+        base = {k: cur[k] for k in ("ip", "mask", "gateway")}
+    elif not dhcp:
+        base = {k: orig[k] for k in ("ip", "mask", "gateway")}
+    else:
+        base = {"ip": "192.168.77.10", "mask": "255.255.255.0", "gateway": "192.168.77.1"}
+    st_p = {"dhcp": "0", **base}
+    host_keep = {"hostname": orig["hostname"]}
+    # 1) probes that cannot be applied even by a firmware without the check (missing or unparseable values)
+    net_probe("no parameter -> BAD_REQUEST (dhcp)", {}, "dhcp")
+    net_probe("dhcp=2 -> BAD_REQUEST (dhcp)", {"dhcp": "2"}, "dhcp")
+    net_probe("dhcp=0 without addresses -> BAD_REQUEST (ip)", {"dhcp": "0"}, "ip")
+    net_probe("dhcp=0 without mask -> BAD_REQUEST (mask)", {"dhcp": "0", "ip": base["ip"], "gateway": base["gateway"]}, "mask")
+    net_probe("dhcp=0 without gateway -> BAD_REQUEST (gateway)", {"dhcp": "0", "ip": base["ip"], "mask": base["mask"]}, "gateway")
+    for field, val in (("ip", "192.168.1.256"), ("ip", "abc"), ("mask", "255.255.255.256"), ("gateway", "999.1.1.1"),
+                       ("dns", "1.2.3.999")):
+        net_probe(f"{field}={val} (no IPv4 address) -> BAD_REQUEST ({field})", {**st_p, field: val}, field)
+    # 2) host name probes: same mode and addresses as now, only the name is invalid
+    keep = net_params(orig)
+    for label, h in (("leading hyphen", "-datadrive"), ("trailing hyphen", "datadrive-"), ("underscore", "data_drive"),
+                     ("32 characters", "d" * 32), ("dot", "data.drive")):
+        net_probe(f"hostname {label} -> BAD_REQUEST (hostname)", {**keep, "hostname": h}, "hostname")
+    # 3) probes a firmware without the check WOULD apply (address unusable): mock or --network-test only. They start
+    #    from the current addresses, so an accepted gateway probe at least keeps the address.
+    if full:
+        ip, mask = ip_int(base["ip"]), ip_int(base["mask"])
+        net = ip & mask
+        host_bits = ~mask & 0xFFFFFFFF
+        other = ip_str(((net + host_bits + 1) & 0xFFFFFFFF) | 1)        # .1 of the next subnet
+        for label, over, field in (("mask 255.0.255.0 (not contiguous)", {"mask": "255.0.255.0"}, "mask"),
+                                   ("mask 255.255.255.255 (no host part)", {"mask": "255.255.255.255"}, "mask"),
+                                   (f"gateway {other} (another subnet)", {"gateway": other}, "gateway"),
+                                   ("ip = network address", {"ip": ip_str(net)}, "ip"),
+                                   ("ip = broadcast address", {"ip": ip_str(net | host_bits)}, "ip")):
+            net_probe(f"{label} -> BAD_REQUEST ({field})", {**st_p, **over, **host_keep}, field)
+    else:
+        skip("probes of mask / subnet / network and broadcast address",
+             "only on the mock or with --network-test (a firmware without that check would apply the setting)")
+    r, j2 = get_network()
+    check("rejected requests changed nothing (GET /api/network as before)",
+          net_settings(j2) == orig and j2.get("current") == cur, net_settings(j2))
+    if S.net_orig is None:                        # restored after an accepted probe: stop here
+        return
+
+    if not full:
+        S.net_orig = None
+        skip("apply and restore network settings", "opt-in with --network-test")
+        return
+    tmp_host = f"apitest-{os.urandom(3).hex()}"
+    if dhcp and not (conn and all(is_ip(cur[k]) for k in ("ip", "mask", "gateway"))):
+        S.net_orig = None
+        skip("switch to static and back", "not connected: no current address to keep")
+        return
+    if dhcp:
+        stat = {k: cur[k] for k in ("ip", "mask", "gateway")}
+        dns = cur["dns"] if is_ip(cur["dns"]) else ""
+        params = {"dhcp": "0", **stat, "hostname": tmp_host, **({"dns": dns} if dns else {})}
+        what = f"switch to static with the current addresses ({stat['ip']}) and host name {tmp_host}"
+    else:
+        stat = {k: orig[k] for k in ("ip", "mask", "gateway")}
+        dns = orig["dns"]
+        params = net_params(orig, hostname=tmp_host)
+        what = f"same static addresses, host name {tmp_host}"
+    r = net_post(params)
+    jj = jr(r)
+    check(f"{what}: 200 with restart false, ip = static address, hostname", okr(r) and jj.get("restart") is False
+          and jj.get("ip") == stat["ip"] and jj.get("hostname") == tmp_host, r.text[:160])
+    check("... device answers again (same address)", net_back_online("the switch"))
+    j3 = get_network()[1]
+    check("... GET /api/network: dhcp false, the addresses, the new host name",
+          j3.get("dhcp") is False and all(j3.get(k) == stat[k] for k in ("ip", "mask", "gateway"))
+          and (not dns or j3.get("dns") == dns) and j3.get("hostname") == tmp_host, net_settings(j3))
+    if j3.get("connected"):
+        check("... current ip = static ip", (j3.get("current") or {}).get("ip") == stat["ip"], j3.get("current"))
+    w = status().get("wifi") or {}
+    check("... status.wifi: dhcp false, hostname new", w.get("dhcp") is False and w.get("hostname") == tmp_host, w)
+    # dns left out: the gateway serves as DNS server
+    r = net_post({"dhcp": "0", **stat, "hostname": tmp_host})
+    check("same static addresses without dns: 200", okr(r), r.text[:120])
+    net_back_online("the change without dns")
+    j4 = get_network()[1]
+    check("... DNS server = gateway (stored dns empty or the gateway; current dns the gateway)",
+          j4.get("dns") in ("", stat["gateway"]) and (not j4.get("connected")
+                                                       or (j4.get("current") or {}).get("dns") == stat["gateway"]),
+          (j4.get("dns"), j4.get("current")))
+    if not dhcp:
+        skip("switch a static device to DHCP", "the address could change and the device would be lost to the test")
+    net_restore("end of the round trip")
+    if dhcp and not S.net_orig:
+        note("the stored static values (unused with DHCP) now hold the addresses of the test; the API has no way "
+             "to clear them")
+
+
+def sig_sector():
+    """A 4096-byte signature sector as espsecure.py appends it: one Secure Boot V2 block (magic 0xE7, version 2) with
+    a random digest, public key and signature but a valid CRC-32, so the device sees "signed - with a foreign key"."""
+    blk = b"\xE7\x02\x00\x00" + os.urandom(1192)
+    blk += (zlib.crc32(blk) & 0xFFFFFFFF).to_bytes(4, "little") + bytes(16)
+    return blk + b"\xFF" * (4096 - len(blk))
+
+
+def probe_image(size):
+    """An ESP32-S3 image header (magic 0xE9, chip id 9) followed by zeros: passes the header check, never boots."""
+    hdr = bytearray(24)
+    hdr[0] = 0xE9
+    hdr[12:14] = (9).to_bytes(2, "little")          # ESP_CHIP_ID_ESP32S3
+    return bytes(hdr) + bytes(size - len(hdr))
+
+
+def sec_otasig(a):
+    head("19. Signed updates (API v6)")
+    st = status()
+    ota = st.get("ota") or {}
+    ok = check("status.ota has signed_required (bool) and key_id (string)",
+               isinstance(ota.get("signed_required"), bool) and isinstance(ota.get("key_id"), str), ota)
+    if not ok:
+        return
+    req, kid = ota["signed_required"], ota["key_id"]
+    print(f"       signed updates required: {req}" + (f", key id {kid}" if req else ""))
+    if req:
+        check("key_id: 8 hex digits", re.fullmatch(r"[0-9a-fA-F]{8}", kid) is not None, kid)
+    else:
+        check("not required: key_id empty", kid == "", kid)
+    if not a.ota_probe:
+        skip("signature probes (unsigned / garbage signature)", "opt-in with --ota-probe")
+        return
+    if not req:
+        skip("signature probes (unsigned / garbage signature)", "signed_required is false (unsigned updates are accepted)")
+        return
+    part, up0 = ota.get("partition"), st.get("uptime_s", 0)
+    # A valid header and nothing valid behind it: never bootable, whatever the device checks first
+    img = probe_image(4096)
+    for label, body, code in (("image of 5000 bytes (no multiple of 4096: cannot carry a signature)", probe_image(5000),
+                               "UNSIGNED"),
+                              ("unsigned image (4096 bytes)", img, "UNSIGNED"),
+                              ("image signed with a foreign key (garbage signature block, valid CRC)", img + sig_sector(),
+                               "BAD_SIGNATURE")):
+        r = call("POST", "/api/ota", body=body, timeout=60, retry=False)
+        check(f"{label} refused: 422 {code} (or INVALID_FILE if the image check comes first)",
+              r.status_code == 422 and jcode(r) in (code, "INVALID_FILE"), f"{r.status_code} {jcode(r)}")
+        if jcode(r) == "INVALID_FILE":
+            note("the device answered INVALID_FILE: the signature check was not reached")
+    time.sleep(2)
+    st2 = status()
+    check("nothing flashed: same partition, no restart (uptime continues)",
+          (st2.get("ota") or {}).get("partition") == part and st2.get("uptime_s", 0) >= up0,
+          f"{part} -> {(st2.get('ota') or {}).get('partition')}, uptime {up0} -> {st2.get('uptime_s')}")
+
+
 # ------------------------------------------------------------------ cleanup
 
 def crypt_cleanup(a):
@@ -1918,6 +2344,8 @@ def cleanup(a):
             note("main session no longer valid, cannot clean up through the API")
             return
         crypt_cleanup(a)
+        if S.net_orig is not None and S.net_dirty:
+            net_restore("cleanup")
         if S.autolock_orig is not None:
             m, d = S.autolock_orig
             r = call("POST", "/api/settings/autolock", params={"minutes": str(m), "on_detach": "1" if d else "0"})
@@ -1983,12 +2411,15 @@ def cleanup(a):
 SECTIONS = {"users": sec_users, "devices": sec_devices, "files": sec_files, "wifi": sec_wifi, "status": sec_status,
             "drive": sec_drive, "scan": sec_scan, "crypt": sec_crypt, "https": sec_https,
             "crypt_test": sec_crypt_destructive, "time": sec_time, "autolock": sec_autolock, "lang": sec_lang,
-            "resume": sec_resume, "zip": sec_zip, "webdav": sec_webdav}
+            "resume": sec_resume, "zip": sec_zip, "webdav": sec_webdav,
+            "countdown": sec_countdown, "network": sec_network, "otasig": sec_otasig}
 V5_SECTIONS = ["time", "autolock", "lang", "resume", "zip", "webdav"]
+V6_SECTIONS = ["countdown", "network", "otasig"]
+GROUPS = {"v5": V5_SECTIONS, "v6": V6_SECTIONS}
 
 
 def main():
-    ap = argparse.ArgumentParser(description="End-to-end test of the WiFi DataDrive API v3 + v4 + v5")
+    ap = argparse.ArgumentParser(description="End-to-end test of the WiFi DataDrive API v3 + v4 + v5 + v6")
     ap.add_argument("host", help="HOST or HOST:PORT")
     ap.add_argument("--user", default="admin")
     ap.add_argument("--password", required=True)
@@ -2003,17 +2434,19 @@ def main():
                     help="DESTRUCTIVE: set up / lock / unlock / change / disable drive encryption (erases the drive)")
     ap.add_argument("--i-know-this-erases-the-drive", action="store_true", help="confirmation for --crypt-test")
     ap.add_argument("--keep-encrypted", action="store_true", help="with --crypt-test: stop before disable")
-    ap.add_argument("--only", help="comma-separated sections to run after the login, e.g. v5 or time,zip "
-                                   f"(names: {', '.join(SECTIONS)}, v5)")
+    ap.add_argument("--network-test", action="store_true",
+                    help="apply network settings and restore them (static with the current address and back)")
+    ap.add_argument("--only", help="comma-separated sections to run after the login, e.g. v5, v6 or time,zip "
+                                   f"(names: {', '.join(SECTIONS)}, v5, v6)")
     a = ap.parse_args()
     only = None
     if a.only:
         only = []
         for name in (x.strip().lower() for x in a.only.split(",") if x.strip()):
-            names = V5_SECTIONS if name == "v5" else [name]
+            names = GROUPS.get(name, [name])
             for n in names:
                 if n not in SECTIONS:
-                    ap.error(f"--only: unknown section '{n}' (known: {', '.join(SECTIONS)}, v5)")
+                    ap.error(f"--only: unknown section '{n}' (known: {', '.join(SECTIONS)}, v5, v6)")
                 if n not in only:
                     only.append(n)
         if "crypt_test" in only and not a.crypt_test:
@@ -2064,7 +2497,8 @@ def main():
                 fns = [sec_auth] + [SECTIONS[n] for n in only]
             else:
                 fns = [sec_auth, sec_users, sec_devices, sec_files, sec_wifi, sec_status, sec_drive, sec_scan, sec_crypt,
-                       sec_https, sec_time, sec_autolock, sec_lang, sec_resume, sec_zip, sec_webdav]
+                       sec_https, sec_time, sec_autolock, sec_lang, sec_resume, sec_zip, sec_webdav,
+                       sec_countdown, sec_network, sec_otasig]
                 if a.crypt_test:
                     fns.append(sec_crypt_destructive)
     except Abort as e:

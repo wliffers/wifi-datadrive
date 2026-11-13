@@ -1,10 +1,13 @@
 menu "DataDrive Wi-Fi"
 
     config PD_WIFI_HOSTNAME
-        string "Hostname (DHCP and mDNS)"
+        string "Default hostname (DHCP and mDNS)"
         default "datadrive"
         help
             The web interface is reachable as http://<hostname>.local where mDNS works.
+            Default only: the hostname can be changed in the web UI (stored in NVS) and goes
+            back to this value when the button is held for 10 s. Use 1-31 characters a-z,
+            0-9 and '-' (not first or last); anything else falls back to "datadrive".
 
     config PD_WIFI_AP_FALLBACK_S
         int "Start setup access point after this many seconds without connection"
