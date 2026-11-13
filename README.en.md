@@ -27,6 +27,10 @@
 </p>
 
 <p align="center">
+  <a href="https://buymeacoffee.com/wliffers"><img alt="Support LIO" src="assets/buymeacoffee-lio.svg" width="360"></a>
+</p>
+
+<p align="center">
   <a href="#features">Features</a> ·
   <a href="#use-cases">Use cases</a> ·
   <a href="#installation">Installation</a> ·
