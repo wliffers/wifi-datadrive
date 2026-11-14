@@ -58,7 +58,7 @@ them, without unplugging the stick. The same files are also reachable as a netwo
 the stick encrypts the memory card.
 
 The USB hosts tested are a Windows PC and a 3D printer: the Bambu Lab X2D recognised the stick and printed
-from it (without encryption). The project started out for this printer; today it is one use case. Other
+from it, also encrypted. The project started out for this printer; today it is one use case. Other
 devices are possible but untested, see [Use cases](#use-cases).
 
 The web interface comes in German and English and works on phones and PCs. It needs no internet
@@ -68,10 +68,10 @@ connection and no app.
 > Bambu Lab. The software is provided without warranty and without liability. Details are in the
 > [disclaimer](HAFTUNGSAUSSCHLUSS.md) (German and English).
 
-> **Status 2026-11-13.** The source carries version 0.6.0. It runs on the device: installed by an update
-> in the browser, tested with the API test (415/415) and with signed updates. 0.6.0 is the first
-> release. Some parts of 0.6.0 are still untested, for example a static IP address on the device and
-> the lock itself after the timeout. What exactly is tested is listed under
+> **Status 2026-11-14.** The source carries version 0.6.0, the first release. It runs on the device:
+> installed by an update in the browser and with the web flasher, tested with the API test (415/415) and
+> with signed updates. Also tried on the device: a static IP address with your own name, the lock after the
+> timeout and printing from an encrypted stick. What exactly is tested and what is not is listed under
 > [Tested and untested](#tested-and-untested).
 
 ## Features
@@ -157,7 +157,7 @@ reach the stick over Wi-Fi, and the stick stays plugged in.
 
 **Tested: 3D printer (Bambu Lab X2D).** The sliced file, for example a `.gcode.3mf`, goes from a PC or
 phone to the stick through the browser. The printer shows it and prints it. Tested without encryption
-(firmware 0.2.0 and 0.3.0); printing from an encrypted stick is untested. The steps are under
+(firmware 0.2.0 and 0.3.0) and with an encrypted stick unlocked by phone (0.6.0). The steps are under
 [Using it with a USB host](#using-it-with-a-usb-host).
 
 **Tested: Windows PC.** On Windows 11 the stick is a normal drive: copy, eject, re-plug.
@@ -192,7 +192,7 @@ device. How a device reacts to that is untested too. Results with other devices 
 4. Unplug the dongle once after flashing and plug it back in.
 
 The full image resets users, saved Wi-Fi networks and settings. The microSD card is not written. The
-flasher page is **untested** with a real device.
+flasher page is tested with a real dongle (0.6.0).
 
 Without a browser, use esptool:
 `python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin`
@@ -278,8 +278,8 @@ X2D reads a file completely at the start or keeps reading from the stick is not 
 the drive on the printer first.
 
 Tested by the author on the Bambu Lab X2D: drive recognised, `.gcode.3mf` uploaded from the browser shown
-and printed (firmware 0.2.0 and 0.3.0, microSD 64 GB FAT32, without encryption). Nothing was measured.
-Other printers are untested.
+and printed (firmware 0.2.0 and 0.3.0, microSD 64 GB FAT32, without encryption), with 0.6.0 also from an
+encrypted stick unlocked by phone. Nothing was measured. Other printers are untested.
 
 ## Setting up and using encryption
 
@@ -304,8 +304,7 @@ without the drive password. While the drive is unlocked it does not protect.
    host gets the drive afterwards.
 3. Open the file on the device, on a printer for example to print it.
 
-On the 3D printer: printing on the X2D from an encrypted stick unlocked by phone is **untested**. Do a test
-print before an important one.
+On the 3D printer: the X2D prints from an encrypted stick unlocked by phone (tested with 0.6.0).
 
 **Automatic lock** (Settings › Speicher & USB, off by default): the drive locks itself after the chosen
 time without access and, if you want, as soon as the USB host disconnects. From 0.6.0 the time only runs
@@ -314,7 +313,8 @@ does not lose it in the middle of its work (during a print, for example); switch
 manager starts the time again. While an upload runs, it waits. The start page shows the time left; "Zeit zurücksetzen" (reset time) starts it again. The
 settings and the time left are tested on the device (with 15 minutes: 895 s after a few seconds, 900 s
 after the reset), and so is the "file manager only" rule (5 minutes: countdown in the file manager, none in
-USB mode, full period again after switching back). The lock itself after the timeout is **untested**.
+USB mode, full period again after switching back). The lock after the timeout is tested on the device;
+the lock when the USB host disconnects is **untested**.
 
 **Forgot the drive password:** unlock with the recovery key, then set a new drive password under
 **Settings › Sicherheit › Verschlüsselung**. If both password and recovery key are lost, the data is gone.
@@ -418,7 +418,7 @@ built or runs against the mock server.
 | USB drive on Windows 11: copy, eject, re-plug | tested |
 | microSD 64 GB FAT32 | tested (one card) |
 | Bambu Lab X2D without encryption: drive recognised, file shown, printed | reported by the author (0.2.0 and 0.3.0), no measurements |
-| Printing on the X2D from an encrypted, unlocked stick | untested |
+| Printing on the X2D from an encrypted, unlocked stick (0.6.0) | reported by the author (2026-11-14), no measurements |
 | Long prints, switching during a print, read-only mode | untested |
 | Other USB hosts: other printers, laser engravers, CNC controllers, TVs, media players, car radios, computers running macOS or Linux | untested |
 | Login, users, folders, several Wi-Fi networks (0.3.0) | tested by the API test on the device (182/182) |
@@ -429,15 +429,15 @@ built or runs against the mock server.
 | HTTPS (0.5.0) | basic function measured on the device; with 0.6.0 67 KiB free memory when idle; iPhone with certificate, WebDAV over `https`, long-term operation untested |
 | Network drive with Explorer, Finder or phone apps | untested |
 | Time left until lock and "reset time" (0.6.0) | tested via the API on the device (15 minutes: 895 s, 900 s after the reset) |
-| Automatic lock after the timeout | untested |
+| Automatic lock after the timeout (0.6.0) | tested on the device (reported by the author, 2026-11-14); lock when the USB host disconnects untested |
 | Lock by time only in the file manager, no countdown in USB mode (0.6.0) | tested via the API on the device (file manager 294 s, USB mode -1, back again 293 s), plus API and browser test against the mock server |
 | Reading the network settings (0.6.0): DHCP, address, mask, gateway, DNS, name | tested on the device |
-| Setting a static IP address or a new network name (0.6.0) | untested (on purpose: a mistake would need the 10-second button on site) |
+| Setting a static IP address and a new network name (0.6.0) | tested on the device (reported by the author, 2026-11-14); reset with the button untested |
 | Setup page opening by itself, Wi-Fi scan on the setup network | untested |
 | Button (QR code, switching, reset of users and network), home screen icon, "Send to", iPhone shortcut | untested |
 | Firmware update in the browser (0.5.0 to 0.6.0) | tested (once; return after a failed start untested) |
 | Signed updates (0.6.0): unsigned and foreign-signed file refused | tested on the device (`UNSIGNED`, `BAD_SIGNATURE`, no restart) |
-| Web flasher | untested |
+| Web flasher (0.6.0) | tested with a real dongle (reported by the author, 2026-11-14) |
 | Web interface (0.6.0) | browser test against the mock server passed (Chromium, PC 878/878, phone profile 895/895); not tested systematically on a real phone |
 | Error "Stick nicht erreichbar" (stick not reachable) after changing the lock time (HTTPS) | fixed with a request queue, reproduced with a model that accepts only one connection; not yet re-checked on the iPhone |
 

@@ -7,6 +7,19 @@ Alle nennenswerten Änderungen an WiFi DataDrive. Die Versionsnummer steht in
 Das Datum ist der Tag, an dem die Version entstand. „Am Gerät geprüft“ heißt: auf dem LILYGO T-Dongle-S3 mit LCD, Ergebnisse in
 [docs/05_testprotokoll.md](docs/05_testprotokoll.md).
 
+## Nachträge zu 0.6.0
+
+### Geprüft (2026-11-14, Release 0.6.0, keine neue Version)
+Rückmeldungen des Autors vom eigenen Gerät, ohne Messwerte
+([docs/05_testprotokoll.md](docs/05_testprotokoll.md) Phase 11):
+- Feste IP-Adresse und eigener Name im Netzwerk eingestellt.
+- Das Laufwerk sperrt sich nach Ablauf der eingestellten Zeit.
+- Der Bambu Lab X2D druckt von einem verschlüsselten, per Handy entsperrten Stick.
+- Der Browser-Flasher installiert 0.6.0 auf einem echten Dongle.
+
+Weiter nicht geprüft: zurück auf DHCP, das Zurücksetzen per Taste, der Zustand „wartet“, das Sperren beim
+Trennen des USB-Geräts.
+
 ## [0.6.0] – 2026-11-13
 
 ### Neu

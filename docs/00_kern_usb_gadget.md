@@ -272,7 +272,7 @@ Prüfstand: **verifiziert** = am Gerät geprüft (Ergebnis in [05](05_testprotok
   diesem Board ohne PSRAM kann der 16-KiB-TLS-Puffer nicht angelegt werden, Uploads scheitern.
   Vorgemerkt in [14](14_vormerkliste.md).
 - **Noch nicht geprüft:** Druck am Bambu X2D von einem verschlüsselten, per Handy entsperrten
-  Stick; Stromausfall während des Einrichtens oder Passwortwechsels; Verschlüsselung des
+  Stick (seit 2026-11-14 mit 0.6.0 vom Besitzer bestätigt); Stromausfall während des Einrichtens oder Passwortwechsels; Verschlüsselung des
   internen Flashs (ohne Karte).
 
 ## Version 0.5.0 in Kurzform
@@ -288,7 +288,7 @@ API-Test am Gerät 354/354 (6 übersprungen). Schnittstelle: [15](15_api_v5.md),
   UTC-Sekunden. Der Abschnitt „Weboberfläche und API“ oben („Das Gerät hat keine Uhr“) gilt seit
   0.5.0 nur noch ohne Internet.
 - **Automatisches Sperren** des verschlüsselten Laufwerks (Voreinstellung aus): Einstellungen
-  verifiziert, Sperren nach Ablauf der Zeit **noch nicht geprüft**. Seit 0.6.0 läuft die Zeit nur in der
+  verifiziert, Sperren nach Ablauf der Zeit mit 0.6.0 am Gerät bestätigt (2026-11-14). Seit 0.6.0 läuft die Zeit nur in der
   Dateiverwaltung; am Drucker (USB-Modus) sperrt der Zeitablauf nie.
 - **Display-Sprache** folgt der Weboberfläche: Einstellung verifiziert, englische Texte auf dem
   LCD **noch nicht geprüft**.

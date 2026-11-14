@@ -182,7 +182,7 @@ Ziel: Das Laufwerk lässt sich verschlüsseln; WLAN-Suche; Anzeige „LIO“. Pl
 | Geschwindigkeit verschlüsselt: USB schreiben 820 KB/s, USB lesen 659 KB/s, Web-Upload 1,0 MB/s | **verifiziert**; Vergleich mit unverschlüsselt bei Lesen und Upload **noch nicht geprüft** |
 | Datei per WLAN verschlüsselt auf den Stick, danach auf dem PC bitgleich | **verifiziert** |
 | Stromausfall während Einrichtung oder Passwortwechsel | **noch nicht geprüft** |
-| Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** |
+| Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** (mit 0.6.0 vom Besitzer bestätigt, 2026-11-14) |
 | Verschlüsselung auf dem internen Flash (ohne Karte) | **noch nicht geprüft** |
 | WLAN-Suche bei bestehender Verbindung (5 Netze in 2,9 s) | **verifiziert** |
 | WLAN-Suche im Einrichtungsmodus | **noch nicht geprüft** |
@@ -202,7 +202,7 @@ Build lief ohne Fehler. Ergebnisse: [05](05_testprotokoll.md) Phase 9.
 | API-Test Version 3 bis 5 am Gerät | **verifiziert**: 354/354, 6 übersprungen; erster Lauf 349/355, Abweichungen behoben |
 | Netzlaufwerk (WebDAV) | per API-Test **verifiziert**; mit echten Programmen **noch nicht geprüft** |
 | Uhrzeit aus dem Netz (NTP) mit Zeitzone | **verifiziert** (Uhr nach dem Start gestellt) |
-| Automatisches Sperren | Einstellungen **verifiziert**; Sperren nach Ablauf der Zeit **noch nicht geprüft** |
+| Automatisches Sperren | Einstellungen **verifiziert**; Sperren nach Ablauf der Zeit **noch nicht geprüft** (mit 0.6.0 am Gerät bestätigt, 2026-11-14) |
 | Display folgt der Sprache der Weboberfläche | Einstellung **verifiziert**; englische Texte auf dem LCD **noch nicht geprüft** |
 | Einrichtungsseite öffnet sich von selbst | gebaut; mit echtem Handy **noch nicht geprüft** |
 | Abgebrochene Uploads fortsetzen | **verifiziert** (API-Test) |

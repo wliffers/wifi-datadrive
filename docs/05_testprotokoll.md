@@ -21,7 +21,8 @@ wie sie am Testtag eingetragen wurden, und nennen deshalb zum Teil die alten Nam
 Stand 0.6.0: Die Ergebnisse für Anmeldung, Verschlüsselung und WLAN-Suche stehen in Phase 7 und 8,
 die für 0.5.0 (Netzlaufwerk, Uhrzeit, automatisches Sperren, Upload fortsetzen, ZIP, HTTPS) in
 Phase 9, die für 0.6.0 (Update über den Browser, signierte Updates, Restzeit, Netzwerkeinstellungen,
-neue Oberfläche) in Phase 10 am Ende dieses Dokuments. Die Übersicht gilt für 0.2.0: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
+neue Oberfläche) in Phase 10, die Gerätetests des Besitzers mit dem Release 0.6.0 (feste Adresse,
+Sperren nach Zeit, Drucken vom verschlüsselten Stick, Browser-Flasher) in Phase 11 am Ende dieses Dokuments. Die Übersicht gilt für 0.2.0: Phase 0 bestanden; Phase 1 bestanden außer T1.4; Phase 2 mit
 `tools/api_test.py` weitgehend bestanden (T2.11: Flash 18/18, microSD 21/21), offen T2.2 (3),
 T2.3, T2.8, Flash-Modus per Web; Phase 5 microSD bestanden (Grundfunktion); Phase 6
 (Umbenennung, API v2 28/28, gzip-Auslieferung) bestanden, Browser-Test der neuen
@@ -705,16 +706,33 @@ Handy-Profil 895/895) und am Gerät **bestanden** (2026-11-13, signierte 0.6.0 p
 | Nr. | Prüfpunkt | Stand nach 0.6.0 |
 |---|---|---|
 | T7.7 | Firmware-Update über die Weboberfläche | erledigt durch T10.1 |
-| T9.7 | Automatisches Sperren am Gerät | Restzeit geprüft (T10.4); das Sperren selbst, beim Trennen des USB-Geräts und nicht während eines Schreibvorgangs **noch nicht geprüft** |
+| T9.7 | Automatisches Sperren am Gerät | Restzeit geprüft (T10.4); das Sperren nach Ablauf der Zeit bestanden (T11.2, 2026-11-14); beim Trennen des USB-Geräts und nicht während eines Schreibvorgangs **noch nicht geprüft** |
 
-### Weiter offen nach 0.6.0
+## Phase 11 – Gerätetests des Besitzers mit dem Release 0.6.0
+
+Stand 2026-11-14. Firmware: das veröffentlichte, signierte Release 0.6.0, keine Änderung an der
+Firmware. Der Besitzer hat die folgenden Punkte am eigenen Gerät ausprobiert und „geht alles“
+zurückgemeldet. Es sind Rückmeldungen ohne Messwerte und ohne Protokoll einzelner Schritte.
+
+| Nr. | Prüfpunkt | Ergebnis | Datum |
+|---|---|---|---|
+| T11.1 | Feste IP-Adresse und eigener Name im Netzwerk einstellen (= T10.8 ohne „zurück auf DHCP“) | **bestanden** (Rückmeldung des Besitzers) | 2026-11-14 |
+| T11.2 | Laufwerk sperrt nach Ablauf der Zeit (= T10.5, T9.7 erster Teil) | **bestanden** (Rückmeldung des Besitzers) | 2026-11-14 |
+| T11.3 | Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick (= T8.14) | **bestanden** (Rückmeldung des Besitzers) | 2026-11-14 |
+| T11.4 | Browser-Flasher (GitHub Pages) mit einem echten Dongle | **bestanden** (Rückmeldung des Besitzers); die Seite liefert das Gesamtabbild des Releases aus (SHA-256 `c5382ebd…`, bitgleich) | 2026-11-14 |
+
+Weiter nicht geprüft aus diesen Bereichen: zurück auf DHCP, die Prüfungen von Maske und Subnetz
+(`--network-test`), das Zurücksetzen per Taste (T10.9), der Zustand `waiting` (T10.6), Sperren beim
+Trennen des USB-Geräts und nicht während eines Schreibvorgangs (T9.7).
+
+### Weiter offen nach den Tests vom 2026-11-14
 
 | Nr. | Prüfpunkt | Ergebnis |
 |---|---|---|
-| T10.8 | Netzwerkeinstellungen am Gerät ändern | **noch nicht geprüft** |
-| T10.5 | Sperren nach Ablauf der Zeit | **noch nicht geprüft** |
+| T10.8 | Netzwerkeinstellungen: zurück auf DHCP, Prüfungen von Maske und Subnetz | **noch nicht geprüft** (feste Adresse und Name: T11.1) |
+| T10.9 | Taste 10 s halten setzt Benutzer und Netzwerkeinstellungen zurück | **noch nicht geprüft** |
+| T10.6 | Zustand `waiting` | **noch nicht geprüft** |
 | T10.12 | Warteschlange am iPhone nachprüfen | **noch nicht geprüft** |
-| T8.14 | Drucken am Bambu X2D von einem verschlüsselten, per Handy entsperrten Stick | **noch nicht geprüft** |
 | T9.10 | Einrichtungsseite mit einem echten Handy | **noch nicht geprüft** |
 | T9.9 | Englische Texte auf dem LCD | **noch nicht geprüft** |
 | T9.11 | HTTPS: Zertifikat auf dem iPhone, Dauerbetrieb über viele Stunden | **noch nicht geprüft** |

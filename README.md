@@ -57,7 +57,7 @@ benennst sie um, verschiebst und löschst sie, ohne den Stick abzuziehen. Diesel
 auch als Netzlaufwerk, und auf Wunsch verschlüsselt der Stick die Speicherkarte.
 
 Als USB-Gerät geprüft sind ein Windows-PC und ein 3D-Drucker: Der Bambu Lab X2D hat den Stick erkannt und
-davon gedruckt (ohne Verschlüsselung). Für diesen Drucker ist das Projekt entstanden; heute ist er ein
+davon gedruckt, auch verschlüsselt. Für diesen Drucker ist das Projekt entstanden; heute ist er ein
 Anwendungsbeispiel. Andere Geräte sind denkbar, aber nicht geprüft, siehe
 [Anwendungsbeispiele](#anwendungsbeispiele).
 
@@ -68,11 +68,11 @@ keine App.
 > Espressif oder Bambu Lab. Die Software wird ohne Gewährleistung und ohne Haftung bereitgestellt.
 > Einzelheiten stehen im [Haftungsausschluss](HAFTUNGSAUSSCHLUSS.md).
 
-> **Stand 2026-11-13.** Der Quelltext trägt die Version 0.6.0. Sie läuft am Gerät: per Update über den
-> Browser installiert, mit dem API-Test geprüft (415/415) und mit signierten Updates. 0.6.0 ist das erste
-> Release. Einiges ist auch in 0.6.0 noch nicht geprüft, zum Beispiel eine feste IP-Adresse am
-> Gerät und das Sperren nach Ablauf der Zeit. Was genau geprüft ist, steht unter
-> [Geprüft und nicht geprüft](#geprüft-und-nicht-geprüft).
+> **Stand 2026-11-14.** Der Quelltext trägt die Version 0.6.0, das erste Release. Sie läuft am Gerät: per
+> Update über den Browser und über den Browser-Flasher installiert, mit dem API-Test geprüft (415/415) und
+> mit signierten Updates. Am Gerät ausprobiert sind auch eine feste IP-Adresse mit eigenem Namen, das
+> Sperren nach Ablauf der Zeit und das Drucken von einem verschlüsselten Stick. Was genau geprüft ist und
+> was nicht, steht unter [Geprüft und nicht geprüft](#geprüft-und-nicht-geprüft).
 
 ## Funktionen
 
@@ -160,7 +160,7 @@ per WLAN auf den Stick, und der Stick bleibt im Gerät.
 
 **Geprüft: 3D-Drucker (Bambu Lab X2D).** Die geslicte Datei, zum Beispiel eine `.gcode.3mf`, kommt per
 Browser vom PC oder Handy auf den Stick. Der Drucker zeigt sie an und druckt sie. Geprüft ohne
-Verschlüsselung (Firmware 0.2.0 und 0.3.0); Drucken von einem verschlüsselten Stick ist nicht geprüft.
+Verschlüsselung (Firmware 0.2.0 und 0.3.0) und mit verschlüsseltem, per Handy entsperrtem Stick (0.6.0).
 Die Schritte stehen unter [Am USB-Gerät benutzen](#am-usb-gerät-benutzen).
 
 **Geprüft: Windows-PC.** Unter Windows 11 ist der Stick ein normales Laufwerk: kopieren, auswerfen, neu
@@ -197,7 +197,7 @@ anderen Geräten sind als [Rückmeldung](#rückmeldungen) willkommen.
 4. Zieh den Dongle nach dem Flashen einmal ab und steck ihn wieder ein.
 
 Das Gesamtabbild setzt Benutzer, gespeicherte WLANs und Einstellungen zurück. Die microSD-Karte wird
-dabei nicht beschrieben. Die Flasher-Seite ist mit einem echten Gerät **noch nicht geprüft**.
+dabei nicht beschrieben. Die Flasher-Seite ist mit einem echten Dongle geprüft (0.6.0).
 
 Ohne Browser geht es mit esptool:
 `python -m esptool --chip esp32s3 write_flash 0x0 wifi-datadrive-vX.Y.Z-esp32s3-merged.bin`
@@ -284,8 +284,9 @@ X2D eine Datei beim Start ganz einliest oder währenddessen weiter vom Stick lie
 Sicherer ist es, das Laufwerk vorher am Drucker auszuwerfen.
 
 Am Bambu Lab X2D hat der Autor geprüft: Laufwerk erkannt, per Browser hochgeladene `.gcode.3mf` angezeigt
-und gedruckt (Firmware 0.2.0 und 0.3.0, microSD 64 GB FAT32, ohne Verschlüsselung). Gemessen wurde dabei
-nichts. Andere Drucker sind nicht geprüft.
+und gedruckt (Firmware 0.2.0 und 0.3.0, microSD 64 GB FAT32, ohne Verschlüsselung), mit 0.6.0 auch von
+einem verschlüsselten, per Handy entsperrten Stick. Gemessen wurde dabei nichts. Andere Drucker sind
+nicht geprüft.
 
 ## Verschlüsselung einrichten und benutzen
 
@@ -314,8 +315,7 @@ schützt sie nicht.
    USB-Gerät bekommt das Laufwerk danach.
 3. Öffne die Datei am Gerät, am Drucker zum Beispiel zum Drucken.
 
-Am 3D-Drucker: Dass der X2D von einem verschlüsselten, per Handy entsperrten Stick druckt, ist **noch
-nicht geprüft**. Mach vor einem wichtigen Druck einen Probedruck.
+Am 3D-Drucker: Der X2D druckt von einem verschlüsselten, per Handy entsperrten Stick (geprüft mit 0.6.0).
 
 **Automatisch sperren** (Einstellungen › Speicher & USB, Voreinstellung aus): Das Laufwerk sperrt sich
 nach der gewählten Zeit ohne Zugriff und, wenn du willst, sobald das USB-Gerät getrennt wird. Die Zeit
@@ -324,8 +324,8 @@ nicht nach Zeit, damit das Gerät es nicht mitten in der Arbeit verliert (etwa w
 der Wechsel zurück in die Dateiverwaltung startet die Zeit neu. Während ein Upload läuft, wartet es. Die Startseite zeigt die Restzeit; „Zeit zurücksetzen“ startet
 sie neu. Die Einstellungen und die Restzeit sind am Gerät geprüft (bei 15 Minuten nach wenigen Sekunden
 895 s, nach dem Zurücksetzen 900 s), die Regel „nur in der Dateiverwaltung“ ebenfalls (5 Minuten: Countdown in der Dateiverwaltung, im
-USB-Modus keiner, nach dem Zurückschalten volle Zeit). Das Sperren nach Ablauf der Zeit selbst ist
-**noch nicht geprüft**.
+USB-Modus keiner, nach dem Zurückschalten volle Zeit). Das Sperren nach Ablauf der Zeit ist am Gerät
+geprüft; das Sperren beim Trennen des USB-Geräts ist **noch nicht geprüft**.
 
 **Passwort vergessen:** Entsperre mit dem Wiederherstellungsschlüssel und lege danach unter
 **Einstellungen › Sicherheit › Verschlüsselung** ein neues Laufwerks-Passwort fest. Sind Passwort und
@@ -433,7 +433,7 @@ gebaut ist oder am Testserver läuft.
 | USB-Laufwerk unter Windows 11: kopieren, auswerfen, neu einstecken | geprüft |
 | microSD 64 GB FAT32 | geprüft (eine Karte) |
 | Bambu Lab X2D ohne Verschlüsselung: Laufwerk erkannt, Datei angezeigt, gedruckt | Rückmeldung des Autors (0.2.0 und 0.3.0), keine Messung |
-| Drucken am X2D von einem verschlüsselten, entsperrten Stick | nicht geprüft |
+| Drucken am X2D von einem verschlüsselten, entsperrten Stick (0.6.0) | Rückmeldung des Autors (2026-11-14), keine Messung |
 | Lange Drucke, Umschalten während eines Drucks, Nur-Lese-Modus | nicht geprüft |
 | Andere USB-Geräte: andere Drucker, Lasergravierer, CNC-Steuerungen, Fernseher, Mediaplayer, Autoradios, Rechner mit macOS oder Linux | nicht geprüft |
 | Anmeldung, Benutzer, Ordner, mehrere WLANs (0.3.0) | geprüft per API-Test am Gerät (182/182) |
@@ -444,15 +444,15 @@ gebaut ist oder am Testserver läuft.
 | HTTPS (0.5.0) | Grundfunktion am Gerät gemessen; mit 0.6.0 67 KiB freier Speicher im Leerlauf; iPhone mit Zertifikat, WebDAV über `https`, Dauerbetrieb nicht geprüft |
 | Netzlaufwerk mit Explorer, Finder oder Handy-Apps | nicht geprüft |
 | Restzeit bis zum Sperren und „Zeit zurücksetzen“ (0.6.0) | geprüft per API am Gerät (15 Minuten: 895 s, nach dem Zurücksetzen 900 s) |
-| Automatisches Sperren nach Ablauf der Zeit | nicht geprüft |
+| Automatisches Sperren nach Ablauf der Zeit (0.6.0) | geprüft am Gerät (Rückmeldung des Autors, 2026-11-14); Sperren beim Trennen des USB-Geräts nicht geprüft |
 | Sperren nach Zeit nur in der Dateiverwaltung, im USB-Modus kein Countdown (0.6.0) | geprüft per API am Gerät (Dateiverwaltung 294 s, USB-Modus -1, zurück 293 s), dazu API- und Browser-Test gegen den Testserver |
 | Netzwerkeinstellungen lesen (0.6.0): DHCP, Adresse, Maske, Gateway, DNS, Name | geprüft am Gerät |
-| Feste IP-Adresse oder neuen Namen im Netzwerk einstellen (0.6.0) | nicht geprüft (bewusst: ein Fehler bräuchte die 10-Sekunden-Taste vor Ort) |
+| Feste IP-Adresse und neuen Namen im Netzwerk einstellen (0.6.0) | geprüft am Gerät (Rückmeldung des Autors, 2026-11-14); Zurücksetzen per Taste nicht geprüft |
 | Einrichtungsseite öffnet sich von selbst, WLAN-Suche im Einrichtungs-WLAN | nicht geprüft |
 | Taste (QR-Code, Umschalten, Zurücksetzen von Benutzern und Netzwerk), App-Symbol am Handy, „Senden an“, iPhone-Kurzbefehl | nicht geprüft |
 | Firmware-Update über den Browser (0.5.0 auf 0.6.0) | geprüft (einmal; Rückkehr nach einem Fehlstart nicht geprüft) |
 | Signierte Updates (0.6.0): unsignierte und fremd signierte Datei abgewiesen | geprüft am Gerät (`UNSIGNED`, `BAD_SIGNATURE`, kein Neustart) |
-| Browser-Flasher | nicht geprüft |
+| Browser-Flasher (0.6.0) | geprüft mit einem echten Dongle (Rückmeldung des Autors, 2026-11-14) |
 | Weboberfläche (0.6.0) | Browser-Test gegen den Testserver bestanden (Chromium, PC 878/878, Handy-Profil 895/895); an einem echten Handy nicht systematisch geprüft |
 | Fehler „Stick nicht erreichbar“ nach Ändern der Sperrzeit (HTTPS) | behoben mit einer Warteschlange für Anfragen, nachgestellt mit einem Modell, das nur eine Verbindung annimmt; am iPhone noch nicht nachgeprüft |
 
